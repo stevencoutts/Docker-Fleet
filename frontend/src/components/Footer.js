@@ -6,7 +6,17 @@ const Footer = () => {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
         <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
           <div className="text-sm text-gray-600 dark:text-gray-400">
-            <p>© {new Date().getFullYear()} DockerFleet Manager by Steven Coutts</p>
+            <p>
+              © {new Date().getFullYear()} DockerFleet Manager by{' '}
+              <a
+                href="https://stevec.couttsnet.com"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="hover:text-primary-600 dark:hover:text-primary-400 transition-colors font-medium"
+              >
+                Steven Coutts
+              </a>
+            </p>
           </div>
           <div className="flex items-center gap-6 text-sm text-gray-600 dark:text-gray-400">
             <a
