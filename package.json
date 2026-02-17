@@ -1,0 +1,18 @@
+{
+  "name": "dockerfleet-manager",
+  "version": "1.0.0",
+  "description": "Production-ready Docker container management across multiple remote servers",
+  "main": "index.js",
+  "scripts": {
+    "dev:backend": "cd backend && npm run dev",
+    "dev:frontend": "cd frontend && npm start",
+    "build:frontend": "cd frontend && npm run build",
+    "start:backend": "cd backend && npm start",
+    "docker:up": "docker-compose up -d",
+    "docker:down": "docker-compose down",
+    "docker:build": "docker-compose build"
+  },
+  "keywords": ["docker", "container", "management", "ssh", "remote"],
+  "author": "",
+  "license": "MIT"
+}
