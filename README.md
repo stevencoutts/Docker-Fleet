@@ -66,11 +66,18 @@ A production-ready full-stack web application for managing Docker containers acr
    ```
 
 2. **Set up environment variables**
+   
+   **For Docker Compose (Production):**
+   - Create a `.env` file in the project root (same directory as `docker-compose.yml`)
+   - Docker Compose reads environment variables from the root `.env` file
+   - Copy email and monitoring settings from `backend/env.example` to the root `.env`
+   
+   **For Local Development:**
    ```bash
    cp backend/env.example backend/.env
    ```
    
-   Edit `backend/.env` and update the following:
+   Edit your `.env` file(s) and update the following:
    - `JWT_SECRET`: Generate a strong secret key
    - `JWT_REFRESH_SECRET`: Generate another strong secret key
    - `ENCRYPTION_KEY`: A 32-character key for encrypting SSH keys
@@ -78,6 +85,7 @@ A production-ready full-stack web application for managing Docker containers acr
    - `CORS_ORIGIN`: Frontend URL (default: http://localhost:3020)
    - `EMAIL_ENABLED`: Set to `true` to enable email alerts
    - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`: Configure your SMTP server
+   - **Note**: For port 25 (unauthenticated SMTP), `SMTP_USER` and `SMTP_PASSWORD` can be left empty
 
 3. **Build and start services**
    ```bash
@@ -349,6 +357,12 @@ docker-compose exec backend npm run migrate
 
 ## 📝 Environment Variables
 
+### Important Notes
+
+- **Docker Compose**: Environment variables must be set in a root `.env` file (same directory as `docker-compose.yml`)
+- **Local Development**: Environment variables are loaded from `backend/.env`
+- The backend only loads `backend/.env` in non-production mode to avoid conflicts with Docker Compose environment variables
+
 ### Backend (.env)
 
 | Variable | Description | Default |
@@ -372,10 +386,10 @@ docker-compose exec backend npm run migrate
 | `EMAIL_FROM_ADDRESS` | Email sender address | `noreply@dockerfleet.local` |
 | `EMAIL_FROM_NAME` | Email sender name | `DockerFleet Manager` |
 | `SMTP_HOST` | SMTP server host | `localhost` |
-| `SMTP_PORT` | SMTP server port | `587` |
-| `SMTP_SECURE` | Use TLS/SSL | `false` |
-| `SMTP_USER` | SMTP username | - |
-| `SMTP_PASSWORD` | SMTP password | - |
+| `SMTP_PORT` | SMTP server port | `587` (or `25` for unauthenticated) |
+| `SMTP_SECURE` | Use TLS/SSL | `false` (use `true` for port 465) |
+| `SMTP_USER` | SMTP username | - (optional for port 25) |
+| `SMTP_PASSWORD` | SMTP password | - (optional for port 25) |
 | `SMTP_REJECT_UNAUTHORIZED` | Reject unauthorized certs | `true` |
 | `MONITORING_CHECK_INTERVAL_MS` | Container check interval | `60000` (1 min) |
 | `MONITORING_ALERT_COOLDOWN_MS` | Alert cooldown period | `300000` (5 min) |
@@ -410,20 +424,41 @@ The application can send email alerts when containers with auto-restart enabled 
 
 ### Setup
 
-1. **Enable email alerts** in `backend/.env`:
+**Important**: When using Docker Compose, environment variables must be set in a root `.env` file (same directory as `docker-compose.yml`), not just in `backend/.env`. The backend only loads `backend/.env` in development mode.
+
+1. **Create/Edit root `.env` file** (for Docker Compose):
    ```bash
+   # In project root directory
    EMAIL_ENABLED=true
    EMAIL_FROM_ADDRESS=your-email@example.com
    EMAIL_FROM_NAME=DockerFleet Manager
+   SMTP_HOST=smtp.gmail.com
+   SMTP_PORT=587
+   SMTP_SECURE=false
+   SMTP_USER=your-email@gmail.com
+   SMTP_PASSWORD=your-app-password
    ```
 
+   **For local development**, edit `backend/.env` instead.
+
 2. **Configure SMTP settings**:
+   
+   **For authenticated SMTP (Gmail, Outlook, etc.):**
    ```bash
    SMTP_HOST=smtp.gmail.com
    SMTP_PORT=587
    SMTP_SECURE=false
    SMTP_USER=your-email@gmail.com
    SMTP_PASSWORD=your-app-password
+   ```
+   
+   **For unauthenticated SMTP (port 25, local relay):**
+   ```bash
+   SMTP_HOST=your-smtp-server.local
+   SMTP_PORT=25
+   SMTP_SECURE=false
+   SMTP_USER=          # Leave empty
+   SMTP_PASSWORD=      # Leave empty
    ```
 
 3. **For Gmail**, you'll need to:
@@ -434,6 +469,11 @@ The application can send email alerts when containers with auto-restart enabled 
 4. **Restart the backend**:
    ```bash
    docker-compose restart backend
+   ```
+   
+   Check the logs to verify email service initialization:
+   ```bash
+   docker-compose logs backend | grep -i email
    ```
 
 ### Monitoring Settings
