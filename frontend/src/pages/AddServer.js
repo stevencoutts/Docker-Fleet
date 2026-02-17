@@ -49,7 +49,10 @@ const AddServer = () => {
       const response = await serversService.create(formData);
       navigate(`/servers/${response.data.server.id}`);
     } catch (error) {
-      setError(error.response?.data?.error || 'Failed to create server');
+      const errorMessage = error.response?.data?.error || error.response?.data?.details || 'Failed to create server';
+      const errorDetails = error.response?.data?.details ? `: ${error.response.data.details}` : '';
+      setError(errorMessage + errorDetails);
+      console.error('Server creation error:', error.response?.data || error.message);
     } finally {
       setLoading(false);
     }
@@ -150,7 +153,12 @@ const AddServer = () => {
               placeholder="-----BEGIN RSA PRIVATE KEY-----&#10;...&#10;-----END RSA PRIVATE KEY-----"
             />
             <p className="mt-2 text-sm text-gray-500">
-              Paste your SSH private key here. It will be encrypted before storage.
+              Paste your SSH <strong>private key</strong> here (not the public key). 
+              Private keys typically start with "-----BEGIN OPENSSH PRIVATE KEY-----" or "-----BEGIN RSA PRIVATE KEY-----". 
+              It will be encrypted before storage.
+            </p>
+            <p className="mt-1 text-xs text-gray-400">
+              💡 Tip: Your private key is usually in <code>~/.ssh/id_rsa</code> or <code>~/.ssh/id_ed25519</code>
             </p>
           </div>
 

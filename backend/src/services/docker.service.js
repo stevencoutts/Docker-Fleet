@@ -3,7 +3,8 @@ const logger = require('../config/logger');
 
 class DockerService {
   async listContainers(server, all = false) {
-    const command = `docker ps ${all ? '-a' : ''} --format '{"ID":"{{.ID}}","Image":"{{.Image}}","Command":"{{.Command}}","Created":"{{.CreatedAt}}","Status":"{{.Status}}","Ports":"{{.Ports}}","Names":"{{.Names}}"}'`;
+    // Use a simpler format that's more reliable
+    const command = `docker ps ${all ? '-a' : ''} --format '{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}'`;
     const result = await sshService.executeCommand(server, command);
     
     if (!result.stdout.trim()) {
@@ -12,21 +13,24 @@ class DockerService {
 
     const lines = result.stdout.trim().split('\n').filter(line => line.trim());
     const containers = lines.map((line) => {
-      try {
-        return JSON.parse(line);
-      } catch (e) {
-        // Fallback parsing if JSON format fails
-        const parts = line.split(/\s{2,}/);
+      const parts = line.split('|');
+      if (parts.length >= 4) {
         return {
-          ID: parts[0]?.substring(0, 12) || '',
-          Image: parts[1] || '',
-          Command: parts[2] || '',
-          Created: parts[3] || '',
-          Status: parts[4] || '',
-          Ports: parts[5] || '',
-          Names: parts[6] || '',
+          ID: parts[0] || '',
+          Names: parts[1] || '',
+          Image: parts[2] || 'Unknown',
+          Status: parts[3] || 'Unknown',
+          Ports: parts[4] || '',
         };
       }
+      // Fallback for malformed lines
+      return {
+        ID: line.substring(0, 12) || '',
+        Names: '',
+        Image: 'Unknown',
+        Status: 'Unknown',
+        Ports: '',
+      };
     });
 
     return containers;

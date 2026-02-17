@@ -38,6 +38,36 @@ const createServer = async (req, res, next) => {
   try {
     const { name, host, port, username, privateKey } = req.body;
 
+    // Validate required fields
+    if (!name || !host || !username || !privateKey) {
+      return res.status(400).json({ 
+        error: 'Missing required fields',
+        details: 'Name, host, username, and private key are required',
+      });
+    }
+
+    // Validate that this is a private key, not a public key
+    const keyTrimmed = privateKey.trim();
+    
+    // Check if it's a public key (common mistake)
+    if (keyTrimmed.startsWith('ssh-ed25519') || 
+        keyTrimmed.startsWith('ssh-rsa') || 
+        keyTrimmed.startsWith('ssh-dss') ||
+        keyTrimmed.startsWith('ecdsa-sha2')) {
+      return res.status(400).json({ 
+        error: 'Invalid private key format',
+        details: 'You have pasted a PUBLIC key. Please use your PRIVATE key instead. Private keys typically start with "-----BEGIN OPENSSH PRIVATE KEY-----" or "-----BEGIN RSA PRIVATE KEY-----".',
+      });
+    }
+    
+    // Check if it's a valid private key format
+    if (!keyTrimmed.includes('-----BEGIN') && keyTrimmed.length < 100) {
+      return res.status(400).json({ 
+        error: 'Invalid private key format',
+        details: 'Private key should start with "-----BEGIN OPENSSH PRIVATE KEY-----" or "-----BEGIN RSA PRIVATE KEY-----" or similar. Make sure you are using your private key file, not the public key.',
+      });
+    }
+
     // Test SSH connection before saving
     const testServer = {
       id: 'test',
@@ -51,9 +81,10 @@ const createServer = async (req, res, next) => {
       await sshService.connect(testServer);
       sshService.disconnect('test');
     } catch (error) {
+      logger.error('SSH connection test failed:', error);
       return res.status(400).json({ 
         error: 'Failed to connect to server',
-        details: error.message,
+        details: error.message || 'Unable to establish SSH connection. Please verify your credentials and network connectivity.',
       });
     }
 
@@ -70,6 +101,13 @@ const createServer = async (req, res, next) => {
 
     res.status(201).json({ server });
   } catch (error) {
+    logger.error('Server creation error:', error);
+    if (error.name === 'SequelizeValidationError') {
+      return res.status(400).json({ 
+        error: 'Validation error',
+        details: error.errors.map(e => e.message).join(', '),
+      });
+    }
     next(error);
   }
 };
