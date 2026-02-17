@@ -1,4 +1,7 @@
-require('dotenv').config();
+// Only load .env file in development - in production, use environment variables from Docker
+if (process.env.NODE_ENV !== 'production') {
+  require('dotenv').config();
+}
 
 module.exports = {
   env: process.env.NODE_ENV || 'development',

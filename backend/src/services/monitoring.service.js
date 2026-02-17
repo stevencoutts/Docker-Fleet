@@ -13,24 +13,27 @@ class MonitoringService {
     this.alertCooldownMs = parseInt(process.env.MONITORING_ALERT_COOLDOWN_MS) || 300000; // Default: 5 minutes
   }
 
-  start() {
+  async start() {
     if (this.isRunning) {
       logger.warn('Monitoring service is already running');
       return;
     }
 
     if (!config.email.enabled) {
-      logger.info('Email alerts are disabled, monitoring service will not start');
+      logger.info('Email alerts are disabled (EMAIL_ENABLED=false). Set EMAIL_ENABLED=true to enable email alerts.');
       return;
     }
 
     // Initialize email service if not already initialized
     if (!emailService.initialized) {
-      emailService.initialize();
+      await emailService.initialize();
     }
 
     if (!emailService.initialized) {
       logger.error('Email service failed to initialize, monitoring service will not start');
+      logger.error('To enable email alerts:');
+      logger.error('  1. Set EMAIL_ENABLED=true in your .env file');
+      logger.error('  2. Configure SMTP_HOST, SMTP_PORT, SMTP_USER, and SMTP_PASSWORD');
       return;
     }
 
@@ -118,24 +121,40 @@ class MonitoringService {
 
         if (!isRunning) {
           // Container is down
-          if (!previousState || !previousState.wasDown) {
-            // Container just went down - send alert
-            logger.warn(`Container ${containerId} on server ${server.name} is down (should be running)`);
+          if (!previousState) {
+            // First time we see this container - initialize state as down and send alert
+            logger.warn(`Container ${containerId.substring(0, 12)} (${container.Names?.replace(/^\//, '') || 'unknown'}) on server ${server.name} is down (should be running)`);
+            await this.sendDownAlert(server, container, user.email, stateKey);
+          } else if (!previousState.wasDown) {
+            // Container was running before, now it's down - state changed, send alert
+            logger.warn(`Container ${containerId.substring(0, 12)} (${container.Names?.replace(/^\//, '') || 'unknown'}) on server ${server.name} just went down (should be running)`);
             await this.sendDownAlert(server, container, user.email, stateKey);
           } else {
             // Container was already down - check if we need to resend alert (cooldown)
-            const timeSinceLastAlert = now - previousState.lastAlert;
+            const timeSinceLastAlert = now.getTime() - previousState.lastAlert.getTime();
             if (timeSinceLastAlert >= this.alertCooldownMs) {
-              logger.warn(`Container ${containerId} on server ${server.name} still down, resending alert`);
+              logger.warn(`Container ${containerId.substring(0, 12)} (${container.Names?.replace(/^\//, '') || 'unknown'}) on server ${server.name} still down, resending alert`);
               await this.sendDownAlert(server, container, user.email, stateKey);
             }
           }
         } else {
           // Container is running
-          if (previousState && previousState.wasDown) {
+          if (!previousState) {
+            // First time we see this container - initialize state as running (no alert needed)
+            this.containerStates.set(stateKey, {
+              wasDown: false,
+              lastAlert: null,
+            });
+          } else if (previousState.wasDown) {
             // Container recovered - send recovery alert
-            logger.info(`Container ${containerId} on server ${server.name} recovered`);
+            logger.info(`Container ${containerId.substring(0, 12)} (${container.Names?.replace(/^\//, '') || 'unknown'}) on server ${server.name} recovered`);
             await this.sendUpAlert(server, container, user.email, stateKey);
+          } else {
+            // Container is still running - update state to ensure wasDown is false
+            this.containerStates.set(stateKey, {
+              wasDown: false,
+              lastAlert: previousState.lastAlert,
+            });
           }
         }
       }

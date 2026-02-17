@@ -240,8 +240,8 @@ server.listen(PORT, () => {
   // Start monitoring service if email is enabled
   if (config.email && config.email.enabled) {
     // Wait a bit for database to be ready
-    setTimeout(() => {
-      monitoringService.start();
+    setTimeout(async () => {
+      await monitoringService.start();
     }, 5000);
   }
 });

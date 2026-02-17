@@ -8,28 +8,57 @@ class EmailService {
     this.initialized = false;
   }
 
-  initialize() {
+  async initialize() {
     if (!config.email.enabled) {
-      logger.debug('Email service is disabled');
+      logger.info('Email service is disabled (EMAIL_ENABLED=false). Set EMAIL_ENABLED=true to enable email alerts.');
+      this.initialized = false;
+      return;
+    }
+
+    // Check if SMTP settings are configured
+    // For port 25 (unauthenticated SMTP), user/password may be empty
+    const needsAuth = config.email.smtp.port !== 25;
+    if (!config.email.smtp.host) {
+      logger.warn('Email service is enabled but SMTP_HOST is not configured.');
+      this.initialized = false;
+      return;
+    }
+    if (needsAuth && (!config.email.smtp.user || !config.email.smtp.password)) {
+      logger.warn('Email service is enabled but SMTP settings are incomplete. Please configure SMTP_USER and SMTP_PASSWORD (or use port 25 for unauthenticated SMTP).');
+      this.initialized = false;
       return;
     }
 
     try {
-      this.transporter = nodemailer.createTransport({
+      const transportConfig = {
         host: config.email.smtp.host,
         port: config.email.smtp.port,
         secure: config.email.smtp.secure, // true for 465, false for other ports
-        auth: {
-          user: config.email.smtp.user,
-          pass: config.email.smtp.password,
-        },
         tls: {
           rejectUnauthorized: config.email.smtp.rejectUnauthorized !== false,
         },
-      });
+      };
 
-      this.initialized = true;
-      logger.info('Email service initialized');
+      // Only add auth if user and password are provided (not needed for port 25)
+      if (config.email.smtp.user && config.email.smtp.password) {
+        transportConfig.auth = {
+          user: config.email.smtp.user,
+          pass: config.email.smtp.password,
+        };
+      }
+
+      this.transporter = nodemailer.createTransport(transportConfig);
+
+      // Verify the connection
+      try {
+        await this.transporter.verify();
+        this.initialized = true;
+        logger.info(`Email service initialized and verified (SMTP: ${config.email.smtp.host}:${config.email.smtp.port})`);
+      } catch (verifyError) {
+        logger.error('Email service SMTP verification failed:', verifyError.message);
+        logger.error('Please check your SMTP settings (host, port, user, password)');
+        this.initialized = false;
+      }
     } catch (error) {
       logger.error('Failed to initialize email service:', error);
       this.initialized = false;
