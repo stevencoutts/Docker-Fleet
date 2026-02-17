@@ -58,11 +58,15 @@ class SSHService {
 
   async executeCommand(server, command, options = {}) {
     const ssh = await this.connect(server);
+    const timeout = options.timeout || 30000; // Default 30 seconds timeout
     
     return new Promise((resolve, reject) => {
+      let timeoutId = null;
+      let streamClosed = false;
+
       ssh.exec(command, {
         cwd: options.cwd || '/',
-        pty: true,
+        pty: options.pty !== false, // Allow disabling pty if needed
       }, (err, stream) => {
         if (err) {
           logger.error(`Command execution failed on ${server.host}:`, err);
@@ -70,10 +74,31 @@ class SSHService {
           return;
         }
 
+        // Set up timeout
+        timeoutId = setTimeout(() => {
+          if (!streamClosed) {
+            streamClosed = true;
+            stream.close();
+            const timeoutError = new Error(`Command timed out after ${timeout}ms. Interactive commands like 'more', 'less', 'vi', 'nano' are not supported. Use 'cat' instead of 'more' or 'less'.`);
+            timeoutError.code = 'TIMEOUT';
+            reject(timeoutError);
+          }
+        }, timeout);
+
         let stdout = '';
         let stderr = '';
 
         stream.on('close', (code, signal) => {
+          if (timeoutId) {
+            clearTimeout(timeoutId);
+          }
+          
+          if (streamClosed) {
+            return; // Already handled by timeout
+          }
+          
+          streamClosed = true;
+
           if (code !== 0 && !options.allowFailure) {
             reject(new Error(`Command failed: ${stderr || stdout}`));
             return;

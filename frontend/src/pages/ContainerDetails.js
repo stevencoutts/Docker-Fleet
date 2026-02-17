@@ -1,9 +1,91 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { containersService } from '../services/containers.service';
+import { imagesService } from '../services/images.service';
 import LogsViewer from '../components/LogsViewer';
 import Console from '../components/Console';
 import { LineChart, Line, AreaChart, Area, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+
+// Helper function to safely parse Docker dates
+// Docker returns dates in ISO 8601 format (e.g., "2024-01-01T12:00:00.123456789Z")
+// But some fields might be Unix timestamps or other formats
+const parseDockerDate = (dateValue) => {
+  if (!dateValue) return null;
+  
+  // If it's already a Date object, return it
+  if (dateValue instanceof Date) {
+    return isNaN(dateValue.getTime()) ? null : dateValue;
+  }
+  
+  // If it's a number (Unix timestamp)
+  if (typeof dateValue === 'number') {
+    // Check if it's in seconds (less than year 2000 in milliseconds) or milliseconds
+    // Unix timestamps before 2000-01-01 in milliseconds would be < 946684800000
+    const timestamp = dateValue < 946684800000 ? dateValue * 1000 : dateValue;
+    const date = new Date(timestamp);
+    return isNaN(date.getTime()) ? null : date;
+  }
+  
+  // If it's a string, try to parse it
+  if (typeof dateValue === 'string') {
+    // Try ISO 8601 format first (Docker's default format from docker inspect)
+    let date = new Date(dateValue);
+    if (!isNaN(date.getTime())) {
+      return date;
+    }
+    
+    // Try Unix timestamp as string (seconds)
+    const numValue = parseFloat(dateValue);
+    if (!isNaN(numValue) && dateValue.trim() === numValue.toString()) {
+      const timestamp = numValue < 946684800000 ? numValue * 1000 : numValue;
+      date = new Date(timestamp);
+      if (!isNaN(date.getTime())) {
+        return date;
+      }
+    }
+    
+    // Try parsing relative dates like "2 days ago", "3 weeks ago" (from docker images)
+    // This is a simple fallback - we can't parse these accurately, so return null
+    // The UI will show the raw string in this case
+  }
+  
+  return null;
+};
+
+// Helper function to format date safely
+const formatDate = (dateValue, options = {}) => {
+  const date = parseDockerDate(dateValue);
+  if (!date) {
+    // If we can't parse it, return the original value if it's a string, or 'Unknown'
+    return typeof dateValue === 'string' ? dateValue : 'Unknown';
+  }
+  
+  const defaultOptions = {
+    dateStyle: 'short',
+    timeStyle: 'short',
+    ...options,
+  };
+  
+  try {
+    // Check if options specify separate dateStyle and timeStyle
+    if (options.dateStyle && options.timeStyle) {
+      return date.toLocaleString(undefined, defaultOptions);
+    } else if (options.dateStyle) {
+      return date.toLocaleDateString(undefined, { dateStyle: options.dateStyle });
+    } else if (options.timeStyle) {
+      return date.toLocaleTimeString(undefined, { timeStyle: options.timeStyle });
+    } else {
+      return date.toLocaleString(undefined, defaultOptions);
+    }
+  } catch (e) {
+    // Fallback to basic formatting
+    try {
+      return date.toLocaleString();
+    } catch (e2) {
+      return typeof dateValue === 'string' ? dateValue : 'Unknown';
+    }
+  }
+};
 
 const ContainerDetails = () => {
   const { serverId, containerId } = useParams();
@@ -21,16 +103,38 @@ const ContainerDetails = () => {
   const [restoreModalOpen, setRestoreModalOpen] = useState(false);
   const [restoreImageName, setRestoreImageName] = useState('');
   const [restoreContainerName, setRestoreContainerName] = useState('');
+  const [deletingSnapshot, setDeletingSnapshot] = useState(null);
   const maxHistoryPoints = 30;
 
-  // Set default snapshot name when modal opens or container changes
+  // Helper function to generate snapshot name with timestamp
+  const generateSnapshotName = (containerName) => {
+    const now = new Date();
+    const dateStr = now.toISOString().slice(0, 10).replace(/-/g, ''); // YYYYMMDD
+    const timeStr = now.toTimeString().slice(0, 8).replace(/:/g, ''); // HHMMSS
+    const timestamp = `${dateStr}-${timeStr}`;
+    return `${containerName}-snapshot-${timestamp}`;
+  };
+
+  // Set default snapshot name when container changes
   useEffect(() => {
     if (container) {
       const containerName = container.Name?.replace('/', '') || containerId.substring(0, 12);
-      const defaultName = `${containerName}-snapshot`;
+      const defaultName = generateSnapshotName(containerName);
       setSnapshotImageName(defaultName);
     }
   }, [container, containerId]);
+
+  // Update snapshot name with fresh timestamp when modal opens
+  useEffect(() => {
+    if (snapshotModalOpen && container) {
+      const containerName = container.Name?.replace('/', '') || containerId.substring(0, 12);
+      const defaultName = generateSnapshotName(containerName);
+      // Use setTimeout to ensure this runs after the modal is fully rendered
+      setTimeout(() => {
+        setSnapshotImageName(defaultName);
+      }, 0);
+    }
+  }, [snapshotModalOpen, container, containerId]);
 
   useEffect(() => {
     fetchContainerDetails();
@@ -40,15 +144,30 @@ const ContainerDetails = () => {
   const fetchSnapshots = async () => {
     try {
       const response = await containersService.getSnapshots(serverId, containerId);
-      // Backend already filters by container name, but add extra safety check
-      const containerName = container?.Name?.replace('/', '') || containerId.substring(0, 12);
-      const filtered = response.data.snapshots.filter(img => 
-        img.name.startsWith(`${containerName}-snapshot`)
-      );
-      setSnapshots(filtered);
+      // Backend already filters snapshots by container name, so use them directly
+      setSnapshots(response.data.snapshots || []);
     } catch (error) {
       console.error('Failed to fetch snapshots:', error);
       setSnapshots([]);
+    }
+  };
+
+  const handleDeleteSnapshot = async (snapshot) => {
+    if (!window.confirm(`Are you sure you want to delete snapshot "${snapshot.name}"?\n\nThis action cannot be undone.`)) {
+      return;
+    }
+
+    setDeletingSnapshot(snapshot.id);
+    try {
+      await imagesService.remove(serverId, snapshot.id, true);
+      // Refresh snapshots list
+      await fetchSnapshots();
+      alert('Snapshot deleted successfully');
+    } catch (error) {
+      console.error('Failed to delete snapshot:', error);
+      alert(error.response?.data?.error || error.message || 'Failed to delete snapshot');
+    } finally {
+      setDeletingSnapshot(null);
     }
   };
 
@@ -314,7 +433,7 @@ const ContainerDetails = () => {
   const isRunning = container.State?.Status === 'running' || container.State?.Running;
   const containerName = container.Name?.replace('/', '') || containerId.substring(0, 12);
   const image = container.Config?.Image || 'Unknown';
-  const created = new Date(container.Created * 1000).toLocaleString();
+  const created = formatDate(container.Created);
   const ports = formatPorts(container.NetworkSettings?.Ports);
   const cpuPercent = stats ? calculateCPUPercent(stats) : 0;
   const memUsage = stats?.memory_stats?.usage || 0;
@@ -400,10 +519,10 @@ const ContainerDetails = () => {
               </button>
               <button
                 onClick={() => {
-                  // Set default name when opening modal
+                  // Set default name with timestamp when opening modal
                   if (container) {
                     const containerName = container.Name?.replace('/', '') || containerId.substring(0, 12);
-                    setSnapshotImageName(`${containerName}-snapshot`);
+                    setSnapshotImageName(generateSnapshotName(containerName));
                   }
                   setSnapshotModalOpen(true);
                 }}
@@ -650,10 +769,10 @@ const ContainerDetails = () => {
                     <div>
                       <p className="text-sm font-medium text-green-600 dark:text-green-400">Created</p>
                       <p className="text-sm font-semibold text-green-900 dark:text-green-100 mt-1">
-                        {new Date(container.Created * 1000).toLocaleDateString()}
+                        {formatDate(container.Created, { dateStyle: 'short' })}
                       </p>
                       <p className="text-xs text-green-700 dark:text-green-300 mt-0.5">
-                        {new Date(container.Created * 1000).toLocaleTimeString()}
+                        {formatDate(container.Created, { timeStyle: 'short' })}
                       </p>
                     </div>
                     <div className="p-3 bg-green-500/20 rounded-lg">
@@ -739,9 +858,9 @@ const ContainerDetails = () => {
                 {container.State?.StartedAt && (
                   <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
                     <h4 className="text-sm font-medium text-gray-500 dark:text-gray-400 mb-2">Started At</h4>
-                    <p className="text-sm text-gray-900 dark:text-gray-100">
-                      {new Date(container.State.StartedAt).toLocaleString()}
-                    </p>
+                      <p className="text-sm text-gray-900 dark:text-gray-100">
+                        {formatDate(container.State?.StartedAt)}
+                      </p>
                   </div>
                 )}
               </div>
@@ -766,16 +885,16 @@ const ContainerDetails = () => {
                 <div>
                   <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Snapshots</h3>
                   <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                    View and restore snapshots created from this container
+                    View, restore, or delete snapshots created from this container
                   </p>
                 </div>
                 <button
                   onClick={() => {
                     const containerName = container?.Name?.replace('/', '') || containerId.substring(0, 12);
-                    setSnapshotImageName(`${containerName}-snapshot`);
+                    setSnapshotImageName(generateSnapshotName(containerName));
                     setSnapshotModalOpen(true);
                   }}
-                  className="px-4 py-2 bg-primary-600 dark:bg-primary-500 text-white rounded-lg hover:bg-primary-700 dark:hover:bg-primary-600 transition-colors flex items-center gap-2"
+                  className="px-4 py-2 bg-primary-600 dark:bg-primary-500 text-white rounded-lg hover:bg-primary-700 dark:hover:bg-primary-600 transition-colors flex items-center gap-2 shadow-sm"
                 >
                   <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -785,7 +904,7 @@ const ContainerDetails = () => {
               </div>
 
               {snapshots.length === 0 ? (
-                <div className="text-center py-12 bg-gray-50 dark:bg-gray-900 rounded-lg">
+                <div className="text-center py-12 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
                   <svg className="mx-auto h-12 w-12 text-gray-400 dark:text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                   </svg>
@@ -797,27 +916,59 @@ const ContainerDetails = () => {
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {snapshots.map((snapshot, idx) => (
-                    <div key={idx} className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
-                      <div className="flex items-start justify-between mb-3">
-                        <div className="flex-1">
-                          <h4 className="font-semibold text-gray-900 dark:text-gray-100 truncate">{snapshot.name}</h4>
-                          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">ID: {snapshot.id.substring(0, 12)}</p>
-                          <p className="text-xs text-gray-500 dark:text-gray-400">Created: {snapshot.created}</p>
+                    <div key={idx} className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-5 shadow-sm hover:shadow-md transition-shadow">
+                      <div className="flex items-start justify-between mb-4">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-2">
+                            <svg className="w-5 h-5 text-purple-500 dark:text-purple-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                            </svg>
+                            <h4 className="font-semibold text-gray-900 dark:text-gray-100 truncate text-sm" title={snapshot.name}>
+                              {snapshot.name.split(':')[0]}
+                            </h4>
+                          </div>
+                          {snapshot.name.includes(':') && (
+                            <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">
+                              Tag: <span className="font-mono">{snapshot.name.split(':')[1]}</span>
+                            </p>
+                          )}
+                          <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">
+                            ID: <span className="font-mono">{snapshot.id.substring(0, 12)}</span>
+                          </p>
+                          <p className="text-xs text-gray-500 dark:text-gray-400">
+                            Created: {formatDate(snapshot.created) || snapshot.created}
+                          </p>
                         </div>
-                        <svg className="w-5 h-5 text-purple-500 dark:text-purple-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                        </svg>
                       </div>
-                      <button
-                        onClick={() => {
-                          setRestoreImageName(snapshot.name);
-                          setRestoreContainerName(`${snapshot.name.split(':')[0]}-restored`);
-                          setRestoreModalOpen(true);
-                        }}
-                        className="w-full px-3 py-2 bg-primary-600 dark:bg-primary-500 text-white text-sm rounded-lg hover:bg-primary-700 dark:hover:bg-primary-600 transition-colors"
-                      >
-                        Restore
-                      </button>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => {
+                            setRestoreImageName(snapshot.name);
+                            setRestoreContainerName(`${snapshot.name.split(':')[0]}-restored`);
+                            setRestoreModalOpen(true);
+                          }}
+                          className="flex-1 px-3 py-2 bg-primary-600 dark:bg-primary-500 text-white text-sm rounded-lg hover:bg-primary-700 dark:hover:bg-primary-600 transition-colors font-medium"
+                        >
+                          Restore
+                        </button>
+                        <button
+                          onClick={() => handleDeleteSnapshot(snapshot)}
+                          disabled={deletingSnapshot === snapshot.id}
+                          className="px-3 py-2 bg-red-600 dark:bg-red-500 text-white text-sm rounded-lg hover:bg-red-700 dark:hover:bg-red-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          title="Delete snapshot"
+                        >
+                          {deletingSnapshot === snapshot.id ? (
+                            <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                          ) : (
+                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          )}
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>

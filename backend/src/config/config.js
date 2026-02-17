@@ -37,4 +37,18 @@ module.exports = {
   logging: {
     level: process.env.LOG_LEVEL || 'info',
   },
+  
+  email: {
+    enabled: process.env.EMAIL_ENABLED === 'true',
+    fromAddress: process.env.EMAIL_FROM_ADDRESS || 'noreply@dockerfleet.local',
+    fromName: process.env.EMAIL_FROM_NAME || 'DockerFleet Manager',
+    smtp: {
+      host: process.env.SMTP_HOST || 'localhost',
+      port: parseInt(process.env.SMTP_PORT) || 587,
+      secure: process.env.SMTP_SECURE === 'true', // true for 465, false for other ports
+      user: process.env.SMTP_USER || '',
+      password: process.env.SMTP_PASSWORD || '',
+      rejectUnauthorized: process.env.SMTP_REJECT_UNAUTHORIZED !== 'false',
+    },
+  },
 };

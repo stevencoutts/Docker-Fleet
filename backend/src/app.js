@@ -9,10 +9,14 @@ const logger = require('./config/logger');
 const { errorHandler, notFoundHandler } = require('./middleware/error.middleware');
 const routes = require('./routes');
 const setupSocketIO = require('./websocket/socket.handler');
+const monitoringService = require('./services/monitoring.service');
 const db = require('./models');
 
 const app = express();
 const server = http.createServer(app);
+
+// Trust proxy to get correct IP addresses (important for rate limiting)
+app.set('trust proxy', true);
 
 // Socket.IO setup
 const io = new Server(server, {
@@ -108,9 +112,13 @@ const isLocalhost = (req) => {
 // This middleware will be applied BEFORE the rate limiters
 const bypassRateLimit = (req, res, next) => {
   // Always allow localhost/development requests - skip rate limiting entirely
-  if (isDevelopment || isLocalhost(req)) {
+  // Check both development mode and localhost (even in production, localhost should be allowed)
+  const shouldBypass = isDevelopment || isLocalhost(req);
+  
+  if (shouldBypass) {
     // Mark request as bypassed so rate limiters know to skip
     req._rateLimitBypass = true;
+    logger.debug(`Bypassing rate limit for ${req.method} ${req.path} from ${req.ip || 'unknown'}`);
     return next();
   }
   // For non-localhost, continue to rate limiter
@@ -120,11 +128,28 @@ const bypassRateLimit = (req, res, next) => {
 // Very lenient rate limiter for auth endpoints - but we'll bypass it for localhost
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Reasonable limit for production
+  max: 10000, // Very high limit (effectively unlimited)
   message: 'Too many login attempts from this IP, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,
   skipSuccessfulRequests: true,
+  skip: (req) => {
+    // Always skip for localhost/development or if bypassed by middleware
+    const shouldSkip = req._rateLimitBypass || isDevelopment || isLocalhost(req);
+    if (shouldSkip) {
+      logger.debug(`Skipping auth rate limit for ${req.method} ${req.path} from ${req.ip || 'unknown'}`);
+    }
+    return shouldSkip;
+  },
+});
+
+// Very lenient rate limiter for console/execute endpoints (interactive use)
+const consoleLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 200, // Allow many rapid commands for console usage
+  message: 'Too many console commands, please slow down.',
+  standardHeaders: true,
+  legacyHeaders: false,
   skip: (req) => {
     // Always skip for localhost/development or if bypassed by middleware
     const shouldSkip = req._rateLimitBypass || isDevelopment || isLocalhost(req);
@@ -138,7 +163,7 @@ const authLimiter = rateLimit({
 // General rate limiter - bypassed for localhost
 const limiter = rateLimit({
   windowMs: config.rateLimit.windowMs,
-  max: config.rateLimit.max,
+  max: 10000, // Very high limit (effectively unlimited for localhost)
   message: 'Too many requests from this IP, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,
@@ -146,21 +171,29 @@ const limiter = rateLimit({
     // Always skip for localhost/development or if bypassed by middleware
     const shouldSkip = req._rateLimitBypass || isDevelopment || isLocalhost(req);
     if (shouldSkip) {
-      logger.debug('Skipping rate limit for localhost request');
+      logger.debug(`Skipping general rate limit for ${req.method} ${req.path} from ${req.ip || 'unknown'}`);
     }
     return shouldSkip;
   },
 });
 
-// Apply bypass middleware first, then rate limiters
+// Apply bypass middleware globally FIRST - this must be before any rate limiters
+// This ensures localhost requests are always bypassed
+app.use('/api/', bypassRateLimit);
+
+// Apply rate limiters AFTER bypass middleware
+// The skip functions in each limiter will check for bypass flag
 // For auth routes, bypass check happens in the limiter's skip function
-app.use('/api/v1/auth/login', bypassRateLimit, authLimiter);
-app.use('/api/v1/auth/register', bypassRateLimit, authLimiter);
-app.use('/api/v1/auth/setup', bypassRateLimit, authLimiter);
-app.use('/api/v1/auth/me', bypassRateLimit, authLimiter);
+app.use('/api/v1/auth/login', authLimiter);
+app.use('/api/v1/auth/register', authLimiter);
+app.use('/api/v1/auth/setup', authLimiter);
+app.use('/api/v1/auth/me', authLimiter);
+
+// Apply lenient limiter to console/execute endpoints (before general limiter)
+app.use('/api/v1/servers/:serverId/containers/:containerId/execute', consoleLimiter);
 
 // Apply general limiter to all other API routes
-app.use('/api/', bypassRateLimit, limiter);
+app.use('/api/', limiter);
 
 // Health check
 app.get('/health', (req, res) => {
@@ -177,6 +210,9 @@ app.use(errorHandler);
 // Graceful shutdown
 const gracefulShutdown = () => {
   logger.info('Shutting down gracefully...');
+  
+  // Stop monitoring service
+  monitoringService.stop();
   
   server.close(() => {
     logger.info('HTTP server closed');
@@ -200,6 +236,14 @@ process.on('SIGINT', gracefulShutdown);
 const PORT = config.port;
 server.listen(PORT, () => {
   logger.info(`Server running on port ${PORT} in ${config.env} mode`);
+  
+  // Start monitoring service if email is enabled
+  if (config.email && config.email.enabled) {
+    // Wait a bit for database to be ready
+    setTimeout(() => {
+      monitoringService.start();
+    }, 5000);
+  }
 });
 
 module.exports = { app, io };

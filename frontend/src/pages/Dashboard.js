@@ -10,25 +10,44 @@ const Dashboard = () => {
 
   useEffect(() => {
     fetchData();
+    
+    // Auto-refresh every 5 seconds to detect container state changes
+    const refreshInterval = setInterval(() => {
+      fetchData();
+    }, 5000);
+    
+    return () => {
+      clearInterval(refreshInterval);
+    };
   }, []);
 
-  const fetchData = async () => {
+  const fetchData = async (showLoading = false) => {
     try {
+      if (showLoading) {
+        setLoading(true);
+      }
+      
       const serversResponse = await serversService.getAll();
       const serversData = serversResponse.data.servers;
       setServers(serversData);
 
-      // Fetch containers for each server
-      const containersData = {};
-      for (const server of serversData) {
+      // Fetch containers for each server in parallel for better performance
+      const containerPromises = serversData.map(async (server) => {
         try {
           const containersResponse = await containersService.getAll(server.id, { all: 'true' });
-          containersData[server.id] = containersResponse.data.containers;
+          return { serverId: server.id, containers: containersResponse.data.containers };
         } catch (error) {
           console.error(`Failed to fetch containers for server ${server.id}:`, error);
-          containersData[server.id] = [];
+          return { serverId: server.id, containers: [] };
         }
-      }
+      });
+      
+      const containerResults = await Promise.all(containerPromises);
+      const containersData = {};
+      containerResults.forEach(({ serverId, containers: serverContainers }) => {
+        containersData[serverId] = serverContainers;
+      });
+      
       setContainers(containersData);
     } catch (error) {
       console.error('Failed to fetch data:', error);

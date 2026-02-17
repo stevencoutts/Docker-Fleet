@@ -7,10 +7,15 @@ const Console = ({ serverId, containerId }) => {
   const [loading, setLoading] = useState(false);
   const [commandHistory, setCommandHistory] = useState([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
+  const [workingDirectory, setWorkingDirectory] = useState('/');
   const outputEndRef = useRef(null);
   const inputRef = useRef(null);
 
   useEffect(() => {
+    // Reset state when container changes
+    setWorkingDirectory('/');
+    setCommandHistory([]);
+    setHistoryIndex(-1);
     // Add welcome message
     setOutput([{
       type: 'system',
@@ -24,10 +29,20 @@ const Console = ({ serverId, containerId }) => {
     outputEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [output]);
 
+  useEffect(() => {
+    // Refocus input after command execution completes
+    if (!loading && inputRef.current) {
+      // Use setTimeout to ensure focus happens after React has finished rendering
+      setTimeout(() => {
+        inputRef.current?.focus();
+      }, 0);
+    }
+  }, [loading]);
+
   const executeCommand = async () => {
     if (!command.trim() || loading) return;
 
-    const cmd = command.trim();
+    let cmd = command.trim();
     setCommand('');
     setLoading(true);
 
@@ -47,16 +62,136 @@ const Console = ({ serverId, containerId }) => {
     setHistoryIndex(-1);
 
     try {
-      const response = await containersService.executeCommand(serverId, containerId, cmd);
-      
-      const result = {
-        type: response.data.success ? 'output' : 'error',
-        content: response.data.stdout || response.data.stderr || 'No output',
-        code: response.data.code,
-        timestamp: new Date(),
-      };
-
-      setOutput([...newOutput, result]);
+      // Handle cd command specially to maintain working directory state
+      if (cmd.trim().startsWith('cd ') || cmd.trim() === 'cd') {
+        let targetDir = cmd.trim() === 'cd' ? '' : cmd.substring(3).trim();
+        
+        // Build command that handles ~ expansion, changes directory, and reports the new directory
+        // Use sh -c to chain commands: expand ~, cd to target, then pwd to get the actual directory
+        // Escape the target directory to handle spaces and special characters
+        let cdCommand;
+        if (targetDir.startsWith('~') || !targetDir) {
+          // Handle ~ expansion and empty cd in one command
+          const dirPart = targetDir ? targetDir.replace('~', '$HOME') : '$HOME';
+          cdCommand = `cd ${dirPart} 2>&1 && pwd || (echo "cd: ${targetDir || '~'}: No such file or directory" >&2 && exit 1)`;
+        } else {
+          const escapedDir = targetDir.replace(/'/g, "'\\''");
+          cdCommand = `cd '${escapedDir}' 2>&1 && pwd || (echo "cd: ${targetDir}: No such file or directory" >&2 && exit 1)`;
+        }
+        const response = await containersService.executeCommand(serverId, containerId, cdCommand);
+        
+        // Check if cd was successful by looking at the output
+        const output = (response.data.stdout || '').trim();
+        const error = (response.data.stderr || '').trim();
+        const hasError = response.data.code !== 0 || error.includes('No such file') || output.includes('No such file');
+        
+        if (!hasError && output) {
+          // Successfully changed directory - update state
+          const newDir = output;
+          setWorkingDirectory(newDir);
+          const result = {
+            type: 'output',
+            content: '', // cd doesn't output anything on success
+            code: 0,
+            timestamp: new Date(),
+          };
+          setOutput([...newOutput, result]);
+        } else {
+          // Failed to change directory - clean up error message
+          let errorMsg = error || output || `cd: ${targetDir || '~'}: No such file or directory`;
+          // Remove duplicate error messages and clean up
+          if (errorMsg.includes("can't cd to")) {
+            errorMsg = errorMsg.split('\n').find(line => line.includes("can't cd to") || line.includes("No such file")) || errorMsg;
+          }
+          // Remove /bin/sh prefix if present
+          errorMsg = errorMsg.replace(/^\/bin\/sh: \d+: /, '').trim();
+          const result = {
+            type: 'error',
+            content: errorMsg || `cd: ${targetDir || '~'}: No such file or directory`,
+            code: response.data.code || 1,
+            timestamp: new Date(),
+          };
+          setOutput([...newOutput, result]);
+        }
+      } else {
+        // Detect interactive commands and suggest alternatives
+        const interactiveCommands = {
+          'more': 'cat',
+          'less': 'cat',
+          'vi ': 'nano or use cat to view files',
+          'vim ': 'nano or use cat to view files',
+          'nano ': 'Use cat to view files, or edit via other means',
+          'htop': 'top -b (non-interactive)',
+          ' top ': 'top -b (non-interactive)',
+        };
+        
+        const cmdLower = cmd.toLowerCase();
+        let suggestion = null;
+        for (const [interactive, alternative] of Object.entries(interactiveCommands)) {
+          if (cmdLower.includes(interactive)) {
+            suggestion = alternative;
+            break;
+          }
+        }
+        
+        // For other commands, prepend cd to working directory if not already in root
+        let finalCommand = cmd;
+        if (workingDirectory !== '/') {
+          // Execute command in the context of the working directory
+          // Use sh -c to change to working directory first, then execute command
+          // Escape the working directory to handle spaces
+          const escapedDir = workingDirectory.replace(/'/g, "'\\''");
+          finalCommand = `cd '${escapedDir}' && ${cmd}`;
+        }
+        
+        try {
+          const response = await containersService.executeCommand(serverId, containerId, finalCommand);
+          
+          // Check if it's a timeout error
+          const output = response.data.stdout || '';
+          const error = response.data.stderr || '';
+          const isTimeout = output.includes('timed out') || 
+                          output.includes('timeout') || 
+                          error.includes('timed out') ||
+                          error.includes('TIMEOUT') ||
+                          response.data.code === 124; // timeout command exit code
+          
+          if (isTimeout && suggestion) {
+            const result = {
+              type: 'error',
+              content: `Command timed out. Interactive commands like '${cmd.split(' ')[0]}' are not supported in this console.\nTip: Use '${suggestion}' instead.`,
+              code: response.data.code || 124,
+              timestamp: new Date(),
+            };
+            setOutput([...newOutput, result]);
+          } else {
+            const result = {
+              type: response.data.success ? 'output' : 'error',
+              content: response.data.stdout || response.data.stderr || 'No output',
+              code: response.data.code,
+              timestamp: new Date(),
+            };
+            setOutput([...newOutput, result]);
+          }
+        } catch (error) {
+          let errorMessage = error.response?.data?.error || error.message || 'Failed to execute command';
+          
+          // Check if it's a timeout error
+          if (errorMessage.includes('timed out') || errorMessage.includes('TIMEOUT') || error.code === 'TIMEOUT') {
+            if (suggestion) {
+              errorMessage = `Command timed out. Interactive commands like '${cmd.split(' ')[0]}' are not supported in this console.\nTip: Use '${suggestion}' instead.`;
+            } else {
+              errorMessage = `Command timed out after 10 seconds. Interactive commands are not supported.`;
+            }
+          }
+          
+          setOutput([...newOutput, {
+            type: 'error',
+            content: errorMessage,
+            timestamp: new Date(),
+          }]);
+        }
+      }
     } catch (error) {
       setOutput([...newOutput, {
         type: 'error',
@@ -65,14 +200,119 @@ const Console = ({ serverId, containerId }) => {
       }]);
     } finally {
       setLoading(false);
-      inputRef.current?.focus();
+      // Focus will be handled by useEffect when loading becomes false
+      // But also try to focus immediately as a fallback
+      setTimeout(() => {
+        inputRef.current?.focus();
+      }, 0);
     }
   };
 
-  const handleKeyDown = (e) => {
+  const handleTabComplete = async (currentCommand) => {
+    if (!currentCommand.trim()) return;
+    
+    try {
+      // Get the last word (what we're trying to complete)
+      const words = currentCommand.trim().split(/\s+/);
+      const lastWord = words[words.length - 1] || '';
+      const prefix = words.slice(0, -1).join(' ');
+      
+      if (!lastWord) return;
+      
+      // Build path for completion - handle relative and absolute paths
+      let basePath = workingDirectory !== '/' ? workingDirectory : '';
+      let searchPattern = lastWord;
+      
+      // If lastWord contains a path separator, split it
+      if (lastWord.includes('/')) {
+        const lastSlash = lastWord.lastIndexOf('/');
+        const dirPart = lastWord.substring(0, lastSlash);
+        searchPattern = lastWord.substring(lastSlash + 1);
+        
+        // Handle absolute vs relative paths
+        if (dirPart.startsWith('/')) {
+          basePath = dirPart;
+        } else if (dirPart) {
+          basePath = basePath ? `${basePath}/${dirPart}` : dirPart;
+        }
+      }
+      
+      // Escape the search pattern for shell (only escape special glob chars, not all regex chars)
+      const escapedPattern = searchPattern.replace(/[*?[\\]/g, '\\$&');
+      
+      // Use ls to find matching files/directories
+      // Simple approach: cd to base path, then ls with pattern
+      const basePathPart = basePath ? `cd '${basePath.replace(/'/g, "'\\''")}' && ` : '';
+      const completionCommand = `${basePathPart}ls -1 -d ${escapedPattern}* 2>/dev/null | head -20 || echo ""`;
+      
+      const response = await containersService.executeCommand(serverId, containerId, completionCommand);
+      
+      if (response.data.success && response.data.stdout && response.data.stdout.trim()) {
+        const completions = response.data.stdout.trim().split('\n')
+          .filter(c => c.trim() && !c.includes('Permission denied') && !c.includes('No such file'));
+        
+        if (completions.length === 1) {
+          // Single match - auto-complete
+          const completed = completions[0];
+          // If we had a path, reconstruct it
+          let fullPath;
+          if (lastWord.includes('/')) {
+            const dirPart = lastWord.substring(0, lastWord.lastIndexOf('/') + 1);
+            fullPath = dirPart + completed;
+          } else {
+            fullPath = completed;
+          }
+          const newCommand = prefix ? `${prefix} ${fullPath}` : fullPath;
+          // Add space if it's a file, or keep / if it's a directory
+          const needsSpace = !completed.endsWith('/');
+          setCommand(newCommand + (needsSpace ? ' ' : ''));
+        } else if (completions.length > 1) {
+          // Multiple matches - find common prefix
+          let commonPrefix = completions[0];
+          for (let i = 1; i < completions.length; i++) {
+            const match = completions[i];
+            let j = 0;
+            while (j < commonPrefix.length && j < match.length && commonPrefix[j] === match[j]) {
+              j++;
+            }
+            commonPrefix = commonPrefix.substring(0, j);
+          }
+          
+          if (commonPrefix.length > searchPattern.length) {
+            // We can complete to the common prefix
+            let fullPath;
+            if (lastWord.includes('/')) {
+              const dirPart = lastWord.substring(0, lastWord.lastIndexOf('/') + 1);
+              fullPath = dirPart + commonPrefix;
+            } else {
+              fullPath = commonPrefix;
+            }
+            const newCommand = prefix ? `${prefix} ${fullPath}` : fullPath;
+            setCommand(newCommand);
+          } else {
+            // Show all matches in console
+            const matchesList = completions.join('  ');
+            setOutput(prev => [...prev, {
+              type: 'system',
+              content: `Possible completions: ${matchesList}`,
+              timestamp: new Date(),
+            }]);
+          }
+        }
+      }
+    } catch (error) {
+      // Silently fail tab completion - don't show errors
+      console.debug('Tab completion failed:', error);
+    }
+  };
+
+  const handleKeyDown = async (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       executeCommand();
+    } else if (e.key === 'Tab') {
+      e.preventDefault();
+      await handleTabComplete(command);
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
       if (commandHistory.length > 0) {
@@ -158,7 +398,9 @@ const Console = ({ serverId, containerId }) => {
       {/* Input Area */}
       <div className="border-t border-gray-700 dark:border-gray-800 p-4 bg-gray-800 dark:bg-gray-900">
         <div className="flex items-center gap-2">
-          <span className="text-green-400 dark:text-green-500 font-mono text-sm">$</span>
+          <span className="text-green-400 dark:text-green-500 font-mono text-sm">
+            {workingDirectory === '/' ? '~' : workingDirectory}$
+          </span>
           <input
             ref={inputRef}
             type="text"
@@ -171,7 +413,14 @@ const Console = ({ serverId, containerId }) => {
             autoFocus
           />
           <button
-            onClick={executeCommand}
+            onClick={(e) => {
+              e.preventDefault();
+              executeCommand();
+              // Ensure input retains focus after button click
+              setTimeout(() => {
+                inputRef.current?.focus();
+              }, 0);
+            }}
             disabled={loading || !command.trim()}
             className="px-4 py-2 bg-primary-600 dark:bg-primary-500 text-white rounded hover:bg-primary-700 dark:hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
           >
@@ -189,6 +438,7 @@ const Console = ({ serverId, containerId }) => {
         </div>
         <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
           <span>↑/↓: Navigate history</span>
+          <span className="ml-4">Tab: Auto-complete</span>
           <span className="ml-4">Enter: Execute command</span>
         </div>
       </div>

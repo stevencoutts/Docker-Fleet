@@ -43,6 +43,12 @@ A production-ready full-stack web application for managing Docker containers acr
 - Real-time container status updates
 - Live container statistics
 
+### Email Alerts
+- Automatic email notifications when containers with auto-restart go down
+- Recovery alerts when containers come back online
+- Configurable SMTP settings
+- Alert cooldown to prevent spam
+
 ## 🚀 Quick Start
 
 ### Prerequisites
@@ -70,6 +76,8 @@ A production-ready full-stack web application for managing Docker containers acr
    - `ENCRYPTION_KEY`: A 32-character key for encrypting SSH keys
    - `DB_PASSWORD`: Strong database password
    - `CORS_ORIGIN`: Frontend URL (default: http://localhost:3020)
+   - `EMAIL_ENABLED`: Set to `true` to enable email alerts
+   - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`: Configure your SMTP server
 
 3. **Build and start services**
    ```bash
@@ -360,6 +368,17 @@ docker-compose exec backend npm run migrate
 | `RATE_LIMIT_WINDOW_MS` | Rate limit window | `900000` |
 | `RATE_LIMIT_MAX_REQUESTS` | Max requests per window | `100` |
 | `LOG_LEVEL` | Logging level | `info` |
+| `EMAIL_ENABLED` | Enable email alerts | `false` |
+| `EMAIL_FROM_ADDRESS` | Email sender address | `noreply@dockerfleet.local` |
+| `EMAIL_FROM_NAME` | Email sender name | `DockerFleet Manager` |
+| `SMTP_HOST` | SMTP server host | `localhost` |
+| `SMTP_PORT` | SMTP server port | `587` |
+| `SMTP_SECURE` | Use TLS/SSL | `false` |
+| `SMTP_USER` | SMTP username | - |
+| `SMTP_PASSWORD` | SMTP password | - |
+| `SMTP_REJECT_UNAUTHORIZED` | Reject unauthorized certs | `true` |
+| `MONITORING_CHECK_INTERVAL_MS` | Container check interval | `60000` (1 min) |
+| `MONITORING_ALERT_COOLDOWN_MS` | Alert cooldown period | `300000` (5 min) |
 
 ### Frontend
 
@@ -385,14 +404,58 @@ docker-compose exec backend npm run migrate
 - Verify user has Docker permissions (may need to add to docker group)
 - Check container logs for errors
 
+## 📧 Email Alerts Configuration
+
+The application can send email alerts when containers with auto-restart enabled go down or recover.
+
+### Setup
+
+1. **Enable email alerts** in `backend/.env`:
+   ```bash
+   EMAIL_ENABLED=true
+   EMAIL_FROM_ADDRESS=your-email@example.com
+   EMAIL_FROM_NAME=DockerFleet Manager
+   ```
+
+2. **Configure SMTP settings**:
+   ```bash
+   SMTP_HOST=smtp.gmail.com
+   SMTP_PORT=587
+   SMTP_SECURE=false
+   SMTP_USER=your-email@gmail.com
+   SMTP_PASSWORD=your-app-password
+   ```
+
+3. **For Gmail**, you'll need to:
+   - Enable 2-factor authentication
+   - Generate an "App Password" (not your regular password)
+   - Use the app password in `SMTP_PASSWORD`
+
+4. **Restart the backend**:
+   ```bash
+   docker-compose restart backend
+   ```
+
+### Monitoring Settings
+
+- `MONITORING_CHECK_INTERVAL_MS`: How often to check containers (default: 60000ms = 1 minute)
+- `MONITORING_ALERT_COOLDOWN_MS`: Minimum time between alerts for the same container (default: 300000ms = 5 minutes)
+
+### How It Works
+
+- The monitoring service automatically checks all containers every minute
+- Alerts are sent when:
+  - A container with auto-restart enabled goes down
+  - A previously down container recovers
+- Alerts are sent to the email address of the user who owns the server
+- Cooldown prevents spam - alerts for the same container are limited to once per cooldown period
+
 ## 🔮 Future Enhancements
 
 - [ ] Kubernetes support
 - [ ] Container filtering and search
 - [ ] Activity audit logs
-- [ ] Dark/light mode toggle
 - [ ] API documentation with Swagger
-- [ ] Container health monitoring
 - [ ] Automated backups
 - [ ] Multi-user collaboration
 - [ ] Container templates

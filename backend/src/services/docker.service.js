@@ -179,13 +179,30 @@ class DockerService {
     // Default to /bin/sh if no shell is specified
     const shell = options.shell || '/bin/sh';
     
+    // Detect interactive commands and wrap with timeout
+    // Interactive commands: more, less, vi, vim, nano, emacs, htop, top (without -b), etc.
+    const interactiveCommands = ['more', 'less', 'vi ', 'vim ', 'nano ', 'emacs ', 'htop', ' top '];
+    const commandLower = command.toLowerCase();
+    const isInteractive = interactiveCommands.some(cmd => commandLower.includes(cmd));
+    
+    let finalCommand = command;
+    
+    // If it's an interactive command, wrap it with timeout to prevent hanging
+    // Use timeout command if available, otherwise rely on SSH timeout
+    if (isInteractive) {
+      // Try to use timeout command (available on most Linux systems)
+      // timeout 5s will kill the command after 5 seconds
+      finalCommand = `timeout 5s sh -c '${command.replace(/'/g, "'\\''")}' 2>&1 || echo "Command timed out or is interactive. Use 'cat' instead of 'more' or 'less'."`;
+    }
+    
     // Build docker exec command - use sh -c to execute the command
     // Escape single quotes in the command
-    const escapedCommand = command.replace(/'/g, "'\\''");
+    const escapedCommand = finalCommand.replace(/'/g, "'\\''");
     const dockerCommand = `docker exec -i ${containerId} ${shell} -c '${escapedCommand}'`;
     
     const result = await sshService.executeCommand(server, dockerCommand, {
       allowFailure: true,
+      timeout: options.timeout || 10000, // 10 second timeout for console commands
       ...options,
     });
     
@@ -858,9 +875,27 @@ class DockerService {
     let containerName = '';
     try {
       const containerDetails = await this.getContainerDetails(server, containerId);
-      containerName = containerDetails.Name?.replace('/', '') || containerDetails.Name || '';
+      // Extract container name - Docker returns it with leading slash
+      containerName = containerDetails.Name?.replace(/^\//, '') || 
+                      containerDetails.Name || 
+                      containerDetails.Config?.Hostname || 
+                      '';
+      
+      // Also try alternative name fields
+      if (!containerName) {
+        containerName = containerDetails.Config?.Labels?.['com.docker.compose.service'] ||
+                       containerDetails.Config?.Labels?.['io.kubernetes.container.name'] ||
+                       '';
+      }
+      
+      logger.debug(`Container name extracted for ${containerId}: "${containerName}"`);
     } catch (error) {
       logger.error('Failed to get container details for snapshot filtering:', error);
+    }
+
+    if (!containerName) {
+      logger.warn(`Could not extract container name for ${containerId}, returning empty snapshots list`);
+      return [];
     }
 
     // Get all images
@@ -868,28 +903,53 @@ class DockerService {
     const result = await sshService.executeCommand(server, command, { allowFailure: true });
     
     if (!result.stdout.trim()) {
+      logger.debug('No images found on server');
       return [];
     }
 
     const lines = result.stdout.trim().split('\n').filter(line => line.trim());
     const images = [];
     
+    // Normalize container name for matching (lowercase, no special chars)
+    const normalizedContainerName = containerName.toLowerCase().trim();
+    const snapshotPrefix = `${normalizedContainerName}-snapshot`;
+    
+    logger.debug(`Looking for snapshots with prefix: "${snapshotPrefix}"`);
+    logger.debug(`Total images to check: ${lines.length}`);
+    
     for (const line of lines) {
       const parts = line.split('|');
       if (parts.length >= 3) {
-        const imageName = parts[0];
-        // Only include images that match the container name pattern
-        // Format: <containerName>-snapshot or <containerName>-snapshot:tag
-        if (containerName && imageName.startsWith(`${containerName}-snapshot`)) {
+        const fullImageName = parts[0]; // Format: repository:tag
+        const [repository, tag] = fullImageName.split(':');
+        const normalizedRepository = repository.toLowerCase().trim();
+        const normalizedFullName = fullImageName.toLowerCase();
+        
+        // Check if repository matches the pattern: <containerName>-snapshot
+        // The repository should start with the snapshot prefix
+        // Examples: "dispatcharr-snapshot" or "dispatcharr-snapshot-v1" should match
+        const matchesRepository = normalizedRepository === snapshotPrefix || 
+                                  normalizedRepository.startsWith(`${snapshotPrefix}-`) ||
+                                  normalizedRepository.startsWith(`${snapshotPrefix}:`);
+        
+        // Also check the full image name as fallback (repository:tag format)
+        const matchesFullName = normalizedFullName.startsWith(`${snapshotPrefix}:`) ||
+                               normalizedFullName.startsWith(`${snapshotPrefix}-`);
+        
+        if (matchesRepository || matchesFullName) {
+          logger.debug(`Found matching snapshot: ${fullImageName} (repository: ${repository}, matches: ${matchesRepository || matchesFullName})`);
           images.push({
-            name: imageName,
+            name: fullImageName,
             id: parts[1],
             created: parts[2],
           });
+        } else {
+          logger.debug(`Skipping image ${fullImageName} (repository: ${repository}, expected prefix: ${snapshotPrefix})`);
         }
       }
     }
 
+    logger.debug(`Returning ${images.length} snapshots for container ${containerName}`);
     return images;
   }
 
