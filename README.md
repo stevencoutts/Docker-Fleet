@@ -512,7 +512,3 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## 📧 Support
 
 For issues and questions, please open an issue on GitHub.
-
----
-
-**Built with ❤️ for managing Docker containers at scale**
