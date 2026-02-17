@@ -26,7 +26,9 @@ const Layout = () => {
           <div className="flex justify-between h-16">
             <div className="flex">
               <div className="flex-shrink-0 flex items-center">
-                <h1 className="text-xl font-bold text-primary-600">DockerFleet Manager</h1>
+                <Link to="/" className="text-xl font-bold text-primary-600 hover:text-primary-700 transition-colors">
+                  DockerFleet Manager
+                </Link>
               </div>
               <div className="hidden sm:ml-6 sm:flex sm:space-x-8">
                 {navigation.map((item) => (
