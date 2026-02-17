@@ -21,4 +21,6 @@ export const containersService = {
     api.post(`/api/v1/servers/${serverId}/containers/${containerId}/restart`),
   remove: (serverId, containerId, force = false) =>
     api.delete(`/api/v1/servers/${serverId}/containers/${containerId}?force=${force}`),
+  updateRestartPolicy: (serverId, containerId, policy) =>
+    api.put(`/api/v1/servers/${serverId}/containers/${containerId}/restart-policy`, { policy }),
 };

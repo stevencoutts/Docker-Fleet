@@ -168,6 +168,26 @@ const getContainerStats = async (req, res, next) => {
   }
 };
 
+const updateRestartPolicy = async (req, res, next) => {
+  try {
+    const { serverId, containerId } = req.params;
+    const { policy = 'unless-stopped' } = req.body;
+
+    const server = await Server.findOne({
+      where: { id: serverId, userId: req.user.id },
+    });
+
+    if (!server) {
+      return res.status(404).json({ error: 'Server not found' });
+    }
+
+    const result = await dockerService.updateRestartPolicy(server, containerId, policy);
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
 module.exports = {
   getContainers,
   getContainerDetails,
@@ -177,4 +197,5 @@ module.exports = {
   restartContainer,
   removeContainer,
   getContainerStats,
+  updateRestartPolicy,
 };

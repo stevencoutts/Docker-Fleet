@@ -14,6 +14,7 @@ const ServerDetails = () => {
   const [showAll, setShowAll] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all'); // 'all', 'running', 'stopped'
+  const [updatingPolicies, setUpdatingPolicies] = useState(new Set()); // Track containers being updated
 
   useEffect(() => {
     fetchData();
@@ -415,18 +416,78 @@ const ServerDetails = () => {
               
               const image = containerData.Image || containerData['.Image'] || containerData.image || 'Unknown';
               const ports = containerData.Ports || containerData['.Ports'] || containerData.ports || '';
+              const restartPolicy = containerData.RestartPolicy || containerData.restartPolicy || 'no';
+              const hasAutoRestart = restartPolicy !== 'no';
+
+              const handleToggleRestart = async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                
+                if (updatingPolicies.has(containerId)) return; // Prevent double-clicks
+                
+                setUpdatingPolicies(prev => new Set(prev).add(containerId));
+                
+                try {
+                  // Toggle between 'no' and 'unless-stopped' (most common use case)
+                  const newPolicy = restartPolicy === 'no' ? 'unless-stopped' : 'no';
+                  await containersService.updateRestartPolicy(serverId, containerId, newPolicy);
+                  
+                  // Update local state
+                  setContainers(containers.map(c => {
+                    const cData = typeof c === 'string' ? (() => { try { return JSON.parse(c); } catch { return { ID: c }; } })() : c;
+                    const cId = cData.ID || cData.Id || cData['.ID'] || cData.id;
+                    if (cId === containerId) {
+                      return { ...cData, RestartPolicy: newPolicy };
+                    }
+                    return c;
+                  }));
+                } catch (error) {
+                  console.error('Failed to update restart policy:', error);
+                  alert(error.response?.data?.error || 'Failed to update restart policy');
+                } finally {
+                  setUpdatingPolicies(prev => {
+                    const next = new Set(prev);
+                    next.delete(containerId);
+                    return next;
+                  });
+                }
+              };
 
               return (
                 <div key={containerId} className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:shadow-md dark:hover:shadow-gray-700 transition-all duration-200 bg-white dark:bg-gray-800">
                   <div className="flex items-start justify-between mb-3">
                     <div className="flex-1 min-w-0">
-                      <Link
-                        to={`/servers/${serverId}/containers/${containerId}`}
-                        className="text-sm font-semibold text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 truncate block"
-                        title={containerName}
-                      >
-                        {containerName.replace(/^\//, '')}
-                      </Link>
+                      <div className="flex items-center gap-2">
+                        <Link
+                          to={`/servers/${serverId}/containers/${containerId}`}
+                          className="text-sm font-semibold text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 truncate"
+                          title={containerName}
+                        >
+                          {containerName.replace(/^\//, '')}
+                        </Link>
+                        <button
+                          onClick={handleToggleRestart}
+                          disabled={updatingPolicies.has(containerId)}
+                          className={`flex-shrink-0 p-1 rounded transition-colors ${
+                            hasAutoRestart
+                              ? 'text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20'
+                              : 'text-gray-400 dark:text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700'
+                          } ${updatingPolicies.has(containerId) ? 'opacity-50 cursor-not-allowed' : ''}`}
+                          title={hasAutoRestart 
+                            ? `Auto-restart: ${restartPolicy} (click to disable)` 
+                            : 'Auto-restart disabled (click to enable)'}
+                        >
+                          {updatingPolicies.has(containerId) ? (
+                            <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 14M20 20v-5h-.582m-15.356 2a8.001 8.001 0 0015.356-2m0 0V9M20 4v5" />
+                            </svg>
+                          ) : (
+                            <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clipRule="evenodd" />
+                            </svg>
+                          )}
+                        </button>
+                      </div>
                       <p className="text-xs text-gray-500 dark:text-gray-400 truncate mt-1" title={image}>
                         {image}
                       </p>

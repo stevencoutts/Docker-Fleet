@@ -12,26 +12,81 @@ class DockerService {
     }
 
     const lines = result.stdout.trim().split('\n').filter(line => line.trim());
-    const containers = lines.map((line) => {
+    const containers = [];
+    const containerIds = [];
+    
+    // First pass: parse container data
+    for (const line of lines) {
       const parts = line.split('|');
       if (parts.length >= 4) {
-        return {
-          ID: parts[0] || '',
+        const containerId = parts[0] || '';
+        containerIds.push(containerId);
+        containers.push({
+          ID: containerId,
           Names: parts[1] || '',
           Image: parts[2] || 'Unknown',
           Status: parts[3] || 'Unknown',
           Ports: parts[4] || '',
-        };
+          RestartPolicy: 'no', // Default, will be updated
+        });
+      } else {
+        // Fallback for malformed lines
+        containers.push({
+          ID: line.substring(0, 12) || '',
+          Names: '',
+          Image: 'Unknown',
+          Status: 'Unknown',
+          Ports: '',
+          RestartPolicy: 'no',
+        });
       }
-      // Fallback for malformed lines
-      return {
-        ID: line.substring(0, 12) || '',
-        Names: '',
-        Image: 'Unknown',
-        Status: 'Unknown',
-        Ports: '',
-      };
-    });
+    }
+
+    // Batch fetch restart policies for all containers at once
+    if (containerIds.length > 0) {
+      try {
+        // Use docker inspect with multiple IDs to get all restart policies in one command
+        const idsString = containerIds.join(' ');
+        const inspectCommand = `docker inspect ${idsString} --format '{{.Id}}|{{.HostConfig.RestartPolicy.Name}}'`;
+        const inspectResult = await sshService.executeCommand(server, inspectCommand, { allowFailure: true });
+        
+        if (inspectResult && inspectResult.stdout) {
+          const policyLines = inspectResult.stdout.trim().split('\n').filter(line => line.trim());
+          const policyMap = {};
+          
+          for (const policyLine of policyLines) {
+            const [id, policy] = policyLine.split('|');
+            if (id && policy) {
+              // Docker inspect returns full ID, but we need to match with short ID
+              const shortId = id.substring(0, 12);
+              policyMap[shortId] = policy.trim() || 'no';
+            }
+          }
+          
+          // Update containers with restart policies
+          containers.forEach(container => {
+            const shortId = container.ID.substring(0, 12);
+            if (policyMap[shortId]) {
+              container.RestartPolicy = policyMap[shortId];
+            }
+          });
+        }
+      } catch (error) {
+        logger.debug('Failed to batch fetch restart policies:', error.message);
+        // Fallback: try individual fetches for first few containers only
+        for (let i = 0; i < Math.min(containers.length, 5); i++) {
+          try {
+            const inspectCommand = `docker inspect ${containers[i].ID} --format '{{.HostConfig.RestartPolicy.Name}}'`;
+            const inspectResult = await sshService.executeCommand(server, inspectCommand, { allowFailure: true });
+            if (inspectResult && inspectResult.stdout) {
+              containers[i].RestartPolicy = inspectResult.stdout.trim() || 'no';
+            }
+          } catch (e) {
+            // Ignore individual failures
+          }
+        }
+      }
+    }
 
     return containers;
   }
@@ -95,6 +150,28 @@ class DockerService {
     const command = `docker rm ${force ? '-f' : ''} ${containerId}`;
     const result = await sshService.executeCommand(server, command);
     return { success: result.code === 0, message: result.stdout || result.stderr };
+  }
+
+  async updateRestartPolicy(server, containerId, policy = 'unless-stopped') {
+    // Valid policies: no, always, on-failure, unless-stopped
+    const validPolicies = ['no', 'always', 'on-failure', 'unless-stopped'];
+    if (!validPolicies.includes(policy)) {
+      throw new Error(`Invalid restart policy: ${policy}. Must be one of: ${validPolicies.join(', ')}`);
+    }
+
+    // Use docker update to change restart policy
+    const command = `docker update --restart=${policy} ${containerId}`;
+    const result = await sshService.executeCommand(server, command);
+    
+    if (result.code !== 0) {
+      throw new Error(`Failed to update restart policy: ${result.stderr || result.stdout}`);
+    }
+    
+    return { 
+      success: true, 
+      message: `Restart policy updated to: ${policy}`,
+      restartPolicy: policy
+    };
   }
 
   async getContainerStats(server, containerId) {
