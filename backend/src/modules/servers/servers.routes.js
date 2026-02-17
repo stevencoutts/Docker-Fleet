@@ -9,12 +9,14 @@ const {
   testConnection,
   serverValidation,
 } = require('./servers.controller');
+const { getHostInfo } = require('./system.controller');
 const { authenticate } = require('../../middleware/auth.middleware');
 const { validate } = require('../../middleware/validation.middleware');
 
 router.use(authenticate);
 
 router.get('/', getAllServers);
+router.get('/:id/host-info', getHostInfo); // Must be before /:id route
 router.get('/:id', getServerById);
 router.post('/', serverValidation, validate, createServer);
 router.put('/:id', serverValidation, validate, updateServer);

@@ -2,11 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { serversService } from '../services/servers.service';
 import { containersService } from '../services/containers.service';
+import { systemService } from '../services/system.service';
 
 const ServerDetails = () => {
   const { serverId } = useParams();
   const [server, setServer] = useState(null);
   const [containers, setContainers] = useState([]);
+  const [hostInfo, setHostInfo] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [showAll, setShowAll] = useState(false);
@@ -22,9 +24,13 @@ const ServerDetails = () => {
       if (showLoading) setLoading(true);
       else setRefreshing(true);
 
-      const [serverResponse, containersResponse] = await Promise.all([
+      const [serverResponse, containersResponse, hostInfoResponse] = await Promise.all([
         serversService.getById(serverId),
         containersService.getAll(serverId, { all: showAll ? 'true' : 'false' }),
+        systemService.getHostInfo(serverId).catch((error) => {
+          console.error('Failed to fetch host info:', error);
+          return { data: { hostInfo: null } };
+        }),
       ]);
 
       setServer(serverResponse.data.server);
@@ -43,6 +49,7 @@ const ServerDetails = () => {
       });
       
       setContainers(parsedContainers);
+      setHostInfo(hostInfoResponse.data.hostInfo);
     } catch (error) {
       console.error('Failed to fetch data:', error);
     } finally {
@@ -147,6 +154,73 @@ const ServerDetails = () => {
           </button>
         </div>
       </div>
+
+      {/* Host Information */}
+      {hostInfo && !hostInfo.error && (
+        <div className="mb-6 bg-white shadow rounded-lg p-6">
+          <h2 className="text-lg font-semibold text-gray-900 mb-4">Host Information</h2>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div>
+              <dt className="text-sm font-medium text-gray-500">Hostname</dt>
+              <dd className="mt-1 text-sm text-gray-900">{hostInfo.hostname || 'Unknown'}</dd>
+            </div>
+            <div>
+              <dt className="text-sm font-medium text-gray-500">Architecture</dt>
+              <dd className="mt-1 text-sm text-gray-900">{hostInfo.architecture || 'Unknown'}</dd>
+            </div>
+            <div>
+              <dt className="text-sm font-medium text-gray-500">OS</dt>
+              <dd className="mt-1 text-sm text-gray-900">{hostInfo.os || 'Unknown'}</dd>
+            </div>
+            <div>
+              <dt className="text-sm font-medium text-gray-500">Kernel</dt>
+              <dd className="mt-1 text-sm text-gray-900">{hostInfo.kernel || 'Unknown'}</dd>
+            </div>
+            <div>
+              <dt className="text-sm font-medium text-gray-500">CPU Model</dt>
+              <dd className="mt-1 text-sm text-gray-900 truncate" title={hostInfo.cpuModel || 'Unknown'}>
+                {hostInfo.cpuModel || 'Unknown'}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-sm font-medium text-gray-500">CPU Cores</dt>
+              <dd className="mt-1 text-sm text-gray-900">{hostInfo.cpuCores || 'Unknown'}</dd>
+            </div>
+            <div>
+              <dt className="text-sm font-medium text-gray-500">CPU Usage</dt>
+              <dd className="mt-1 text-sm text-gray-900">{hostInfo.cpuUsage || 'Unknown'}</dd>
+            </div>
+            <div>
+              <dt className="text-sm font-medium text-gray-500">Load Average</dt>
+              <dd className="mt-1 text-sm text-gray-900">{hostInfo.loadAverage || 'Unknown'}</dd>
+            </div>
+            <div>
+              <dt className="text-sm font-medium text-gray-500">Total Memory</dt>
+              <dd className="mt-1 text-sm text-gray-900">{hostInfo.totalMemory || 'Unknown'}</dd>
+            </div>
+            <div>
+              <dt className="text-sm font-medium text-gray-500">Used Memory</dt>
+              <dd className="mt-1 text-sm text-gray-900">{hostInfo.usedMemory || 'Unknown'}</dd>
+            </div>
+            <div>
+              <dt className="text-sm font-medium text-gray-500">Available Memory</dt>
+              <dd className="mt-1 text-sm text-gray-900">{hostInfo.availableMemory || 'Unknown'}</dd>
+            </div>
+            <div>
+              <dt className="text-sm font-medium text-gray-500">Disk Usage</dt>
+              <dd className="mt-1 text-sm text-gray-900">{hostInfo.diskUsage || 'Unknown'}</dd>
+            </div>
+            <div>
+              <dt className="text-sm font-medium text-gray-500">Uptime</dt>
+              <dd className="mt-1 text-sm text-gray-900">{hostInfo.uptime || 'Unknown'}</dd>
+            </div>
+            <div>
+              <dt className="text-sm font-medium text-gray-500">Docker Version</dt>
+              <dd className="mt-1 text-sm text-gray-900">{hostInfo.dockerVersion || 'Unknown'}</dd>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 mb-6">
