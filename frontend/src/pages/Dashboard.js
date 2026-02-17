@@ -58,14 +58,14 @@ const Dashboard = () => {
   return (
     <div className="px-4 py-6 sm:px-0">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
-        <p className="mt-1 text-sm text-gray-600">Overview of all servers and containers</p>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Dashboard</h1>
+        <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">Overview of all servers and containers</p>
       </div>
 
       {/* Summary Cards */}
       {servers.length > 0 && (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 mb-6">
-          <div className="bg-white overflow-hidden shadow rounded-lg">
+          <div className="bg-white dark:bg-gray-800 overflow-hidden shadow rounded-lg transition-colors">
             <div className="p-5">
               <div className="flex items-center">
                 <div className="flex-shrink-0 bg-blue-500 rounded-md p-3">
@@ -75,15 +75,15 @@ const Dashboard = () => {
                 </div>
                 <div className="ml-5 w-0 flex-1">
                   <dl>
-                    <dt className="text-sm font-medium text-gray-500 truncate">Total Servers</dt>
-                    <dd className="text-lg font-semibold text-gray-900">{totalServers}</dd>
+                    <dt className="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">Total Servers</dt>
+                    <dd className="text-lg font-semibold text-gray-900 dark:text-gray-100">{totalServers}</dd>
                   </dl>
                 </div>
               </div>
             </div>
           </div>
 
-          <div className="bg-white overflow-hidden shadow rounded-lg">
+          <div className="bg-white dark:bg-gray-800 overflow-hidden shadow rounded-lg transition-colors">
             <div className="p-5">
               <div className="flex items-center">
                 <div className="flex-shrink-0 bg-green-500 rounded-md p-3">
@@ -93,15 +93,15 @@ const Dashboard = () => {
                 </div>
                 <div className="ml-5 w-0 flex-1">
                   <dl>
-                    <dt className="text-sm font-medium text-gray-500 truncate">Running Containers</dt>
-                    <dd className="text-lg font-semibold text-gray-900">{totalRunning}</dd>
+                    <dt className="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">Running Containers</dt>
+                    <dd className="text-lg font-semibold text-gray-900 dark:text-gray-100">{totalRunning}</dd>
                   </dl>
                 </div>
               </div>
             </div>
           </div>
 
-          <div className="bg-white overflow-hidden shadow rounded-lg">
+          <div className="bg-white dark:bg-gray-800 overflow-hidden shadow rounded-lg transition-colors">
             <div className="p-5">
               <div className="flex items-center">
                 <div className="flex-shrink-0 bg-gray-500 rounded-md p-3">
@@ -111,8 +111,8 @@ const Dashboard = () => {
                 </div>
                 <div className="ml-5 w-0 flex-1">
                   <dl>
-                    <dt className="text-sm font-medium text-gray-500 truncate">Total Containers</dt>
-                    <dd className="text-lg font-semibold text-gray-900">{totalContainers}</dd>
+                    <dt className="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">Total Containers</dt>
+                    <dd className="text-lg font-semibold text-gray-900 dark:text-gray-100">{totalContainers}</dd>
                   </dl>
                 </div>
               </div>
@@ -123,10 +123,10 @@ const Dashboard = () => {
 
       {servers.length === 0 ? (
         <div className="text-center py-12">
-          <p className="text-gray-500 mb-4">No servers configured</p>
+          <p className="text-gray-500 dark:text-gray-400 mb-4">No servers configured</p>
           <Link
             to="/servers/new"
-            className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700"
+            className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 dark:bg-primary-500 dark:hover:bg-primary-600 transition-colors"
           >
             Add Server
           </Link>
@@ -144,7 +144,7 @@ const Dashboard = () => {
               <Link
                 key={server.id}
                 to={`/servers/${server.id}`}
-                className="bg-white overflow-hidden shadow rounded-lg hover:shadow-lg transition-shadow"
+                className="bg-white dark:bg-gray-800 overflow-hidden shadow rounded-lg hover:shadow-lg transition-all duration-200 transform hover:-translate-y-1"
               >
                 <div className="p-5">
                   <div className="flex items-center">
@@ -157,17 +157,17 @@ const Dashboard = () => {
                     </div>
                     <div className="ml-5 w-0 flex-1">
                       <dl>
-                        <dt className="text-sm font-medium text-gray-500 truncate">
+                        <dt className="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">
                           {server.name}
                         </dt>
-                        <dd className="text-lg font-medium text-gray-900">{server.host}</dd>
+                        <dd className="text-lg font-medium text-gray-900 dark:text-gray-100">{server.host}</dd>
                       </dl>
                     </div>
                   </div>
                   <div className="mt-4">
                     <div className="flex items-center justify-between text-sm">
-                      <span className="text-gray-500">Containers</span>
-                      <span className="font-medium text-gray-900">
+                      <span className="text-gray-500 dark:text-gray-400">Containers</span>
+                      <span className="font-medium text-gray-900 dark:text-gray-100">
                         {runningCount} / {serverContainers.length} running
                       </span>
                     </div>

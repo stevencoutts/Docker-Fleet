@@ -11,8 +11,9 @@ const ServerDetails = () => {
   const [hostInfo, setHostInfo] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [showAll, setShowAll] = useState(false);
+  const [showAll, setShowAll] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all'); // 'all', 'running', 'stopped'
 
   useEffect(() => {
     fetchData();
@@ -92,13 +93,31 @@ const ServerDetails = () => {
     }
   };
 
-  // Filter containers based on search term
+  // Filter containers based on search term and status
   const filteredContainers = containers.filter(container => {
+    // Handle different container data formats
+    let containerData = container;
+    if (typeof container === 'string') {
+      try {
+        containerData = JSON.parse(container);
+      } catch (e) {
+        containerData = { ID: container };
+      }
+    }
+    
+    const status = (containerData.Status || containerData['.Status'] || containerData.status || '').toLowerCase();
+    const isRunning = status.includes('up') || status.includes('running') || status.startsWith('up');
+    
+    // Apply status filter
+    if (statusFilter === 'running' && !isRunning) return false;
+    if (statusFilter === 'stopped' && isRunning) return false;
+    
+    // Apply search filter
     if (!searchTerm) return true;
     const search = searchTerm.toLowerCase();
-    const name = (container.Names || container['.Names'] || container.ID || '').toLowerCase();
-    const image = (container.Image || container['.Image'] || '').toLowerCase();
-    const id = (container.ID || container.Id || container['.ID'] || '').toLowerCase();
+    const name = (containerData.Names || containerData['.Names'] || containerData.ID || '').toLowerCase();
+    const image = (containerData.Image || containerData['.Image'] || containerData.image || '').toLowerCase();
+    const id = (containerData.ID || containerData.Id || containerData['.ID'] || containerData.id || '').toLowerCase();
     return name.includes(search) || image.includes(search) || id.includes(search);
   });
 
@@ -128,7 +147,7 @@ const ServerDetails = () => {
   if (!server) {
     return (
       <div className="text-center py-12">
-        <p className="text-gray-500">Server not found</p>
+        <p className="text-gray-500 dark:text-gray-400">Server not found</p>
       </div>
     );
   }
@@ -139,13 +158,13 @@ const ServerDetails = () => {
       <div className="mb-6">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">{server.name}</h1>
-            <p className="mt-1 text-sm text-gray-600">{server.host}:{server.port}</p>
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{server.name}</h1>
+            <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">{server.host}:{server.port}</p>
           </div>
           <button
             onClick={() => fetchData(false)}
             disabled={refreshing}
-            className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 flex items-center gap-2"
+            className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600 dark:bg-gray-700 disabled:opacity-50 flex items-center gap-2"
           >
             <svg className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 14M20 20v-5h-.582m-15.356 2a8.001 8.001 0 0015.356-2m0 0V9M20 4v5" />
@@ -157,66 +176,66 @@ const ServerDetails = () => {
 
       {/* Host Information */}
       {hostInfo && !hostInfo.error && (
-        <div className="mb-6 bg-white shadow rounded-lg p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">Host Information</h2>
+        <div className="mb-6 bg-white dark:bg-gray-800 shadow dark:shadow-gray-700 rounded-lg p-6">
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">Host Information</h2>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <div>
-              <dt className="text-sm font-medium text-gray-500">Hostname</dt>
-              <dd className="mt-1 text-sm text-gray-900">{hostInfo.hostname || 'Unknown'}</dd>
+              <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Hostname</dt>
+              <dd className="mt-1 text-sm text-gray-900 dark:text-gray-100">{hostInfo.hostname || 'Unknown'}</dd>
             </div>
             <div>
-              <dt className="text-sm font-medium text-gray-500">Architecture</dt>
-              <dd className="mt-1 text-sm text-gray-900">{hostInfo.architecture || 'Unknown'}</dd>
+              <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Architecture</dt>
+              <dd className="mt-1 text-sm text-gray-900 dark:text-gray-100">{hostInfo.architecture || 'Unknown'}</dd>
             </div>
             <div>
-              <dt className="text-sm font-medium text-gray-500">OS</dt>
-              <dd className="mt-1 text-sm text-gray-900">{hostInfo.os || 'Unknown'}</dd>
+              <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">OS</dt>
+              <dd className="mt-1 text-sm text-gray-900 dark:text-gray-100">{hostInfo.os || 'Unknown'}</dd>
             </div>
             <div>
-              <dt className="text-sm font-medium text-gray-500">Kernel</dt>
-              <dd className="mt-1 text-sm text-gray-900">{hostInfo.kernel || 'Unknown'}</dd>
+              <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Kernel</dt>
+              <dd className="mt-1 text-sm text-gray-900 dark:text-gray-100">{hostInfo.kernel || 'Unknown'}</dd>
             </div>
             <div>
-              <dt className="text-sm font-medium text-gray-500">CPU Model</dt>
-              <dd className="mt-1 text-sm text-gray-900 truncate" title={hostInfo.cpuModel || 'Unknown'}>
+              <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">CPU Model</dt>
+              <dd className="mt-1 text-sm text-gray-900 dark:text-gray-100 truncate" title={hostInfo.cpuModel || 'Unknown'}>
                 {hostInfo.cpuModel || 'Unknown'}
               </dd>
             </div>
             <div>
-              <dt className="text-sm font-medium text-gray-500">CPU Cores</dt>
-              <dd className="mt-1 text-sm text-gray-900">{hostInfo.cpuCores || 'Unknown'}</dd>
+              <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">CPU Cores</dt>
+              <dd className="mt-1 text-sm text-gray-900 dark:text-gray-100">{hostInfo.cpuCores || 'Unknown'}</dd>
             </div>
             <div>
-              <dt className="text-sm font-medium text-gray-500">CPU Usage</dt>
-              <dd className="mt-1 text-sm text-gray-900">{hostInfo.cpuUsage || 'Unknown'}</dd>
+              <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">CPU Usage</dt>
+              <dd className="mt-1 text-sm text-gray-900 dark:text-gray-100">{hostInfo.cpuUsage || 'Unknown'}</dd>
             </div>
             <div>
-              <dt className="text-sm font-medium text-gray-500">Load Average</dt>
-              <dd className="mt-1 text-sm text-gray-900">{hostInfo.loadAverage || 'Unknown'}</dd>
+              <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Load Average</dt>
+              <dd className="mt-1 text-sm text-gray-900 dark:text-gray-100">{hostInfo.loadAverage || 'Unknown'}</dd>
             </div>
             <div>
-              <dt className="text-sm font-medium text-gray-500">Total Memory</dt>
-              <dd className="mt-1 text-sm text-gray-900">{hostInfo.totalMemory || 'Unknown'}</dd>
+              <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Total Memory</dt>
+              <dd className="mt-1 text-sm text-gray-900 dark:text-gray-100">{hostInfo.totalMemory || 'Unknown'}</dd>
             </div>
             <div>
-              <dt className="text-sm font-medium text-gray-500">Used Memory</dt>
-              <dd className="mt-1 text-sm text-gray-900">{hostInfo.usedMemory || 'Unknown'}</dd>
+              <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Used Memory</dt>
+              <dd className="mt-1 text-sm text-gray-900 dark:text-gray-100">{hostInfo.usedMemory || 'Unknown'}</dd>
             </div>
             <div>
-              <dt className="text-sm font-medium text-gray-500">Available Memory</dt>
-              <dd className="mt-1 text-sm text-gray-900">{hostInfo.availableMemory || 'Unknown'}</dd>
+              <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Available Memory</dt>
+              <dd className="mt-1 text-sm text-gray-900 dark:text-gray-100">{hostInfo.availableMemory || 'Unknown'}</dd>
             </div>
             <div>
-              <dt className="text-sm font-medium text-gray-500">Disk Usage</dt>
-              <dd className="mt-1 text-sm text-gray-900">{hostInfo.diskUsage || 'Unknown'}</dd>
+              <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Disk Usage</dt>
+              <dd className="mt-1 text-sm text-gray-900 dark:text-gray-100">{hostInfo.diskUsage || 'Unknown'}</dd>
             </div>
             <div>
-              <dt className="text-sm font-medium text-gray-500">Uptime</dt>
-              <dd className="mt-1 text-sm text-gray-900">{hostInfo.uptime || 'Unknown'}</dd>
+              <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Uptime</dt>
+              <dd className="mt-1 text-sm text-gray-900 dark:text-gray-100">{hostInfo.uptime || 'Unknown'}</dd>
             </div>
             <div>
-              <dt className="text-sm font-medium text-gray-500">Docker Version</dt>
-              <dd className="mt-1 text-sm text-gray-900">{hostInfo.dockerVersion || 'Unknown'}</dd>
+              <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Docker Version</dt>
+              <dd className="mt-1 text-sm text-gray-900 dark:text-gray-100">{hostInfo.dockerVersion || 'Unknown'}</dd>
             </div>
           </div>
         </div>
@@ -224,7 +243,7 @@ const ServerDetails = () => {
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 mb-6">
-        <div className="bg-white overflow-hidden shadow rounded-lg">
+        <div className="bg-white dark:bg-gray-800 overflow-hidden shadow dark:shadow-gray-700 rounded-lg transition-colors">
           <div className="p-5">
             <div className="flex items-center">
               <div className="flex-shrink-0 bg-blue-500 rounded-md p-3">
@@ -234,15 +253,15 @@ const ServerDetails = () => {
               </div>
               <div className="ml-5 w-0 flex-1">
                 <dl>
-                  <dt className="text-sm font-medium text-gray-500 truncate">Total Containers</dt>
-                  <dd className="text-lg font-semibold text-gray-900">{stats.total}</dd>
+                  <dt className="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">Total Containers</dt>
+                  <dd className="text-lg font-semibold text-gray-900 dark:text-gray-100">{stats.total}</dd>
                 </dl>
               </div>
             </div>
           </div>
         </div>
 
-        <div className="bg-white overflow-hidden shadow rounded-lg">
+        <div className="bg-white dark:bg-gray-800 overflow-hidden shadow dark:shadow-gray-700 rounded-lg transition-colors">
           <div className="p-5">
             <div className="flex items-center">
               <div className="flex-shrink-0 bg-green-500 rounded-md p-3">
@@ -252,26 +271,26 @@ const ServerDetails = () => {
               </div>
               <div className="ml-5 w-0 flex-1">
                 <dl>
-                  <dt className="text-sm font-medium text-gray-500 truncate">Running</dt>
-                  <dd className="text-lg font-semibold text-gray-900">{stats.running}</dd>
+                  <dt className="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">Running</dt>
+                  <dd className="text-lg font-semibold text-gray-900 dark:text-gray-100">{stats.running}</dd>
                 </dl>
               </div>
             </div>
           </div>
         </div>
 
-        <div className="bg-white overflow-hidden shadow rounded-lg">
+        <div className="bg-white dark:bg-gray-800 overflow-hidden shadow dark:shadow-gray-700 rounded-lg transition-colors">
           <div className="p-5">
             <div className="flex items-center">
-              <div className="flex-shrink-0 bg-gray-500 rounded-md p-3">
+              <div className="flex-shrink-0 bg-gray-500 dark:bg-gray-600 rounded-md p-3">
                 <svg className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
               </div>
               <div className="ml-5 w-0 flex-1">
                 <dl>
-                  <dt className="text-sm font-medium text-gray-500 truncate">Stopped</dt>
-                  <dd className="text-lg font-semibold text-gray-900">{stats.stopped}</dd>
+                  <dt className="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">Stopped</dt>
+                  <dd className="text-lg font-semibold text-gray-900 dark:text-gray-100">{stats.stopped}</dd>
                 </dl>
               </div>
             </div>
@@ -280,49 +299,88 @@ const ServerDetails = () => {
       </div>
 
       {/* Filters and Actions */}
-      <div className="mb-4 bg-white p-4 rounded-lg shadow">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div className="flex items-center gap-4 flex-1">
-            <div className="flex-1 max-w-md">
-              <input
-                type="text"
-                placeholder="Search containers..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-              />
+      <div className="mb-4 bg-white dark:bg-gray-800 p-4 rounded-lg shadow dark:shadow-gray-700 transition-colors">
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div className="flex items-center gap-4 flex-1">
+              <div className="flex-1 max-w-md">
+                <input
+                  type="text"
+                  placeholder="Search containers..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary-500 dark:focus:ring-primary-400 focus:border-primary-500 dark:focus:border-primary-400"
+                />
+              </div>
+              <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer whitespace-nowrap">
+                <input
+                  type="checkbox"
+                  checked={showAll}
+                  onChange={(e) => setShowAll(e.target.checked)}
+                  className="rounded text-primary-600 dark:text-primary-400 focus:ring-primary-500 dark:focus:ring-primary-400"
+                />
+                Show all containers
+              </label>
             </div>
-            <label className="flex items-center gap-2 text-sm cursor-pointer">
-              <input
-                type="checkbox"
-                checked={showAll}
-                onChange={(e) => setShowAll(e.target.checked)}
-                className="rounded"
-              />
-              Show all containers
-            </label>
+            <Link
+              to={`/servers/${serverId}/images`}
+              className="text-sm font-medium text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 flex items-center gap-1 transition-colors whitespace-nowrap"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              </svg>
+              View Images
+            </Link>
           </div>
-          <Link
-            to={`/servers/${serverId}/images`}
-            className="text-sm font-medium text-primary-600 hover:text-primary-700 flex items-center gap-1"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-            </svg>
-            View Images
-          </Link>
+          
+          {/* Status Filter Tags */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm text-gray-600 dark:text-gray-400 font-medium">Filter:</span>
+            <button
+              onClick={() => setStatusFilter('all')}
+              className={`px-3 py-1.5 text-xs font-medium rounded-full transition-colors ${
+                statusFilter === 'all'
+                  ? 'bg-primary-600 dark:bg-primary-500 text-white'
+                  : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+              }`}
+            >
+              All ({containers.length})
+            </button>
+            <button
+              onClick={() => setStatusFilter('running')}
+              className={`px-3 py-1.5 text-xs font-medium rounded-full transition-colors flex items-center gap-1 ${
+                statusFilter === 'running'
+                  ? 'bg-green-600 dark:bg-green-500 text-white'
+                  : 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200 hover:bg-green-200 dark:hover:bg-green-900/50'
+              }`}
+            >
+              <span className="w-2 h-2 rounded-full bg-current"></span>
+              Running ({stats.running})
+            </button>
+            <button
+              onClick={() => setStatusFilter('stopped')}
+              className={`px-3 py-1.5 text-xs font-medium rounded-full transition-colors flex items-center gap-1 ${
+                statusFilter === 'stopped'
+                  ? 'bg-gray-600 dark:bg-gray-500 text-white'
+                  : 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-600'
+              }`}
+            >
+              <span className="w-2 h-2 rounded-full bg-current"></span>
+              Stopped ({stats.stopped})
+            </button>
+          </div>
         </div>
       </div>
 
       {/* Containers List */}
-      <div className="bg-white shadow overflow-hidden sm:rounded-lg">
+      <div className="bg-white dark:bg-gray-800 shadow dark:shadow-gray-700 overflow-hidden sm:rounded-lg transition-colors">
         {filteredContainers.length === 0 ? (
           <div className="px-6 py-12 text-center">
-            <svg className="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg className="mx-auto h-12 w-12 text-gray-400 dark:text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
             </svg>
-            <h3 className="mt-2 text-sm font-medium text-gray-900">No containers found</h3>
-            <p className="mt-1 text-sm text-gray-500">
+            <h3 className="mt-2 text-sm font-medium text-gray-900 dark:text-gray-100">No containers found</h3>
+            <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
               {searchTerm ? 'Try adjusting your search terms.' : 'No containers are running on this server.'}
             </p>
           </div>
@@ -359,25 +417,25 @@ const ServerDetails = () => {
               const ports = containerData.Ports || containerData['.Ports'] || containerData.ports || '';
 
               return (
-                <div key={containerId} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow">
+                <div key={containerId} className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:shadow-md dark:hover:shadow-gray-700 transition-all duration-200 bg-white dark:bg-gray-800">
                   <div className="flex items-start justify-between mb-3">
                     <div className="flex-1 min-w-0">
                       <Link
                         to={`/servers/${serverId}/containers/${containerId}`}
-                        className="text-sm font-semibold text-primary-600 hover:text-primary-700 truncate block"
+                        className="text-sm font-semibold text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 truncate block"
                         title={containerName}
                       >
                         {containerName.replace(/^\//, '')}
                       </Link>
-                      <p className="text-xs text-gray-500 truncate mt-1" title={image}>
+                      <p className="text-xs text-gray-500 dark:text-gray-400 truncate mt-1" title={image}>
                         {image}
                       </p>
                     </div>
                     <span
                       className={`ml-2 px-2 py-1 text-xs font-medium rounded-full flex-shrink-0 ${
                         isRunning
-                          ? 'bg-green-100 text-green-800'
-                          : 'bg-gray-100 text-gray-800'
+                          ? 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200'
+                          : 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200'
                       }`}
                     >
                       {isRunning ? 'Running' : 'Stopped'}
@@ -386,42 +444,42 @@ const ServerDetails = () => {
 
                   {ports && (
                     <div className="mb-3">
-                      <p className="text-xs text-gray-500 truncate" title={ports}>
+                      <p className="text-xs text-gray-500 dark:text-gray-400 truncate" title={ports}>
                         <span className="font-medium">Ports:</span> {ports || 'None'}
                       </p>
                     </div>
                   )}
 
                   <div className="flex items-center gap-2 mt-4">
-                    {isRunning ? (
-                      <>
+                        {isRunning ? (
+                          <>
+                            <button
+                              onClick={() => handleContainerAction('stop', containerId)}
+                              className="flex-1 px-3 py-1.5 text-xs font-medium text-yellow-800 dark:text-yellow-200 bg-yellow-50 dark:bg-yellow-900/30 rounded hover:bg-yellow-100 dark:hover:bg-yellow-900/50 transition-colors"
+                            >
+                              Stop
+                            </button>
+                            <button
+                              onClick={() => handleContainerAction('restart', containerId)}
+                              className="flex-1 px-3 py-1.5 text-xs font-medium text-blue-800 dark:text-blue-200 bg-blue-50 dark:bg-blue-900/30 rounded hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors"
+                            >
+                              Restart
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            onClick={() => handleContainerAction('start', containerId)}
+                            className="flex-1 px-3 py-1.5 text-xs font-medium text-green-800 dark:text-green-200 bg-green-50 dark:bg-green-900/30 rounded hover:bg-green-100 dark:hover:bg-green-900/50 transition-colors"
+                          >
+                            Start
+                          </button>
+                        )}
                         <button
-                          onClick={() => handleContainerAction('stop', containerId)}
-                          className="flex-1 px-3 py-1.5 text-xs font-medium text-yellow-800 bg-yellow-50 rounded hover:bg-yellow-100 transition-colors"
+                          onClick={() => handleContainerAction('remove', containerId)}
+                          className="px-3 py-1.5 text-xs font-medium text-red-800 dark:text-red-200 bg-red-50 dark:bg-red-900/30 rounded hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors"
                         >
-                          Stop
+                          Remove
                         </button>
-                        <button
-                          onClick={() => handleContainerAction('restart', containerId)}
-                          className="flex-1 px-3 py-1.5 text-xs font-medium text-blue-800 bg-blue-50 rounded hover:bg-blue-100 transition-colors"
-                        >
-                          Restart
-                        </button>
-                      </>
-                    ) : (
-                      <button
-                        onClick={() => handleContainerAction('start', containerId)}
-                        className="flex-1 px-3 py-1.5 text-xs font-medium text-green-800 bg-green-50 rounded hover:bg-green-100 transition-colors"
-                      >
-                        Start
-                      </button>
-                    )}
-                    <button
-                      onClick={() => handleContainerAction('remove', containerId)}
-                      className="px-3 py-1.5 text-xs font-medium text-red-800 bg-red-50 rounded hover:bg-red-100 transition-colors"
-                    >
-                      Remove
-                    </button>
                   </div>
                 </div>
               );
