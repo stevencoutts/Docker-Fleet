@@ -66,68 +66,101 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Rate limiting - Skip entirely for localhost/development
+// Rate limiting - Completely disabled for development/localhost
 const isDevelopment = config.env === 'development' || config.env !== 'production';
 
-// Helper to check if request is from localhost
+// Helper to check if request is from localhost (more comprehensive)
 const isLocalhost = (req) => {
+  // Check origin header first (most reliable for web requests)
+  const origin = req.headers.origin || req.headers.referer || '';
+  if (origin.includes('localhost') || origin.includes('127.0.0.1') || origin.includes('192.168.') || origin.includes('10.100.')) {
+    return true;
+  }
+  
+  // Check various ways the IP might be represented
   const forwarded = req.headers['x-forwarded-for'];
-  const ip = req.ip || req.connection?.remoteAddress || req.socket?.remoteAddress || '127.0.0.1';
-  const checkIp = forwarded ? forwarded.split(',')[0].trim() : ip;
-  return checkIp.includes('127.0.0.1') || 
-         checkIp.includes('::1') || 
-         checkIp.includes('localhost') || 
-         checkIp === '::ffff:127.0.0.1' ||
-         checkIp.startsWith('172.') || // Docker network
-         checkIp.startsWith('192.168.') || // Local network
-         checkIp.startsWith('10.'); // Private network
+  const ip = req.ip || 
+             req.connection?.remoteAddress || 
+             req.socket?.remoteAddress || 
+             req.headers['x-real-ip'] ||
+             '127.0.0.1';
+  
+  let checkIp = forwarded ? forwarded.split(',')[0].trim() : ip;
+  
+  // Normalize the IP
+  if (checkIp === '::1' || checkIp === '::ffff:127.0.0.1') {
+    checkIp = '127.0.0.1';
+  }
+  
+  // Check if it's localhost in any form
+  const isLocal = checkIp === '127.0.0.1' || 
+                  checkIp === '::1' || 
+                  checkIp.includes('localhost') ||
+                  checkIp.startsWith('172.') || // Docker network
+                  checkIp.startsWith('192.168.') || // Local network
+                  checkIp.startsWith('10.') || // Private network
+                  checkIp === '::ffff:127.0.0.1';
+  
+  return isLocal;
 };
 
-// Very lenient rate limiter for auth endpoints - disabled for localhost
+// Create a middleware that completely bypasses rate limiting for localhost
+// This middleware will be applied BEFORE the rate limiters
+const bypassRateLimit = (req, res, next) => {
+  // Always allow localhost/development requests - skip rate limiting entirely
+  if (isDevelopment || isLocalhost(req)) {
+    // Mark request as bypassed so rate limiters know to skip
+    req._rateLimitBypass = true;
+    return next();
+  }
+  // For non-localhost, continue to rate limiter
+  next();
+};
+
+// Very lenient rate limiter for auth endpoints - but we'll bypass it for localhost
 const authLimiter = rateLimit({
-  windowMs: 1 * 60 * 1000, // 1 minute window
-  max: 10000, // Extremely high limit
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Reasonable limit for production
   message: 'Too many login attempts from this IP, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,
   skipSuccessfulRequests: true,
-  skip: (req) => isDevelopment || isLocalhost(req), // Skip rate limiting for localhost
-  keyGenerator: (req) => {
-    if (isDevelopment || isLocalhost(req)) {
-      return 'localhost-dev';
+  skip: (req) => {
+    // Always skip for localhost/development or if bypassed by middleware
+    const shouldSkip = req._rateLimitBypass || isDevelopment || isLocalhost(req);
+    if (shouldSkip) {
+      logger.debug('Skipping rate limit for localhost request');
     }
-    const forwarded = req.headers['x-forwarded-for'];
-    const ip = req.ip || req.connection?.remoteAddress || req.socket?.remoteAddress || '127.0.0.1';
-    return forwarded ? forwarded.split(',')[0].trim() : ip;
+    return shouldSkip;
   },
 });
 
-// General rate limiter - disabled for localhost
+// General rate limiter - bypassed for localhost
 const limiter = rateLimit({
   windowMs: config.rateLimit.windowMs,
-  max: 10000, // Extremely high limit
+  max: config.rateLimit.max,
   message: 'Too many requests from this IP, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,
-  skip: (req) => isDevelopment || isLocalhost(req), // Skip rate limiting for localhost
-  keyGenerator: (req) => {
-    if (isDevelopment || isLocalhost(req)) {
-      return 'localhost-dev';
+  skip: (req) => {
+    // Always skip for localhost/development or if bypassed by middleware
+    const shouldSkip = req._rateLimitBypass || isDevelopment || isLocalhost(req);
+    if (shouldSkip) {
+      logger.debug('Skipping rate limit for localhost request');
     }
-    const forwarded = req.headers['x-forwarded-for'];
-    const ip = req.ip || req.connection?.remoteAddress || req.socket?.remoteAddress || '127.0.0.1';
-    return forwarded ? forwarded.split(',')[0].trim() : ip;
+    return shouldSkip;
   },
 });
 
-// Apply auth limiter to auth routes BEFORE general limiter
-app.use('/api/v1/auth/login', authLimiter);
-app.use('/api/v1/auth/register', authLimiter);
-app.use('/api/v1/auth/setup', authLimiter);
-app.use('/api/v1/auth/me', authLimiter);
+// Apply bypass middleware first, then rate limiters
+// For auth routes, bypass check happens in the limiter's skip function
+app.use('/api/v1/auth/login', bypassRateLimit, authLimiter);
+app.use('/api/v1/auth/register', bypassRateLimit, authLimiter);
+app.use('/api/v1/auth/setup', bypassRateLimit, authLimiter);
+app.use('/api/v1/auth/me', bypassRateLimit, authLimiter);
 
 // Apply general limiter to all other API routes
-app.use('/api/', limiter);
+app.use('/api/', bypassRateLimit, limiter);
 
 // Health check
 app.get('/health', (req, res) => {
