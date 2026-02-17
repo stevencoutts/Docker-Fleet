@@ -504,8 +504,16 @@ class DockerService {
   }
 
   async getSnapshotsForContainer(server, containerId) {
-    // Get all images that were created from this container
-    // We'll check images and see if they were created from this container
+    // Get container details to extract the container name
+    let containerName = '';
+    try {
+      const containerDetails = await this.getContainerDetails(server, containerId);
+      containerName = containerDetails.Name?.replace('/', '') || containerDetails.Name || '';
+    } catch (error) {
+      logger.error('Failed to get container details for snapshot filtering:', error);
+    }
+
+    // Get all images
     const command = `docker images --format '{{.Repository}}:{{.Tag}}|{{.ID}}|{{.CreatedAt}}'`;
     const result = await sshService.executeCommand(server, command, { allowFailure: true });
     
@@ -519,11 +527,16 @@ class DockerService {
     for (const line of lines) {
       const parts = line.split('|');
       if (parts.length >= 3) {
-        images.push({
-          name: parts[0],
-          id: parts[1],
-          created: parts[2],
-        });
+        const imageName = parts[0];
+        // Only include images that match the container name pattern
+        // Format: <containerName>-snapshot or <containerName>-snapshot:tag
+        if (containerName && imageName.startsWith(`${containerName}-snapshot`)) {
+          images.push({
+            name: imageName,
+            id: parts[1],
+            created: parts[2],
+          });
+        }
       }
     }
 

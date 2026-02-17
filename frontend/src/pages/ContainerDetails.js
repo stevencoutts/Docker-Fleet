@@ -40,10 +40,10 @@ const ContainerDetails = () => {
   const fetchSnapshots = async () => {
     try {
       const response = await containersService.getSnapshots(serverId, containerId);
-      // Filter snapshots that match the container name pattern
+      // Backend already filters by container name, but add extra safety check
       const containerName = container?.Name?.replace('/', '') || containerId.substring(0, 12);
       const filtered = response.data.snapshots.filter(img => 
-        img.name.includes(containerName) || img.name.includes('-snapshot')
+        img.name.startsWith(`${containerName}-snapshot`)
       );
       setSnapshots(filtered);
     } catch (error) {
