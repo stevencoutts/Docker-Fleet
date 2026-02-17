@@ -2,10 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { serversService } from '../services/servers.service';
 import { containersService } from '../services/containers.service';
+import { systemService } from '../services/system.service';
 
 const Dashboard = () => {
   const [servers, setServers] = useState([]);
   const [containers, setContainers] = useState({});
+  const [hostInfos, setHostInfos] = useState({}); // Store hostname info for each server
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -31,24 +33,36 @@ const Dashboard = () => {
       const serversData = serversResponse.data.servers;
       setServers(serversData);
 
-      // Fetch containers for each server in parallel for better performance
-      const containerPromises = serversData.map(async (server) => {
+      // Fetch containers and host info for each server in parallel for better performance
+      const serverPromises = serversData.map(async (server) => {
         try {
-          const containersResponse = await containersService.getAll(server.id, { all: 'true' });
-          return { serverId: server.id, containers: containersResponse.data.containers };
+          const [containersResponse, hostInfoResponse] = await Promise.all([
+            containersService.getAll(server.id, { all: 'true' }).catch(() => ({ data: { containers: [] } })),
+            systemService.getHostInfo(server.id).catch(() => ({ data: { hostInfo: null } })),
+          ]);
+          return {
+            serverId: server.id,
+            containers: containersResponse.data.containers || [],
+            hostInfo: hostInfoResponse.data.hostInfo || null,
+          };
         } catch (error) {
-          console.error(`Failed to fetch containers for server ${server.id}:`, error);
-          return { serverId: server.id, containers: [] };
+          console.error(`Failed to fetch data for server ${server.id}:`, error);
+          return { serverId: server.id, containers: [], hostInfo: null };
         }
       });
       
-      const containerResults = await Promise.all(containerPromises);
+      const serverResults = await Promise.all(serverPromises);
       const containersData = {};
-      containerResults.forEach(({ serverId, containers: serverContainers }) => {
+      const hostInfosData = {};
+      serverResults.forEach(({ serverId, containers: serverContainers, hostInfo }) => {
         containersData[serverId] = serverContainers;
+        if (hostInfo) {
+          hostInfosData[serverId] = hostInfo;
+        }
       });
       
       setContainers(containersData);
+      setHostInfos(hostInfosData);
     } catch (error) {
       console.error('Failed to fetch data:', error);
     } finally {
@@ -118,9 +132,20 @@ const Dashboard = () => {
 
   return (
     <div className="px-4 py-6 sm:px-0">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Dashboard</h1>
-        <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">Overview of all servers and containers</p>
+      <div className="mb-6 flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Dashboard</h1>
+          <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">Overview of all servers and containers</p>
+        </div>
+        <Link
+          to="/servers/new"
+          className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 dark:bg-primary-500 dark:hover:bg-primary-600 transition-colors shadow-sm"
+        >
+          <svg className="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+          </svg>
+          Add Server
+        </Link>
       </div>
 
       {/* Alerts Section */}
@@ -308,7 +333,11 @@ const Dashboard = () => {
                           <dt className="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">
                             {server.name}
                           </dt>
-                          <dd className="text-lg font-medium text-gray-900 dark:text-gray-100">{server.host}</dd>
+                          <dd className="text-lg font-medium text-gray-900 dark:text-gray-100">
+                            {hostInfos[server.id]?.hostname && hostInfos[server.id].hostname !== 'Unknown'
+                              ? `${hostInfos[server.id].hostname} (${server.host})`
+                              : server.host}
+                          </dd>
                         </dl>
                       </div>
                     </div>

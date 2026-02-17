@@ -61,20 +61,20 @@ const AddServer = () => {
   return (
     <div className="px-4 py-6 sm:px-0">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Add New Server</h1>
-        <p className="mt-1 text-sm text-gray-600">Configure SSH access to a remote Docker host</p>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Add New Server</h1>
+        <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">Configure SSH access to a remote Docker host</p>
       </div>
 
       <div className="max-w-2xl">
-        <form onSubmit={handleSubmit} className="bg-white shadow rounded-lg p-6 space-y-6">
+        <form onSubmit={handleSubmit} className="bg-white dark:bg-gray-800 shadow rounded-lg p-6 space-y-6">
           {error && (
-            <div className="rounded-md bg-red-50 p-4">
-              <div className="text-sm text-red-800">{error}</div>
+            <div className="rounded-md bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 p-4">
+              <div className="text-sm text-red-800 dark:text-red-200">{error}</div>
             </div>
           )}
 
           <div>
-            <label htmlFor="name" className="block text-sm font-medium text-gray-700">
+            <label htmlFor="name" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
               Server Name *
             </label>
             <input
@@ -84,14 +84,14 @@ const AddServer = () => {
               required
               value={formData.name}
               onChange={handleChange}
-              className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+              className="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-primary-500 focus:border-primary-500"
               placeholder="My Docker Server"
             />
           </div>
 
           <div>
-            <label htmlFor="host" className="block text-sm font-medium text-gray-700">
-              Host / IP Address *
+            <label htmlFor="host" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+              Host / IP Address or DNS Name *
             </label>
             <input
               type="text"
@@ -100,13 +100,16 @@ const AddServer = () => {
               required
               value={formData.host}
               onChange={handleChange}
-              className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-              placeholder="192.168.1.100 or example.com"
+              className="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+              placeholder="192.168.1.100, example.com, or server.example.com"
             />
+            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              You can use either an IP address (e.g., 192.168.1.100) or a DNS name (e.g., server.example.com, kore.couttsnet.com)
+            </p>
           </div>
 
           <div>
-            <label htmlFor="port" className="block text-sm font-medium text-gray-700">
+            <label htmlFor="port" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
               SSH Port *
             </label>
             <input
@@ -118,12 +121,12 @@ const AddServer = () => {
               max="65535"
               value={formData.port}
               onChange={handleChange}
-              className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+              className="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-primary-500 focus:border-primary-500"
             />
           </div>
 
           <div>
-            <label htmlFor="username" className="block text-sm font-medium text-gray-700">
+            <label htmlFor="username" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
               SSH Username *
             </label>
             <input
@@ -133,13 +136,13 @@ const AddServer = () => {
               required
               value={formData.username}
               onChange={handleChange}
-              className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+              className="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-primary-500 focus:border-primary-500"
               placeholder="root or docker"
             />
           </div>
 
           <div>
-            <label htmlFor="privateKey" className="block text-sm font-medium text-gray-700">
+            <label htmlFor="privateKey" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
               SSH Private Key *
             </label>
             <textarea
@@ -149,16 +152,16 @@ const AddServer = () => {
               rows="10"
               value={formData.privateKey}
               onChange={handleChange}
-              className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500 font-mono text-sm"
+              className="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-primary-500 focus:border-primary-500 font-mono text-sm"
               placeholder="-----BEGIN RSA PRIVATE KEY-----&#10;...&#10;-----END RSA PRIVATE KEY-----"
             />
-            <p className="mt-2 text-sm text-gray-500">
+            <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
               Paste your SSH <strong>private key</strong> here (not the public key). 
               Private keys typically start with "-----BEGIN OPENSSH PRIVATE KEY-----" or "-----BEGIN RSA PRIVATE KEY-----". 
               It will be encrypted before storage.
             </p>
-            <p className="mt-1 text-xs text-gray-400">
-              💡 Tip: Your private key is usually in <code>~/.ssh/id_rsa</code> or <code>~/.ssh/id_ed25519</code>
+            <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
+              💡 Tip: Your private key is usually in <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">~/.ssh/id_rsa</code> or <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">~/.ssh/id_ed25519</code>
             </p>
           </div>
 
@@ -166,7 +169,7 @@ const AddServer = () => {
             <button
               type="button"
               onClick={() => navigate('/')}
-              className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 bg-white hover:bg-gray-50"
+              className="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors"
             >
               Cancel
             </button>
@@ -175,14 +178,14 @@ const AddServer = () => {
                 type="button"
                 onClick={handleTest}
                 disabled={testing || loading}
-                className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
+                className="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-50 transition-colors"
               >
                 {testing ? 'Testing...' : 'Test Connection'}
               </button>
               <button
                 type="submit"
                 disabled={loading || testing}
-                className="px-4 py-2 border border-transparent rounded-md shadow-sm text-white bg-primary-600 hover:bg-primary-700 disabled:opacity-50"
+                className="px-4 py-2 border border-transparent rounded-md shadow-sm text-white bg-primary-600 dark:bg-primary-500 hover:bg-primary-700 dark:hover:bg-primary-600 disabled:opacity-50 transition-colors"
               >
                 {loading ? 'Creating...' : 'Create Server'}
               </button>

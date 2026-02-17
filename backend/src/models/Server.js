@@ -27,8 +27,33 @@ module.exports = (sequelize) => {
         type: DataTypes.STRING,
         allowNull: false,
         validate: {
-          isIP: {
-            msg: 'Host must be a valid IP address or hostname',
+          // Accept both IP addresses and DNS names
+          // Basic validation: not empty and reasonable length
+          notEmpty: {
+            msg: 'Host is required',
+          },
+          len: {
+            args: [1, 255],
+            msg: 'Host must be between 1 and 255 characters',
+          },
+          // Custom validator to check if it's a valid IP or hostname
+          isValidHost(value) {
+            if (!value || typeof value !== 'string') {
+              throw new Error('Host must be a valid IP address or hostname');
+            }
+            const trimmed = value.trim();
+            if (trimmed.length === 0) {
+              throw new Error('Host cannot be empty');
+            }
+            // Allow IP addresses (IPv4 or IPv6) or hostnames
+            // Hostnames can contain letters, numbers, dots, hyphens, and underscores
+            const ipv4Regex = /^(\d{1,3}\.){3}\d{1,3}$/;
+            const ipv6Regex = /^([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$|^::1$|^::$/;
+            const hostnameRegex = /^[a-zA-Z0-9]([a-zA-Z0-9\-_.]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-_.]{0,61}[a-zA-Z0-9])?)*$/;
+            
+            if (!ipv4Regex.test(trimmed) && !ipv6Regex.test(trimmed) && !hostnameRegex.test(trimmed)) {
+              throw new Error('Host must be a valid IP address or hostname');
+            }
           },
         },
       },
