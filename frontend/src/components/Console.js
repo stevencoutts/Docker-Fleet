@@ -114,26 +114,6 @@ const Console = ({ serverId, containerId }) => {
           setOutput([...newOutput, result]);
         }
       } else {
-        // Detect interactive commands and suggest alternatives
-        const interactiveCommands = {
-          'more': 'cat',
-          'less': 'cat',
-          'vi ': 'nano or use cat to view files',
-          'vim ': 'nano or use cat to view files',
-          'nano ': 'Use cat to view files, or edit via other means',
-          'htop': 'top -b (non-interactive)',
-          ' top ': 'top -b (non-interactive)',
-        };
-        
-        const cmdLower = cmd.toLowerCase();
-        let suggestion = null;
-        for (const [interactive, alternative] of Object.entries(interactiveCommands)) {
-          if (cmdLower.includes(interactive)) {
-            suggestion = alternative;
-            break;
-          }
-        }
-        
         // For other commands, prepend cd to working directory if not already in root
         let finalCommand = cmd;
         if (workingDirectory !== '/') {
@@ -147,7 +127,7 @@ const Console = ({ serverId, containerId }) => {
         try {
           const response = await containersService.executeCommand(serverId, containerId, finalCommand);
           
-          // Check if it's a timeout error
+          // Check if it's a timeout error (for commands we can't make work like vi, vim, nano)
           const output = response.data.stdout || '';
           const error = response.data.stderr || '';
           const isTimeout = output.includes('timed out') || 
@@ -156,10 +136,15 @@ const Console = ({ serverId, containerId }) => {
                           error.includes('TIMEOUT') ||
                           response.data.code === 124; // timeout command exit code
           
-          if (isTimeout && suggestion) {
+          // Detect if it's an unsupported interactive command
+          const unsupportedCommands = ['vi ', 'vim ', 'nano ', 'emacs ', 'htop'];
+          const cmdLower = cmd.toLowerCase();
+          const isUnsupported = unsupportedCommands.some(c => cmdLower.includes(c));
+          
+          if (isTimeout && isUnsupported) {
             const result = {
               type: 'error',
-              content: `Command timed out. Interactive commands like '${cmd.split(' ')[0]}' are not supported in this console.\nTip: Use '${suggestion}' instead.`,
+              content: `Interactive commands like '${cmd.split(' ')[0]}' are not supported in this console.\nTip: Use 'cat' to view files, or edit files using other methods.`,
               code: response.data.code || 124,
               timestamp: new Date(),
             };
@@ -178,10 +163,14 @@ const Console = ({ serverId, containerId }) => {
           
           // Check if it's a timeout error
           if (errorMessage.includes('timed out') || errorMessage.includes('TIMEOUT') || error.code === 'TIMEOUT') {
-            if (suggestion) {
-              errorMessage = `Command timed out. Interactive commands like '${cmd.split(' ')[0]}' are not supported in this console.\nTip: Use '${suggestion}' instead.`;
+            const unsupportedCommands = ['vi ', 'vim ', 'nano ', 'emacs ', 'htop'];
+            const cmdLower = cmd.toLowerCase();
+            const isUnsupported = unsupportedCommands.some(c => cmdLower.includes(c));
+            
+            if (isUnsupported) {
+              errorMessage = `Interactive commands like '${cmd.split(' ')[0]}' are not supported in this console.\nTip: Use 'cat' to view files, or edit files using other methods.`;
             } else {
-              errorMessage = `Command timed out after 10 seconds. Interactive commands are not supported.`;
+              errorMessage = `Command timed out after 10 seconds.`;
             }
           }
           

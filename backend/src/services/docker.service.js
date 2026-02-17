@@ -179,20 +179,35 @@ class DockerService {
     // Default to /bin/sh if no shell is specified
     const shell = options.shell || '/bin/sh';
     
-    // Detect interactive commands and wrap with timeout
-    // Interactive commands: more, less, vi, vim, nano, emacs, htop, top (without -b), etc.
-    const interactiveCommands = ['more', 'less', 'vi ', 'vim ', 'nano ', 'emacs ', 'htop', ' top '];
-    const commandLower = command.toLowerCase();
-    const isInteractive = interactiveCommands.some(cmd => commandLower.includes(cmd));
-    
     let finalCommand = command;
     
-    // If it's an interactive command, wrap it with timeout to prevent hanging
-    // Use timeout command if available, otherwise rely on SSH timeout
-    if (isInteractive) {
-      // Try to use timeout command (available on most Linux systems)
-      // timeout 5s will kill the command after 5 seconds
-      finalCommand = `timeout 5s sh -c '${command.replace(/'/g, "'\\''")}' 2>&1 || echo "Command timed out or is interactive. Use 'cat' instead of 'more' or 'less'."`;
+    // Make interactive commands work by converting them to non-interactive versions
+    // Handle pagers (more, less) by making them non-interactive
+    if (command.trim().startsWith('more ')) {
+      // Convert 'more file' to 'cat file' for simplicity, or use more with non-interactive flags
+      // Using cat is simpler and works everywhere
+      const args = command.substring(5).trim();
+      finalCommand = `cat ${args}`;
+    } else if (command.trim().startsWith('less ')) {
+      // Convert 'less file' to 'cat file' or use less with non-interactive flags
+      const args = command.substring(5).trim();
+      // Try less with -F (quit if one screen) and -X (don't clear screen) flags
+      // If that doesn't work, fall back to cat
+      finalCommand = `less -F -X ${args} 2>/dev/null || cat ${args}`;
+    } else if (command.trim() === 'more' || command.trim() === 'less') {
+      // Just 'more' or 'less' without args - convert to cat
+      finalCommand = 'cat';
+    } else {
+      // For other potentially interactive commands (vi, vim, nano, emacs, htop), 
+      // we can't make them work, so we'll let them timeout with a helpful message
+      const interactiveCommands = ['vi ', 'vim ', 'nano ', 'emacs ', 'htop'];
+      const commandLower = command.toLowerCase();
+      const isInteractive = interactiveCommands.some(cmd => commandLower.includes(cmd));
+      
+      if (isInteractive) {
+        // For editors and htop, we can't make them work, so wrap with timeout
+        finalCommand = `timeout 5s sh -c '${command.replace(/'/g, "'\\''")}' 2>&1 || echo "Interactive commands like '${command.split(' ')[0]}' are not supported. Use 'cat' to view files."`;
+      }
     }
     
     // Build docker exec command - use sh -c to execute the command
