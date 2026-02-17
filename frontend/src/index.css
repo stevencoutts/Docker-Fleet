@@ -24,10 +24,12 @@ code {
   padding: 1rem;
   border-radius: 0.5rem;
   overflow-x: auto;
+  height: 100%;
 }
 
 .log-line {
   white-space: pre-wrap;
   word-break: break-all;
   line-height: 1.5;
+  font-size: 0.875rem;
 }

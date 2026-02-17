@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import { serversService } from '../services/servers.service';
 import { containersService } from '../services/containers.service';
 import { systemService } from '../services/system.service';
+import LogsModal from '../components/LogsModal';
 
 const ServerDetails = () => {
   const { serverId } = useParams();
@@ -15,6 +16,7 @@ const ServerDetails = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all'); // 'all', 'running', 'stopped'
   const [updatingPolicies, setUpdatingPolicies] = useState(new Set()); // Track containers being updated
+  const [logsModal, setLogsModal] = useState({ isOpen: false, containerId: null, containerName: null });
 
   useEffect(() => {
     fetchData();
@@ -512,35 +514,51 @@ const ServerDetails = () => {
                   )}
 
                   <div className="flex items-center gap-2 mt-4">
-                        {isRunning ? (
-                          <>
-                            <button
-                              onClick={() => handleContainerAction('stop', containerId)}
-                              className="flex-1 px-3 py-1.5 text-xs font-medium text-yellow-800 dark:text-yellow-200 bg-yellow-50 dark:bg-yellow-900/30 rounded hover:bg-yellow-100 dark:hover:bg-yellow-900/50 transition-colors"
-                            >
-                              Stop
-                            </button>
-                            <button
-                              onClick={() => handleContainerAction('restart', containerId)}
-                              className="flex-1 px-3 py-1.5 text-xs font-medium text-blue-800 dark:text-blue-200 bg-blue-50 dark:bg-blue-900/30 rounded hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors"
-                            >
-                              Restart
-                            </button>
-                          </>
-                        ) : (
+                        <div className="flex flex-wrap gap-2">
                           <button
-                            onClick={() => handleContainerAction('start', containerId)}
-                            className="flex-1 px-3 py-1.5 text-xs font-medium text-green-800 dark:text-green-200 bg-green-50 dark:bg-green-900/30 rounded hover:bg-green-100 dark:hover:bg-green-900/50 transition-colors"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setLogsModal({ isOpen: true, containerId, containerName });
+                            }}
+                            className="px-3 py-1.5 text-xs font-medium text-purple-800 dark:text-purple-200 bg-purple-50 dark:bg-purple-900/30 rounded hover:bg-purple-100 dark:hover:bg-purple-900/50 transition-colors flex items-center gap-1"
+                            title="View live logs"
                           >
-                            Start
+                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                            </svg>
+                            Logs
                           </button>
-                        )}
-                        <button
-                          onClick={() => handleContainerAction('remove', containerId)}
-                          className="px-3 py-1.5 text-xs font-medium text-red-800 dark:text-red-200 bg-red-50 dark:bg-red-900/30 rounded hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors"
-                        >
-                          Remove
-                        </button>
+                          {isRunning ? (
+                            <>
+                              <button
+                                onClick={() => handleContainerAction('stop', containerId)}
+                                className="px-3 py-1.5 text-xs font-medium text-yellow-800 dark:text-yellow-200 bg-yellow-50 dark:bg-yellow-900/30 rounded hover:bg-yellow-100 dark:hover:bg-yellow-900/50 transition-colors"
+                              >
+                                Stop
+                              </button>
+                              <button
+                                onClick={() => handleContainerAction('restart', containerId)}
+                                className="px-3 py-1.5 text-xs font-medium text-blue-800 dark:text-blue-200 bg-blue-50 dark:bg-blue-900/30 rounded hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors"
+                              >
+                                Restart
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              onClick={() => handleContainerAction('start', containerId)}
+                              className="px-3 py-1.5 text-xs font-medium text-green-800 dark:text-green-200 bg-green-50 dark:bg-green-900/30 rounded hover:bg-green-100 dark:hover:bg-green-900/50 transition-colors"
+                            >
+                              Start
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handleContainerAction('remove', containerId)}
+                            className="px-3 py-1.5 text-xs font-medium text-red-800 dark:text-red-200 bg-red-50 dark:bg-red-900/30 rounded hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors"
+                          >
+                            Remove
+                          </button>
+                        </div>
                   </div>
                 </div>
               );
@@ -548,6 +566,15 @@ const ServerDetails = () => {
           </div>
         )}
       </div>
+
+      {/* Logs Modal */}
+      <LogsModal
+        isOpen={logsModal.isOpen}
+        onClose={() => setLogsModal({ isOpen: false, containerId: null, containerName: null })}
+        serverId={serverId}
+        containerId={logsModal.containerId}
+        containerName={logsModal.containerName}
+      />
     </div>
   );
 };
