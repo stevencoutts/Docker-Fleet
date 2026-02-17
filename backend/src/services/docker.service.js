@@ -198,20 +198,370 @@ class DockerService {
   }
 
   async getContainerStats(server, containerId) {
-    const command = `docker stats ${containerId} --no-stream --format '{"Container":"{{.Container}}","CPUPerc":"{{.CPUPerc}}","MemUsage":"{{.MemUsage}}","MemPerc":"{{.MemPerc}}","NetIO":"{{.NetIO}}","BlockIO":"{{.BlockIO}}","PIDs":"{{.PIDs}}"}'`;
-    const result = await sshService.executeCommand(server, command);
-    
+    // Try Docker API first (most reliable for full stats)
     try {
-      const stats = result.stdout.trim();
-      if (!stats) {
-        return null;
+      const apiCommand = `curl -s --unix-socket /var/run/docker.sock http://localhost/containers/${containerId}/stats?stream=false 2>/dev/null`;
+      const apiResult = await sshService.executeCommand(server, apiCommand, { allowFailure: true });
+      
+      if (apiResult.code === 0 && apiResult.stdout.trim()) {
+        try {
+          const stats = JSON.parse(apiResult.stdout.trim());
+          // Validate we got proper stats structure
+          if (stats && (stats.memory_stats || stats.cpu_stats)) {
+            // Log network stats for debugging
+            logger.debug('Docker API stats networks:', stats.networks ? Object.keys(stats.networks) : 'none');
+            if (stats.networks) {
+              Object.entries(stats.networks).forEach(([iface, data]) => {
+                logger.debug(`Network ${iface}: rx_bytes=${data.rx_bytes}, tx_bytes=${data.tx_bytes}`);
+              });
+            }
+            
+            // Ensure networks object exists and has proper structure with actual stats
+            if (!stats.networks || Object.keys(stats.networks).length === 0 || 
+                Object.values(stats.networks).every(net => (net.rx_bytes || 0) === 0 && (net.tx_bytes || 0) === 0)) {
+              // Try to get network stats from /proc/net/dev (most reliable for cumulative stats)
+              try {
+                const pidCommand = `docker inspect ${containerId} --format '{{.State.Pid}}'`;
+                const pidResult = await sshService.executeCommand(server, pidCommand, { allowFailure: true });
+                
+                if (pidResult.code === 0 && pidResult.stdout.trim()) {
+                  const pid = pidResult.stdout.trim();
+                  // Read network stats from /proc/net/dev (cumulative since container start)
+                  const procNetCommand = `cat /proc/${pid}/net/dev 2>/dev/null | grep -E 'eth0|veth' | head -1`;
+                  const procNetResult = await sshService.executeCommand(server, procNetCommand, { allowFailure: true });
+                  
+                  // Get network interface names from docker inspect
+                  const networkCommand = `docker inspect ${containerId} --format '{{json .NetworkSettings.Networks}}'`;
+                  const networkResult = await sshService.executeCommand(server, networkCommand, { allowFailure: true });
+                  
+                  let netRxBytes = 0;
+                  let netTxBytes = 0;
+                  
+                  if (procNetResult.code === 0 && procNetResult.stdout.trim()) {
+                    // Parse /proc/net/dev format: interface: rx_bytes rx_packets ... tx_bytes tx_packets ...
+                    const parts = procNetResult.stdout.trim().split(/\s+/);
+                    if (parts.length >= 10) {
+                      netRxBytes = parseInt(parts[1]) || 0;
+                      netTxBytes = parseInt(parts[9]) || 0;
+                    }
+                  }
+                  
+                  if (networkResult.code === 0 && networkResult.stdout.trim()) {
+                    const networkData = JSON.parse(networkResult.stdout.trim());
+                    if (networkData && typeof networkData === 'object') {
+                      stats.networks = {};
+                      Object.keys(networkData).forEach(iface => {
+                        stats.networks[iface] = {
+                          rx_bytes: netRxBytes,
+                          tx_bytes: netTxBytes,
+                          rx_packets: 0,
+                          tx_packets: 0,
+                          rx_errors: 0,
+                          tx_errors: 0,
+                          rx_dropped: 0,
+                          tx_dropped: 0,
+                        };
+                      });
+                    }
+                  } else if (netRxBytes > 0 || netTxBytes > 0) {
+                    // If we have stats but no interface names, create default
+                    stats.networks = {
+                      eth0: {
+                        rx_bytes: netRxBytes,
+                        tx_bytes: netTxBytes,
+                        rx_packets: 0,
+                        tx_packets: 0,
+                        rx_errors: 0,
+                        tx_errors: 0,
+                        rx_dropped: 0,
+                        tx_dropped: 0,
+                      }
+                    };
+                  }
+                }
+              } catch (e) {
+                logger.debug('Failed to get network stats from /proc:', e.message);
+              }
+            }
+            return stats;
+          }
+        } catch (parseError) {
+          logger.debug('Failed to parse Docker API response, trying fallback');
+        }
       }
-      return JSON.parse(stats);
-    } catch (e) {
-      // Fallback parsing
-      const stats = result.stdout.trim();
-      return { raw: stats };
+    } catch (apiError) {
+      logger.debug('Docker API not available, using fallback method');
     }
+    
+    // Fallback: Use docker stats and docker inspect to build stats object
+    try {
+      // Get basic stats from docker stats
+      const statsCommand = `docker stats ${containerId} --no-stream --format '{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}|{{.NetIO}}|{{.BlockIO}}|{{.PIDs}}'`;
+      const statsResult = await sshService.executeCommand(server, statsCommand, { allowFailure: true });
+      
+      // Get detailed info from docker inspect
+      const inspectCommand = `docker inspect ${containerId} --format '{{json .HostConfig.Memory}}|{{json .State.Pid}}'`;
+      const inspectResult = await sshService.executeCommand(server, inspectCommand, { allowFailure: true });
+      
+      let cpuPercent = 0;
+      let memUsage = 0;
+      let memLimit = 0;
+      let memPercent = 0;
+      let pids = 0;
+      let netRx = 0;
+      let netTx = 0;
+      
+      if (statsResult.code === 0 && statsResult.stdout.trim()) {
+        const parts = statsResult.stdout.trim().split('|');
+        if (parts.length >= 6) {
+          cpuPercent = parseFloat(parts[0].replace('%', '').trim()) || 0;
+          pids = parseInt(parts[5] || '0') || 0;
+          
+          // Parse memory (e.g., "1.2GiB / 15.62GiB")
+          const memStr = parts[1].trim();
+          const memParts = memStr.split('/');
+          if (memParts.length === 2) {
+            memUsage = this.parseSize(memParts[0].trim());
+            memLimit = this.parseSize(memParts[1].trim());
+          }
+          memPercent = parseFloat(parts[2].replace('%', '').trim()) || 0;
+          
+          // Parse NetIO (e.g., "1.2MB / 500KB" or "1.2MiB / 500KiB")
+          if (parts[3]) {
+            const netParts = parts[3].trim().split('/');
+            if (netParts.length === 2) {
+              netRx = this.parseSize(netParts[0].trim());
+              netTx = this.parseSize(netParts[1].trim());
+            }
+          }
+        }
+      }
+      
+      // Get memory limit from inspect if available
+      if (inspectResult.code === 0 && inspectResult.stdout.trim()) {
+        const inspectParts = inspectResult.stdout.trim().split('|');
+        if (inspectParts[0] && inspectParts[0] !== 'null' && inspectParts[0] !== '0') {
+          try {
+            const memoryLimit = parseInt(inspectParts[0]);
+            if (memoryLimit > 0) {
+              memLimit = memoryLimit;
+            }
+          } catch (e) {
+            // Ignore parse errors
+          }
+        }
+      }
+      
+      // If we still don't have memLimit, try to get it from the container
+      if (memLimit === 0) {
+        try {
+          const memInfoCommand = `docker inspect ${containerId} --format '{{.HostConfig.Memory}}'`;
+          const memInfoResult = await sshService.executeCommand(server, memInfoCommand, { allowFailure: true });
+          if (memInfoResult.code === 0 && memInfoResult.stdout.trim()) {
+            const limit = parseInt(memInfoResult.stdout.trim());
+            if (limit > 0) {
+              memLimit = limit;
+            }
+          }
+        } catch (e) {
+          // Ignore
+        }
+      }
+      
+      // Get network interface details and actual stats from container's network namespace
+      let networks = {};
+      try {
+        // First, get network interface names
+        const networkCommand = `docker inspect ${containerId} --format '{{json .NetworkSettings.Networks}}'`;
+        const networkResult = await sshService.executeCommand(server, networkCommand, { allowFailure: true });
+        
+        if (networkResult.code === 0 && networkResult.stdout.trim()) {
+          try {
+            const networkData = JSON.parse(networkResult.stdout.trim());
+            if (networkData && typeof networkData === 'object') {
+              // Get the container's PID to access /proc/net/dev
+              const pidCommand = `docker inspect ${containerId} --format '{{.State.Pid}}'`;
+              const pidResult = await sshService.executeCommand(server, pidCommand, { allowFailure: true });
+              
+              if (pidResult.code === 0 && pidResult.stdout.trim()) {
+                const pid = pidResult.stdout.trim();
+                // Read network stats from /proc/net/dev (cumulative since container start)
+                const procNetCommand = `cat /proc/${pid}/net/dev 2>/dev/null | grep -E 'eth0|veth' | head -1`;
+                const procNetResult = await sshService.executeCommand(server, procNetCommand, { allowFailure: true });
+                
+                let actualRxBytes = netRx || 0;
+                let actualTxBytes = netTx || 0;
+                
+                if (procNetResult.code === 0 && procNetResult.stdout.trim()) {
+                  // Parse /proc/net/dev format: interface: rx_bytes rx_packets ... tx_bytes tx_packets ...
+                  const parts = procNetResult.stdout.trim().split(/\s+/);
+                  if (parts.length >= 10) {
+                    actualRxBytes = parseInt(parts[1]) || 0;
+                    actualTxBytes = parseInt(parts[9]) || 0;
+                  }
+                }
+                
+                // Create network objects with cumulative stats
+                Object.keys(networkData).forEach(iface => {
+                  networks[iface] = {
+                    rx_bytes: actualRxBytes,
+                    tx_bytes: actualTxBytes,
+                    rx_packets: 0,
+                    tx_packets: 0,
+                    rx_errors: 0,
+                    tx_errors: 0,
+                    rx_dropped: 0,
+                    tx_dropped: 0,
+                  };
+                });
+              } else {
+                // Fallback: use NetIO from docker stats if we can't get /proc/net/dev
+                Object.keys(networkData).forEach(iface => {
+                  networks[iface] = {
+                    rx_bytes: netRx || 0,
+                    tx_bytes: netTx || 0,
+                    rx_packets: 0,
+                    tx_packets: 0,
+                    rx_errors: 0,
+                    tx_errors: 0,
+                    rx_dropped: 0,
+                    tx_dropped: 0,
+                  };
+                });
+              }
+            }
+          } catch (e) {
+            logger.debug('Failed to parse network data:', e.message);
+          }
+        }
+      } catch (e) {
+        logger.debug('Failed to get network data:', e.message);
+      }
+      
+      // If we have network stats but no network interfaces, create a default one
+      if (Object.keys(networks).length === 0) {
+        // Try to get actual network stats from /proc/net/dev
+        try {
+          const pidCommand = `docker inspect ${containerId} --format '{{.State.Pid}}'`;
+          const pidResult = await sshService.executeCommand(server, pidCommand, { allowFailure: true });
+          
+          if (pidResult.code === 0 && pidResult.stdout.trim()) {
+            const pid = pidResult.stdout.trim();
+            const procNetCommand = `cat /proc/${pid}/net/dev 2>/dev/null | grep -E 'eth0|veth' | head -1`;
+            const procNetResult = await sshService.executeCommand(server, procNetCommand, { allowFailure: true });
+            
+            let actualRxBytes = netRx || 0;
+            let actualTxBytes = netTx || 0;
+            
+            if (procNetResult.code === 0 && procNetResult.stdout.trim()) {
+              const parts = procNetResult.stdout.trim().split(/\s+/);
+              if (parts.length >= 10) {
+                actualRxBytes = parseInt(parts[1]) || 0;
+                actualTxBytes = parseInt(parts[9]) || 0;
+              }
+            }
+            
+            networks.eth0 = {
+              rx_bytes: actualRxBytes,
+              tx_bytes: actualTxBytes,
+              rx_packets: 0,
+              tx_packets: 0,
+              rx_errors: 0,
+              tx_errors: 0,
+              rx_dropped: 0,
+              tx_dropped: 0,
+            };
+          } else {
+            // Last resort: use NetIO from docker stats
+            networks.eth0 = {
+              rx_bytes: netRx || 0,
+              tx_bytes: netTx || 0,
+              rx_packets: 0,
+              tx_packets: 0,
+              rx_errors: 0,
+              tx_errors: 0,
+              rx_dropped: 0,
+              tx_dropped: 0,
+            };
+          }
+        } catch (e) {
+          logger.debug('Failed to get network stats from /proc:', e.message);
+          // Last resort
+          if (netRx > 0 || netTx > 0) {
+            networks.eth0 = {
+              rx_bytes: netRx,
+              tx_bytes: netTx,
+              rx_packets: 0,
+              tx_packets: 0,
+              rx_errors: 0,
+              tx_errors: 0,
+              rx_dropped: 0,
+              tx_dropped: 0,
+            };
+          }
+        }
+      }
+      
+      // Construct stats object compatible with frontend expectations
+      return {
+        memory_stats: {
+          usage: memUsage,
+          limit: memLimit || (memUsage > 0 ? Math.round(memUsage / (memPercent / 100)) : 0),
+          max_usage: memUsage,
+        },
+        cpu_stats: {
+          cpu_usage: {
+            total_usage: 0,
+          },
+          system_cpu_usage: 0,
+          online_cpus: 1,
+        },
+        precpu_stats: {
+          cpu_usage: {
+            total_usage: 0,
+          },
+          system_cpu_usage: 0,
+        },
+        networks: networks,
+        blkio_stats: {
+          io_service_bytes_recursive: [],
+        },
+        pids_stats: {
+          current: pids,
+        },
+        _cpuPercent: cpuPercent,
+        _memPercent: memPercent,
+      };
+    } catch (e) {
+      logger.error('Failed to get container stats:', e);
+      return null;
+    }
+  }
+
+  parseSize(sizeStr) {
+    // Parse size strings like "1.2GiB", "500MiB", "1024B" to bytes
+    if (!sizeStr) return 0;
+    
+    const units = {
+      'B': 1,
+      'KB': 1024,
+      'MB': 1024 * 1024,
+      'GB': 1024 * 1024 * 1024,
+      'TB': 1024 * 1024 * 1024 * 1024,
+      'KiB': 1024,
+      'MiB': 1024 * 1024,
+      'GiB': 1024 * 1024 * 1024,
+      'TiB': 1024 * 1024 * 1024 * 1024,
+    };
+    
+    const match = sizeStr.trim().match(/^([\d.]+)\s*([A-Za-z]+)$/);
+    if (match) {
+      const value = parseFloat(match[1]);
+      const unit = match[2];
+      return Math.round(value * (units[unit] || 1));
+    }
+    
+    return 0;
   }
 
   async listImages(server) {

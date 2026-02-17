@@ -86,22 +86,77 @@ const ContainerDetails = () => {
       const memLimit = newStats.memory_stats?.limit || 0;
       const memPercent = memLimit > 0 ? (memUsage / memLimit) * 100 : 0;
       
-      const historyPoint = {
-        time: new Date().toLocaleTimeString(),
-        cpu: parseFloat(cpuPercent.toFixed(2)),
-        memory: parseFloat(memPercent.toFixed(2)),
-        memoryUsed: memUsage,
-        memoryLimit: memLimit,
-        netRx: newStats.networks ? Object.values(newStats.networks).reduce((sum, net) => sum + (net.rx_bytes || 0), 0) : 0,
-        netTx: newStats.networks ? Object.values(newStats.networks).reduce((sum, net) => sum + (net.tx_bytes || 0), 0) : 0,
-        blockRead: newStats.blkio_stats?.io_service_bytes_recursive?.find(b => b.op === 'Read')?.value || 0,
-        blockWrite: newStats.blkio_stats?.io_service_bytes_recursive?.find(b => b.op === 'Write')?.value || 0,
-        pids: newStats.pids_stats?.current || 0,
-      };
+      // Calculate network deltas using functional update to get current state
+      const currentNetRx = newStats.networks ? Object.values(newStats.networks).reduce((sum, net) => sum + (net.rx_bytes || 0), 0) : 0;
+      const currentNetTx = newStats.networks ? Object.values(newStats.networks).reduce((sum, net) => sum + (net.tx_bytes || 0), 0) : 0;
       
+      // Use functional update to get the previous stats from current state
       setStatsHistory(prev => {
+        // Get the previous stats point (last item in current history)
+        const prevStats = prev.length > 0 ? prev[prev.length - 1] : null;
+        
+        // Calculate delta - for first reading, use 0; for subsequent readings, calculate difference
+        let netRxDelta = 0;
+        let netTxDelta = 0;
+        
+        if (prevStats && prevStats._netRxTotal !== undefined && prevStats._netRxTotal !== null) {
+          // Calculate delta between readings (stats are fetched every 2 seconds)
+          // If current is less than previous, container might have restarted or counter reset
+          if (currentNetRx >= prevStats._netRxTotal) {
+            netRxDelta = currentNetRx - prevStats._netRxTotal;
+          }
+          // If current < previous, assume counter reset and use 0 (or could estimate)
+          
+          if (currentNetTx >= prevStats._netTxTotal) {
+            netTxDelta = currentNetTx - prevStats._netTxTotal;
+          }
+        }
+        // For first reading, delta is 0 (no previous value to compare)
+        
+        // Debug logging - always log to help diagnose
+        console.log('Network stats debug:', {
+          hasNetworks: !!newStats.networks,
+          networkKeys: newStats.networks ? Object.keys(newStats.networks) : [],
+          networksData: newStats.networks,
+          currentNetRx,
+          currentNetTx,
+          prevNetRx: prevStats?._netRxTotal,
+          prevNetTx: prevStats?._netTxTotal,
+          netRxDelta,
+          netTxDelta,
+          statsHistoryLength: prev.length,
+          prevStatsExists: !!prevStats,
+          prevStatsKeys: prevStats ? Object.keys(prevStats) : [],
+        });
+        
+        const historyPoint = {
+          time: new Date().toLocaleTimeString(),
+          cpu: parseFloat(cpuPercent.toFixed(2)),
+          memory: parseFloat(memPercent.toFixed(2)),
+          memoryUsed: memUsage,
+          memoryLimit: memLimit,
+          netRx: netRxDelta,
+          netTx: netTxDelta,
+          _netRxTotal: currentNetRx, // Store total for next delta calculation
+          _netTxTotal: currentNetTx, // Store total for next delta calculation
+          blockRead: newStats.blkio_stats?.io_service_bytes_recursive?.find(b => b.op === 'Read')?.value || 0,
+          blockWrite: newStats.blkio_stats?.io_service_bytes_recursive?.find(b => b.op === 'Write')?.value || 0,
+          pids: newStats.pids_stats?.current || 0,
+        };
+        
         const updated = [...prev, historyPoint];
-        return updated.slice(-maxHistoryPoints);
+        const trimmed = updated.slice(-maxHistoryPoints);
+        
+        // Debug: log the history to verify _netRxTotal is being stored
+        if (trimmed.length > 0) {
+          console.log('Stats history updated:', {
+            length: trimmed.length,
+            lastPoint: trimmed[trimmed.length - 1],
+            secondLastPoint: trimmed.length > 1 ? trimmed[trimmed.length - 2] : null,
+          });
+        }
+        
+        return trimmed;
       });
     } catch (error) {
       console.error('Failed to fetch stats:', error);
@@ -203,7 +258,15 @@ const ContainerDetails = () => {
   };
 
   const calculateCPUPercent = (stats) => {
-    if (!stats || !stats.cpu_stats || !stats.precpu_stats) return 0;
+    if (!stats) return 0;
+    
+    // If we have a pre-calculated CPU percent from fallback
+    if (stats._cpuPercent !== undefined) {
+      return stats._cpuPercent;
+    }
+    
+    // Otherwise calculate from cpu_stats
+    if (!stats.cpu_stats || !stats.precpu_stats) return 0;
     
     const cpuDelta = stats.cpu_stats.cpu_usage.total_usage - stats.precpu_stats.cpu_usage.total_usage;
     const systemDelta = stats.cpu_stats.system_cpu_usage - stats.precpu_stats.system_cpu_usage;
@@ -769,15 +832,23 @@ const ContainerDetails = () => {
                   {/* Real-time CPU and Memory Charts */}
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                     {/* CPU Usage Chart */}
-                    <div className="bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-900/30 dark:to-blue-800/20 rounded-xl p-6 border border-blue-200 dark:border-blue-800 shadow-lg">
+                    <div className="bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-900/30 dark:to-blue-800/20 rounded-xl p-6 border border-blue-200 dark:border-blue-800 shadow-lg hover:shadow-xl transition-shadow duration-300">
                       <div className="flex items-center justify-between mb-4">
                         <div>
-                          <h3 className="text-lg font-semibold text-blue-900 dark:text-blue-100">CPU Usage</h3>
-                          <p className="text-3xl font-bold text-blue-900 dark:text-blue-100 mt-1">
+                          <h3 className="text-lg font-semibold text-blue-900 dark:text-blue-100 flex items-center gap-2">
+                            <span className="inline-block w-2 h-2 bg-blue-500 rounded-full animate-pulse"></span>
+                            CPU Usage
+                          </h3>
+                          <p className="text-3xl font-bold text-blue-900 dark:text-blue-100 mt-1 transition-all duration-300">
                             {cpuPercent.toFixed(2)}%
                           </p>
+                          {statsHistory.length > 1 && (
+                            <p className="text-xs text-blue-700 dark:text-blue-300 mt-1">
+                              Avg: {(statsHistory.reduce((sum, h) => sum + h.cpu, 0) / statsHistory.length).toFixed(2)}%
+                            </p>
+                          )}
                         </div>
-                        <div className="p-3 bg-blue-500/20 rounded-lg">
+                        <div className="p-3 bg-blue-500/20 rounded-lg animate-pulse">
                           <svg className="w-8 h-8 text-blue-600 dark:text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
                           </svg>
@@ -785,20 +856,54 @@ const ContainerDetails = () => {
                       </div>
                       {statsHistory.length > 0 ? (
                         <ResponsiveContainer width="100%" height={200}>
-                          <AreaChart data={statsHistory}>
+                          <AreaChart 
+                            data={statsHistory}
+                            margin={{ top: 5, right: 5, left: 5, bottom: 5 }}
+                          >
                             <defs>
                               <linearGradient id="cpuGradient" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.8}/>
-                                <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
+                                <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.9}/>
+                                <stop offset="50%" stopColor="#60a5fa" stopOpacity={0.6}/>
+                                <stop offset="95%" stopColor="#3b82f6" stopOpacity={0.1}/>
                               </linearGradient>
                             </defs>
-                            <Area type="monotone" dataKey="cpu" stroke="#3b82f6" fillOpacity={1} fill="url(#cpuGradient)" />
-                            <XAxis dataKey="time" tick={{ fontSize: 10 }} />
-                            <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} />
-                            <Tooltip 
-                              contentStyle={{ backgroundColor: 'rgba(255, 255, 255, 0.95)', border: '1px solid #e5e7eb', borderRadius: '8px' }}
-                              formatter={(value) => [`${value}%`, 'CPU']}
+                            <Area 
+                              type="monotone" 
+                              dataKey="cpu" 
+                              stroke="#3b82f6" 
+                              strokeWidth={2}
+                              fillOpacity={1} 
+                              fill="url(#cpuGradient)"
+                              isAnimationActive={true}
+                              animationDuration={300}
+                              dot={false}
+                              activeDot={{ r: 4, fill: '#3b82f6' }}
                             />
+                            <XAxis 
+                              dataKey="time" 
+                              tick={{ fontSize: 9, fill: '#6b7280' }} 
+                              axisLine={false}
+                              tickLine={false}
+                            />
+                            <YAxis 
+                              domain={[0, (dataMax) => Math.max(dataMax * 1.2, 10)]} 
+                              tick={{ fontSize: 9, fill: '#6b7280' }} 
+                              allowDataOverflow={false}
+                              axisLine={false}
+                              tickLine={false}
+                              width={40}
+                            />
+                            <Tooltip 
+                              contentStyle={{ 
+                                backgroundColor: 'rgba(255, 255, 255, 0.98)', 
+                                border: '1px solid #e5e7eb', 
+                                borderRadius: '8px',
+                                boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
+                              }}
+                              formatter={(value) => [`${value.toFixed(2)}%`, 'CPU']}
+                              labelStyle={{ fontWeight: 'bold', color: '#1f2937' }}
+                            />
+                            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" opacity={0.3} />
                           </AreaChart>
                         </ResponsiveContainer>
                       ) : (
@@ -812,18 +917,26 @@ const ContainerDetails = () => {
                     </div>
 
                     {/* Memory Usage Chart */}
-                    <div className="bg-gradient-to-br from-green-50 to-green-100 dark:from-green-900/30 dark:to-green-800/20 rounded-xl p-6 border border-green-200 dark:border-green-800 shadow-lg">
+                    <div className="bg-gradient-to-br from-green-50 to-green-100 dark:from-green-900/30 dark:to-green-800/20 rounded-xl p-6 border border-green-200 dark:border-green-800 shadow-lg hover:shadow-xl transition-shadow duration-300">
                       <div className="flex items-center justify-between mb-4">
                         <div>
-                          <h3 className="text-lg font-semibold text-green-900 dark:text-green-100">Memory Usage</h3>
-                          <p className="text-2xl font-bold text-green-900 dark:text-green-100 mt-1">
+                          <h3 className="text-lg font-semibold text-green-900 dark:text-green-100 flex items-center gap-2">
+                            <span className="inline-block w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+                            Memory Usage
+                          </h3>
+                          <p className="text-2xl font-bold text-green-900 dark:text-green-100 mt-1 transition-all duration-300">
                             {formatBytes(memUsage)}
                           </p>
                           <p className="text-sm text-green-700 dark:text-green-300 mt-1">
                             {memPercent.toFixed(1)}% of {formatBytes(memLimit)}
                           </p>
+                          {statsHistory.length > 1 && (
+                            <p className="text-xs text-green-700 dark:text-green-300 mt-1">
+                              Avg: {formatBytes(statsHistory.reduce((sum, h) => sum + h.memoryUsed, 0) / statsHistory.length)}
+                            </p>
+                          )}
                         </div>
-                        <div className="p-3 bg-green-500/20 rounded-lg">
+                        <div className="p-3 bg-green-500/20 rounded-lg animate-pulse">
                           <svg className="w-8 h-8 text-green-600 dark:text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
                           </svg>
@@ -831,20 +944,54 @@ const ContainerDetails = () => {
                       </div>
                       {statsHistory.length > 0 ? (
                         <ResponsiveContainer width="100%" height={200}>
-                          <AreaChart data={statsHistory}>
+                          <AreaChart 
+                            data={statsHistory}
+                            margin={{ top: 5, right: 5, left: 5, bottom: 5 }}
+                          >
                             <defs>
                               <linearGradient id="memGradient" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="5%" stopColor="#10b981" stopOpacity={0.8}/>
-                                <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                                <stop offset="5%" stopColor="#10b981" stopOpacity={0.9}/>
+                                <stop offset="50%" stopColor="#34d399" stopOpacity={0.6}/>
+                                <stop offset="95%" stopColor="#10b981" stopOpacity={0.1}/>
                               </linearGradient>
                             </defs>
-                            <Area type="monotone" dataKey="memory" stroke="#10b981" fillOpacity={1} fill="url(#memGradient)" />
-                            <XAxis dataKey="time" tick={{ fontSize: 10 }} />
-                            <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} />
-                            <Tooltip 
-                              contentStyle={{ backgroundColor: 'rgba(255, 255, 255, 0.95)', border: '1px solid #e5e7eb', borderRadius: '8px' }}
-                              formatter={(value) => [`${value}%`, 'Memory']}
+                            <Area 
+                              type="monotone" 
+                              dataKey="memory" 
+                              stroke="#10b981" 
+                              strokeWidth={2}
+                              fillOpacity={1} 
+                              fill="url(#memGradient)"
+                              isAnimationActive={true}
+                              animationDuration={300}
+                              dot={false}
+                              activeDot={{ r: 4, fill: '#10b981' }}
                             />
+                            <XAxis 
+                              dataKey="time" 
+                              tick={{ fontSize: 9, fill: '#6b7280' }} 
+                              axisLine={false}
+                              tickLine={false}
+                            />
+                            <YAxis 
+                              domain={[0, (dataMax) => Math.max(dataMax * 1.2, 10)]} 
+                              tick={{ fontSize: 9, fill: '#6b7280' }} 
+                              allowDataOverflow={false}
+                              axisLine={false}
+                              tickLine={false}
+                              width={40}
+                            />
+                            <Tooltip 
+                              contentStyle={{ 
+                                backgroundColor: 'rgba(255, 255, 255, 0.98)', 
+                                border: '1px solid #e5e7eb', 
+                                borderRadius: '8px',
+                                boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
+                              }}
+                              formatter={(value) => [`${value.toFixed(2)}%`, 'Memory']}
+                              labelStyle={{ fontWeight: 'bold', color: '#1f2937' }}
+                            />
+                            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" opacity={0.3} />
                           </AreaChart>
                         </ResponsiveContainer>
                       ) : (
@@ -860,25 +1007,82 @@ const ContainerDetails = () => {
 
                   {/* Network I/O Chart */}
                   {statsHistory.length > 0 && (
-                    <div className="bg-white dark:bg-gray-800 rounded-xl p-6 border border-gray-200 dark:border-gray-700 shadow-lg">
-                      <div className="flex items-center gap-2 mb-4">
-                        <svg className="w-6 h-6 text-primary-600 dark:text-primary-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0" />
-                        </svg>
-                        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Network I/O</h3>
+                    <div className="bg-white dark:bg-gray-800 rounded-xl p-6 border border-gray-200 dark:border-gray-700 shadow-lg hover:shadow-xl transition-shadow duration-300">
+                      <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center gap-2">
+                          <span className="inline-block w-2 h-2 bg-primary-500 rounded-full animate-pulse"></span>
+                          <svg className="w-6 h-6 text-primary-600 dark:text-primary-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0" />
+                          </svg>
+                          <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Network I/O</h3>
+                        </div>
+                        {statsHistory.length > 1 && (
+                          <div className="text-xs text-gray-500 dark:text-gray-400">
+                            <span className="text-blue-600 dark:text-blue-400">↓ {formatBytes(statsHistory.reduce((sum, h) => sum + h.netRx, 0) / statsHistory.length)}/s</span>
+                            {' '}
+                            <span className="text-green-600 dark:text-green-400">↑ {formatBytes(statsHistory.reduce((sum, h) => sum + h.netTx, 0) / statsHistory.length)}/s</span>
+                          </div>
+                        )}
                       </div>
                       <ResponsiveContainer width="100%" height={250}>
-                        <LineChart data={statsHistory}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" className="dark:stroke-gray-700" />
-                          <XAxis dataKey="time" tick={{ fontSize: 10 }} stroke="#6b7280" />
-                          <YAxis tick={{ fontSize: 10 }} stroke="#6b7280" />
-                          <Tooltip 
-                            contentStyle={{ backgroundColor: 'rgba(255, 255, 255, 0.95)', border: '1px solid #e5e7eb', borderRadius: '8px' }}
-                            formatter={(value) => [formatBytes(value), '']}
+                        <LineChart 
+                          data={statsHistory}
+                          margin={{ top: 5, right: 10, left: 5, bottom: 5 }}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" className="dark:stroke-gray-700" opacity={0.3} />
+                          <XAxis 
+                            dataKey="time" 
+                            tick={{ fontSize: 9, fill: '#6b7280' }} 
+                            stroke="#6b7280"
+                            axisLine={false}
+                            tickLine={false}
                           />
-                          <Legend />
-                          <Line type="monotone" dataKey="netRx" stroke="#3b82f6" strokeWidth={2} name="Received" dot={false} />
-                          <Line type="monotone" dataKey="netTx" stroke="#10b981" strokeWidth={2} name="Transmitted" dot={false} />
+                          <YAxis 
+                            domain={[0, (dataMax) => Math.max(dataMax * 1.2, 1000)]} 
+                            tick={{ fontSize: 9, fill: '#6b7280' }} 
+                            stroke="#6b7280"
+                            allowDataOverflow={false}
+                            axisLine={false}
+                            tickLine={false}
+                            width={60}
+                            tickFormatter={(value) => formatBytes(value)}
+                          />
+                          <Tooltip 
+                            contentStyle={{ 
+                              backgroundColor: 'rgba(255, 255, 255, 0.98)', 
+                              border: '1px solid #e5e7eb', 
+                              borderRadius: '8px',
+                              boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
+                            }}
+                            formatter={(value) => [formatBytes(value), '']}
+                            labelStyle={{ fontWeight: 'bold', color: '#1f2937' }}
+                          />
+                          <Legend 
+                            wrapperStyle={{ paddingTop: '10px' }}
+                            iconType="line"
+                          />
+                          <Line 
+                            type="monotone" 
+                            dataKey="netRx" 
+                            stroke="#3b82f6" 
+                            strokeWidth={2.5} 
+                            name="Received" 
+                            dot={false} 
+                            isAnimationActive={true}
+                            animationDuration={300}
+                            activeDot={{ r: 5, fill: '#3b82f6' }}
+                          />
+                          <Line 
+                            type="monotone" 
+                            dataKey="netTx" 
+                            stroke="#10b981" 
+                            strokeWidth={2.5} 
+                            name="Transmitted" 
+                            dot={false}
+                            isAnimationActive={true}
+                            animationDuration={300}
+                            activeDot={{ r: 5, fill: '#10b981' }}
+                          />
                         </LineChart>
                       </ResponsiveContainer>
                     </div>
@@ -886,25 +1090,73 @@ const ContainerDetails = () => {
 
                   {/* Block I/O Chart */}
                   {statsHistory.length > 0 && statsHistory[statsHistory.length - 1]?.blockRead > 0 && (
-                    <div className="bg-white dark:bg-gray-800 rounded-xl p-6 border border-gray-200 dark:border-gray-700 shadow-lg">
+                    <div className="bg-white dark:bg-gray-800 rounded-xl p-6 border border-gray-200 dark:border-gray-700 shadow-lg hover:shadow-xl transition-shadow duration-300">
                       <div className="flex items-center gap-2 mb-4">
+                        <span className="inline-block w-2 h-2 bg-purple-500 rounded-full animate-pulse"></span>
                         <svg className="w-6 h-6 text-primary-600 dark:text-primary-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
                         </svg>
                         <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Block I/O</h3>
                       </div>
                       <ResponsiveContainer width="100%" height={250}>
-                        <LineChart data={statsHistory}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" className="dark:stroke-gray-700" />
-                          <XAxis dataKey="time" tick={{ fontSize: 10 }} stroke="#6b7280" />
-                          <YAxis tick={{ fontSize: 10 }} stroke="#6b7280" />
-                          <Tooltip 
-                            contentStyle={{ backgroundColor: 'rgba(255, 255, 255, 0.95)', border: '1px solid #e5e7eb', borderRadius: '8px' }}
-                            formatter={(value) => [formatBytes(value), '']}
+                        <LineChart 
+                          data={statsHistory}
+                          margin={{ top: 5, right: 10, left: 5, bottom: 5 }}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" className="dark:stroke-gray-700" opacity={0.3} />
+                          <XAxis 
+                            dataKey="time" 
+                            tick={{ fontSize: 9, fill: '#6b7280' }} 
+                            stroke="#6b7280"
+                            axisLine={false}
+                            tickLine={false}
                           />
-                          <Legend />
-                          <Line type="monotone" dataKey="blockRead" stroke="#8b5cf6" strokeWidth={2} name="Read" dot={false} />
-                          <Line type="monotone" dataKey="blockWrite" stroke="#f59e0b" strokeWidth={2} name="Write" dot={false} />
+                          <YAxis 
+                            domain={[0, (dataMax) => Math.max(dataMax * 1.2, 1000)]} 
+                            tick={{ fontSize: 9, fill: '#6b7280' }} 
+                            stroke="#6b7280"
+                            allowDataOverflow={false}
+                            axisLine={false}
+                            tickLine={false}
+                            width={60}
+                            tickFormatter={(value) => formatBytes(value)}
+                          />
+                          <Tooltip 
+                            contentStyle={{ 
+                              backgroundColor: 'rgba(255, 255, 255, 0.98)', 
+                              border: '1px solid #e5e7eb', 
+                              borderRadius: '8px',
+                              boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
+                            }}
+                            formatter={(value) => [formatBytes(value), '']}
+                            labelStyle={{ fontWeight: 'bold', color: '#1f2937' }}
+                          />
+                          <Legend 
+                            wrapperStyle={{ paddingTop: '10px' }}
+                            iconType="line"
+                          />
+                          <Line 
+                            type="monotone" 
+                            dataKey="blockRead" 
+                            stroke="#8b5cf6" 
+                            strokeWidth={2.5} 
+                            name="Read" 
+                            dot={false}
+                            isAnimationActive={true}
+                            animationDuration={300}
+                            activeDot={{ r: 5, fill: '#8b5cf6' }}
+                          />
+                          <Line 
+                            type="monotone" 
+                            dataKey="blockWrite" 
+                            stroke="#f59e0b" 
+                            strokeWidth={2.5} 
+                            name="Write" 
+                            dot={false}
+                            isAnimationActive={true}
+                            animationDuration={300}
+                            activeDot={{ r: 5, fill: '#f59e0b' }}
+                          />
                         </LineChart>
                       </ResponsiveContainer>
                     </div>
@@ -913,15 +1165,15 @@ const ContainerDetails = () => {
                   {/* Current Stats Cards */}
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     {/* Processes */}
-                    <div className="bg-gradient-to-br from-purple-50 to-purple-100 dark:from-purple-900/30 dark:to-purple-800/20 rounded-lg p-4 border border-purple-200 dark:border-purple-800">
+                    <div className="bg-gradient-to-br from-purple-50 to-purple-100 dark:from-purple-900/30 dark:to-purple-800/20 rounded-lg p-4 border border-purple-200 dark:border-purple-800 hover:shadow-lg transition-all duration-300 transform hover:scale-105">
                       <div className="flex items-center justify-between">
                         <div>
                           <p className="text-sm font-medium text-purple-600 dark:text-purple-400">Processes</p>
-                          <p className="text-2xl font-bold text-purple-900 dark:text-purple-100 mt-1">
+                          <p className="text-2xl font-bold text-purple-900 dark:text-purple-100 mt-1 transition-all duration-300">
                             {stats.pids_stats?.current || 0}
                           </p>
                         </div>
-                        <div className="p-3 bg-purple-500/20 rounded-lg">
+                        <div className="p-3 bg-purple-500/20 rounded-lg animate-pulse">
                           <svg className="w-6 h-6 text-purple-600 dark:text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
                           </svg>
@@ -931,11 +1183,11 @@ const ContainerDetails = () => {
 
                     {/* Network Summary */}
                     {stats.networks && Object.keys(stats.networks).length > 0 && (
-                      <div className="bg-gradient-to-br from-indigo-50 to-indigo-100 dark:from-indigo-900/30 dark:to-indigo-800/20 rounded-lg p-4 border border-indigo-200 dark:border-indigo-800">
+                      <div className="bg-gradient-to-br from-indigo-50 to-indigo-100 dark:from-indigo-900/30 dark:to-indigo-800/20 rounded-lg p-4 border border-indigo-200 dark:border-indigo-800 hover:shadow-lg transition-all duration-300 transform hover:scale-105">
                         <div className="flex items-center justify-between">
                           <div>
                             <p className="text-sm font-medium text-indigo-600 dark:text-indigo-400">Networks</p>
-                            <p className="text-2xl font-bold text-indigo-900 dark:text-indigo-100 mt-1">
+                            <p className="text-2xl font-bold text-indigo-900 dark:text-indigo-100 mt-1 transition-all duration-300">
                               {Object.keys(stats.networks).length}
                             </p>
                             <p className="text-xs text-indigo-700 dark:text-indigo-300 mt-1">
@@ -943,7 +1195,7 @@ const ContainerDetails = () => {
                                 formatBytes(Object.values(stats.networks).reduce((sum, net) => sum + (net.rx_bytes || 0), 0))}
                             </p>
                           </div>
-                          <div className="p-3 bg-indigo-500/20 rounded-lg">
+                          <div className="p-3 bg-indigo-500/20 rounded-lg animate-pulse">
                             <svg className="w-6 h-6 text-indigo-600 dark:text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
                             </svg>
@@ -954,7 +1206,7 @@ const ContainerDetails = () => {
 
                     {/* Memory Distribution Pie Chart */}
                     {memLimit > 0 && (
-                      <div className="bg-gradient-to-br from-pink-50 to-pink-100 dark:from-pink-900/30 dark:to-pink-800/20 rounded-lg p-4 border border-pink-200 dark:border-pink-800">
+                      <div className="bg-gradient-to-br from-pink-50 to-pink-100 dark:from-pink-900/30 dark:to-pink-800/20 rounded-lg p-4 border border-pink-200 dark:border-pink-800 hover:shadow-lg transition-all duration-300 transform hover:scale-105">
                         <div className="flex items-center justify-between mb-2">
                           <p className="text-sm font-medium text-pink-600 dark:text-pink-400">Memory Distribution</p>
                         </div>
@@ -971,16 +1223,26 @@ const ContainerDetails = () => {
                               outerRadius={50}
                               paddingAngle={2}
                               dataKey="value"
+                              isAnimationActive={true}
+                              animationDuration={500}
                             >
                               <Cell fill="#10b981" />
                               <Cell fill="#e5e7eb" />
                             </Pie>
-                            <Tooltip formatter={(value) => formatBytes(value)} />
+                            <Tooltip 
+                              formatter={(value) => formatBytes(value)}
+                              contentStyle={{ 
+                                backgroundColor: 'rgba(255, 255, 255, 0.98)', 
+                                border: '1px solid #e5e7eb', 
+                                borderRadius: '8px',
+                                boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
+                              }}
+                            />
                           </PieChart>
                         </ResponsiveContainer>
                         <div className="flex justify-center gap-4 mt-2 text-xs">
                           <div className="flex items-center gap-1">
-                            <div className="w-3 h-3 bg-green-500 rounded"></div>
+                            <div className="w-3 h-3 bg-green-500 rounded animate-pulse"></div>
                             <span className="text-gray-700 dark:text-gray-300">Used</span>
                           </div>
                           <div className="flex items-center gap-1">
