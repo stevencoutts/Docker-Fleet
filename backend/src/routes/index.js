@@ -4,10 +4,12 @@ const authRoutes = require('../modules/auth/auth.routes');
 const serversRoutes = require('../modules/servers/servers.routes');
 const containersRoutes = require('../modules/containers/containers.routes');
 const imagesRoutes = require('../modules/images/images.routes');
+const usersRoutes = require('../modules/users/users.routes');
 
 router.use('/auth', authRoutes);
 router.use('/servers', serversRoutes);
 router.use('/servers', containersRoutes);
 router.use('/servers', imagesRoutes);
+router.use('/users', usersRoutes);
 
 module.exports = router;

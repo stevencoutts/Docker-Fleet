@@ -15,6 +15,16 @@ const Layout = () => {
     { name: 'Dashboard', path: '/' },
   ];
 
+  // Admin-only navigation items
+  const adminNavigation = user?.role === 'admin' ? [
+    { name: 'Users', path: '/admin/users' },
+  ] : [];
+
+  // Personal navigation items (for all users)
+  const personalNavigation = [
+    { name: 'Profile', path: '/profile' },
+  ];
+
   const isActive = (path) => {
     if (path === '/') {
       return location.pathname === '/';
@@ -35,6 +45,42 @@ const Layout = () => {
               </div>
               <div className="hidden sm:ml-6 sm:flex sm:space-x-8">
                 {navigation.map((item) => (
+                  <Link
+                    key={item.name}
+                    to={item.path}
+                    className={`inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium transition-colors ${
+                      isActive(item.path)
+                        ? 'border-primary-500 dark:border-primary-400 text-gray-900 dark:text-gray-100'
+                        : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:border-gray-300 dark:hover:border-gray-600'
+                    }`}
+                  >
+                    {item.name}
+                  </Link>
+                ))}
+                {adminNavigation.length > 0 && (
+                  <>
+                    <span className="inline-flex items-center px-1 pt-1 text-sm font-medium text-gray-400 dark:text-gray-500">
+                      |
+                    </span>
+                    {adminNavigation.map((item) => (
+                      <Link
+                        key={item.name}
+                        to={item.path}
+                        className={`inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium transition-colors ${
+                          isActive(item.path)
+                            ? 'border-primary-500 dark:border-primary-400 text-gray-900 dark:text-gray-100'
+                            : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:border-gray-300 dark:hover:border-gray-600'
+                        }`}
+                      >
+                        {item.name}
+                      </Link>
+                    ))}
+                  </>
+                )}
+                <span className="inline-flex items-center px-1 pt-1 text-sm font-medium text-gray-400 dark:text-gray-500">
+                  |
+                </span>
+                {personalNavigation.map((item) => (
                   <Link
                     key={item.name}
                     to={item.path}
