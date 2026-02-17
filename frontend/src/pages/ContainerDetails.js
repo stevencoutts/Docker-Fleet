@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { containersService } from '../services/containers.service';
 import LogsViewer from '../components/LogsViewer';
+import Console from '../components/Console';
 import { LineChart, Line, AreaChart, Area, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
 const ContainerDetails = () => {
@@ -11,11 +12,45 @@ const ContainerDetails = () => {
   const [statsHistory, setStatsHistory] = useState([]);
   const [activeTab, setActiveTab] = useState('details');
   const [loading, setLoading] = useState(true);
+  const [snapshotLoading, setSnapshotLoading] = useState(false);
+  const [snapshotModalOpen, setSnapshotModalOpen] = useState(false);
+  const [snapshotImageName, setSnapshotImageName] = useState('');
+  const [snapshotTag, setSnapshotTag] = useState('snapshot');
+  const [snapshotDownload, setSnapshotDownload] = useState(false);
+  const [snapshots, setSnapshots] = useState([]);
+  const [restoreModalOpen, setRestoreModalOpen] = useState(false);
+  const [restoreImageName, setRestoreImageName] = useState('');
+  const [restoreContainerName, setRestoreContainerName] = useState('');
   const maxHistoryPoints = 30;
+
+  // Set default snapshot name when modal opens or container changes
+  useEffect(() => {
+    if (container) {
+      const containerName = container.Name?.replace('/', '') || containerId.substring(0, 12);
+      const defaultName = `${containerName}-snapshot`;
+      setSnapshotImageName(defaultName);
+    }
+  }, [container, containerId]);
 
   useEffect(() => {
     fetchContainerDetails();
+    fetchSnapshots();
   }, [serverId, containerId]);
+
+  const fetchSnapshots = async () => {
+    try {
+      const response = await containersService.getSnapshots(serverId, containerId);
+      // Filter snapshots that match the container name pattern
+      const containerName = container?.Name?.replace('/', '') || containerId.substring(0, 12);
+      const filtered = response.data.snapshots.filter(img => 
+        img.name.includes(containerName) || img.name.includes('-snapshot')
+      );
+      setSnapshots(filtered);
+    } catch (error) {
+      console.error('Failed to fetch snapshots:', error);
+      setSnapshots([]);
+    }
+  };
 
   useEffect(() => {
     if (activeTab === 'stats' && containerId) {
@@ -97,6 +132,41 @@ const ContainerDetails = () => {
       }
     } catch (error) {
       alert(error.response?.data?.error || 'Action failed');
+    }
+  };
+
+  const handleCreateSnapshot = async () => {
+    if (!snapshotImageName.trim()) {
+      alert('Please enter an image name');
+      return;
+    }
+
+    setSnapshotLoading(true);
+    try {
+      const result = await containersService.createSnapshot(
+        serverId, 
+        containerId, 
+        snapshotImageName.trim(), 
+        snapshotTag.trim() || 'snapshot',
+        snapshotDownload
+      );
+      setSnapshotModalOpen(false);
+      setSnapshotImageName('');
+      setSnapshotTag('snapshot');
+      setSnapshotDownload(false);
+      
+      // Refresh snapshots list
+      await fetchSnapshots();
+      
+      if (snapshotDownload) {
+        alert('Snapshot created, saved on server, and downloaded successfully!');
+      } else {
+        alert(`Snapshot created and saved on server as ${result.data?.imageName || snapshotImageName}:${snapshotTag || 'snapshot'}`);
+      }
+    } catch (error) {
+      alert(error.response?.data?.error || error.message || 'Failed to create snapshot');
+    } finally {
+      setSnapshotLoading(false);
     }
   };
 
@@ -265,10 +335,184 @@ const ContainerDetails = () => {
                 </svg>
                 Restart
               </button>
+              <button
+                onClick={() => {
+                  // Set default name when opening modal
+                  if (container) {
+                    const containerName = container.Name?.replace('/', '') || containerId.substring(0, 12);
+                    setSnapshotImageName(`${containerName}-snapshot`);
+                  }
+                  setSnapshotModalOpen(true);
+                }}
+                className="px-4 py-2 bg-purple-500 hover:bg-purple-600 text-white rounded-lg font-medium transition-all transform hover:scale-105 flex items-center gap-1"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                Snapshot
+              </button>
             </div>
           </div>
         </div>
       </div>
+
+      {/* Snapshot Modal */}
+      {snapshotModalOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl p-6 max-w-md w-full mx-4">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Create Snapshot</h3>
+              <button
+                onClick={() => setSnapshotModalOpen(false)}
+                className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+              >
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+              This will commit the container to an image and export it as a tar file for download.
+            </p>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Image Name *
+                </label>
+                <input
+                  type="text"
+                  value={snapshotImageName}
+                  onChange={(e) => setSnapshotImageName(e.target.value)}
+                  placeholder="e.g., my-container"
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  disabled={snapshotLoading}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Tag
+                </label>
+                <input
+                  type="text"
+                  value={snapshotTag}
+                  onChange={(e) => setSnapshotTag(e.target.value)}
+                  placeholder="snapshot"
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  disabled={snapshotLoading}
+                />
+              </div>
+              <div className="flex items-center">
+                <input
+                  type="checkbox"
+                  id="snapshotDownload"
+                  checked={snapshotDownload}
+                  onChange={(e) => setSnapshotDownload(e.target.checked)}
+                  className="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
+                  disabled={snapshotLoading}
+                />
+                <label htmlFor="snapshotDownload" className="ml-2 text-sm text-gray-700 dark:text-gray-300">
+                  Also download as tar file
+                </label>
+              </div>
+              <p className="text-xs text-gray-500 dark:text-gray-400">
+                The image will always be saved on the server and appear in your Images list. 
+                Checking this option will also download a tar file to your computer.
+              </p>
+            </div>
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={handleCreateSnapshot}
+                disabled={snapshotLoading || !snapshotImageName.trim()}
+                className="flex-1 px-4 py-2 bg-primary-600 dark:bg-primary-500 text-white rounded-lg hover:bg-primary-700 dark:hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
+              >
+                {snapshotLoading ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Creating...
+                  </span>
+                ) : (
+                  'Create Snapshot'
+                )}
+              </button>
+              <button
+                onClick={() => setSnapshotModalOpen(false)}
+                disabled={snapshotLoading}
+                className="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Restore Snapshot Modal */}
+      {restoreModalOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl p-6 max-w-md w-full mx-4">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Restore Snapshot</h3>
+              <button
+                onClick={() => setRestoreModalOpen(false)}
+                className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+              >
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+              Create a new container from snapshot: <span className="font-mono text-primary-600 dark:text-primary-400">{restoreImageName}</span>
+            </p>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Container Name *
+                </label>
+                <input
+                  type="text"
+                  value={restoreContainerName}
+                  onChange={(e) => setRestoreContainerName(e.target.value)}
+                  placeholder="e.g., my-restored-container"
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                />
+              </div>
+            </div>
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={async () => {
+                  if (!restoreContainerName.trim()) {
+                    alert('Please enter a container name');
+                    return;
+                  }
+                  try {
+                    await containersService.restoreSnapshot(serverId, restoreImageName, restoreContainerName.trim());
+                    setRestoreModalOpen(false);
+                    setRestoreContainerName('');
+                    alert('Container created successfully!');
+                    // Navigate to server page to see the new container
+                    window.location.href = `/servers/${serverId}`;
+                  } catch (error) {
+                    alert(error.response?.data?.error || error.message || 'Failed to restore snapshot');
+                  }
+                }}
+                className="flex-1 px-4 py-2 bg-primary-600 dark:bg-primary-500 text-white rounded-lg hover:bg-primary-700 dark:hover:bg-primary-600 transition-colors font-medium"
+              >
+                Create Container
+              </button>
+              <button
+                onClick={() => setRestoreModalOpen(false)}
+                className="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="bg-white dark:bg-gray-800 shadow-lg rounded-xl overflow-hidden">
@@ -277,6 +521,8 @@ const ContainerDetails = () => {
             {[
               { id: 'details', label: 'Details', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
               { id: 'logs', label: 'Logs', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
+              { id: 'console', label: 'Console', icon: 'M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z' },
+              { id: 'snapshots', label: 'Snapshots', icon: 'M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4' },
               { id: 'stats', label: 'Stats', icon: 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z' },
             ].map((tab) => (
               <button
@@ -442,6 +688,77 @@ const ContainerDetails = () => {
           {activeTab === 'logs' && (
             <div className="h-[600px]">
               <LogsViewer serverId={serverId} containerId={containerId} />
+            </div>
+          )}
+
+          {activeTab === 'console' && (
+            <div className="h-[600px]">
+              <Console serverId={serverId} containerId={containerId} />
+            </div>
+          )}
+
+          {activeTab === 'snapshots' && (
+            <div className="space-y-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Snapshots</h3>
+                  <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                    View and restore snapshots created from this container
+                  </p>
+                </div>
+                <button
+                  onClick={() => {
+                    const containerName = container?.Name?.replace('/', '') || containerId.substring(0, 12);
+                    setSnapshotImageName(`${containerName}-snapshot`);
+                    setSnapshotModalOpen(true);
+                  }}
+                  className="px-4 py-2 bg-primary-600 dark:bg-primary-500 text-white rounded-lg hover:bg-primary-700 dark:hover:bg-primary-600 transition-colors flex items-center gap-2"
+                >
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                  </svg>
+                  Create Snapshot
+                </button>
+              </div>
+
+              {snapshots.length === 0 ? (
+                <div className="text-center py-12 bg-gray-50 dark:bg-gray-900 rounded-lg">
+                  <svg className="mx-auto h-12 w-12 text-gray-400 dark:text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                  <h3 className="mt-2 text-sm font-medium text-gray-900 dark:text-gray-100">No snapshots</h3>
+                  <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                    Create a snapshot to save the current state of this container.
+                  </p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {snapshots.map((snapshot, idx) => (
+                    <div key={idx} className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
+                      <div className="flex items-start justify-between mb-3">
+                        <div className="flex-1">
+                          <h4 className="font-semibold text-gray-900 dark:text-gray-100 truncate">{snapshot.name}</h4>
+                          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">ID: {snapshot.id.substring(0, 12)}</p>
+                          <p className="text-xs text-gray-500 dark:text-gray-400">Created: {snapshot.created}</p>
+                        </div>
+                        <svg className="w-5 h-5 text-purple-500 dark:text-purple-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                        </svg>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setRestoreImageName(snapshot.name);
+                          setRestoreContainerName(`${snapshot.name.split(':')[0]}-restored`);
+                          setRestoreModalOpen(true);
+                        }}
+                        className="w-full px-3 py-2 bg-primary-600 dark:bg-primary-500 text-white text-sm rounded-lg hover:bg-primary-700 dark:hover:bg-primary-600 transition-colors"
+                      >
+                        Restore
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 

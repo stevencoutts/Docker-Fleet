@@ -174,6 +174,29 @@ class DockerService {
     };
   }
 
+  async executeCommand(server, containerId, command, options = {}) {
+    // Execute a command inside a container using docker exec
+    // Default to /bin/sh if no shell is specified
+    const shell = options.shell || '/bin/sh';
+    
+    // Build docker exec command - use sh -c to execute the command
+    // Escape single quotes in the command
+    const escapedCommand = command.replace(/'/g, "'\\''");
+    const dockerCommand = `docker exec -i ${containerId} ${shell} -c '${escapedCommand}'`;
+    
+    const result = await sshService.executeCommand(server, dockerCommand, {
+      allowFailure: true,
+      ...options,
+    });
+    
+    return {
+      stdout: result.stdout || '',
+      stderr: result.stderr || '',
+      code: result.code || 0,
+      success: result.code === 0,
+    };
+  }
+
   async getContainerStats(server, containerId) {
     const command = `docker stats ${containerId} --no-stream --format '{"Container":"{{.Container}}","CPUPerc":"{{.CPUPerc}}","MemUsage":"{{.MemUsage}}","MemPerc":"{{.MemPerc}}","NetIO":"{{.NetIO}}","BlockIO":"{{.BlockIO}}","PIDs":"{{.PIDs}}"}'`;
     const result = await sshService.executeCommand(server, command);
@@ -229,6 +252,70 @@ class DockerService {
     const command = `docker rmi ${force ? '-f' : ''} ${imageId}`;
     const result = await sshService.executeCommand(server, command);
     return { success: result.code === 0, message: result.stdout || result.stderr };
+  }
+
+  async commitContainer(server, containerId, imageName, tag = 'snapshot') {
+    // Commit container to an image
+    // Format: imageName:tag
+    const fullImageName = tag ? `${imageName}:${tag}` : imageName;
+    const command = `docker commit ${containerId} ${fullImageName}`;
+    const result = await sshService.executeCommand(server, command, { allowFailure: true });
+    
+    if (result.code !== 0) {
+      throw new Error(`Failed to commit container: ${result.stderr || result.stdout}`);
+    }
+    
+    return {
+      success: true,
+      imageName: fullImageName,
+      message: `Container committed to image: ${fullImageName}`,
+    };
+  }
+
+  async exportImage(server, imageName, outputPath) {
+    // Export image to a tar file
+    // docker save -o outputPath imageName
+    const command = `docker save -o ${outputPath} ${imageName}`;
+    const result = await sshService.executeCommand(server, command, { allowFailure: true });
+    
+    if (result.code !== 0) {
+      throw new Error(`Failed to export image: ${result.stderr || result.stdout}`);
+    }
+    
+    return {
+      success: true,
+      filePath: outputPath,
+      message: `Image exported to: ${outputPath}`,
+    };
+  }
+
+  async downloadFile(server, remotePath) {
+    // Download a file from the remote server using SSH SFTP
+    const ssh = await sshService.connect(server);
+    
+    return new Promise((resolve, reject) => {
+      ssh.sftp((err, sftp) => {
+        if (err) {
+          reject(new Error(`SFTP connection failed: ${err.message}`));
+          return;
+        }
+
+        sftp.readFile(remotePath, (err, data) => {
+          if (err) {
+            reject(new Error(`Failed to read file ${remotePath}: ${err.message}`));
+            return;
+          }
+          resolve(data);
+        });
+      });
+    });
+  }
+
+  async deleteFile(server, filePath) {
+    // Delete a file from the remote server
+    const command = `rm -f ${filePath}`;
+    const result = await sshService.executeCommand(server, command, { allowFailure: true });
+    return { success: result.code === 0 };
   }
 
   async getSystemInfo(server) {
@@ -414,6 +501,79 @@ class DockerService {
     }
 
     return results;
+  }
+
+  async getSnapshotsForContainer(server, containerId) {
+    // Get all images that were created from this container
+    // We'll check images and see if they were created from this container
+    const command = `docker images --format '{{.Repository}}:{{.Tag}}|{{.ID}}|{{.CreatedAt}}'`;
+    const result = await sshService.executeCommand(server, command, { allowFailure: true });
+    
+    if (!result.stdout.trim()) {
+      return [];
+    }
+
+    const lines = result.stdout.trim().split('\n').filter(line => line.trim());
+    const images = [];
+    
+    for (const line of lines) {
+      const parts = line.split('|');
+      if (parts.length >= 3) {
+        images.push({
+          name: parts[0],
+          id: parts[1],
+          created: parts[2],
+        });
+      }
+    }
+
+    return images;
+  }
+
+  async createContainerFromImage(server, imageName, containerName, options = {}) {
+    // Create a new container from an image
+    // docker create --name containerName imageName
+    let command = `docker create`;
+    
+    if (containerName) {
+      command += ` --name ${containerName}`;
+    }
+    
+    // Add port mappings if provided
+    if (options.ports && options.ports.length > 0) {
+      options.ports.forEach(port => {
+        command += ` -p ${port}`;
+      });
+    }
+    
+    // Add environment variables if provided
+    if (options.env && options.env.length > 0) {
+      options.env.forEach(env => {
+        command += ` -e ${env}`;
+      });
+    }
+    
+    // Add restart policy
+    if (options.restart) {
+      command += ` --restart=${options.restart}`;
+    }
+    
+    command += ` ${imageName}`;
+    
+    const result = await sshService.executeCommand(server, command, { allowFailure: true });
+    
+    if (result.code !== 0) {
+      throw new Error(`Failed to create container: ${result.stderr || result.stdout}`);
+    }
+    
+    // Extract container ID from output
+    const containerId = result.stdout.trim();
+    
+    return {
+      success: true,
+      containerId: containerId,
+      message: `Container created from image ${imageName}`,
+    };
   }
 }
 

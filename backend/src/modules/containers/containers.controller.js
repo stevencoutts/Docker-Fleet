@@ -188,6 +188,163 @@ const updateRestartPolicy = async (req, res, next) => {
   }
 };
 
+const executeCommand = async (req, res, next) => {
+  try {
+    const { serverId, containerId } = req.params;
+    const { command, shell } = req.body;
+
+    if (!command || !command.trim()) {
+      return res.status(400).json({ error: 'Command is required' });
+    }
+
+    const server = await Server.findOne({
+      where: { id: serverId, userId: req.user.id },
+    });
+
+    if (!server) {
+      return res.status(404).json({ error: 'Server not found' });
+    }
+
+    const result = await dockerService.executeCommand(server, containerId, command, {
+      shell: shell || '/bin/sh',
+      interactive: false,
+      tty: false,
+    });
+
+    res.json({
+      success: result.success,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      code: result.code,
+    });
+  } catch (error) {
+    logger.error(`Failed to execute command in container ${req.params.containerId}:`, error);
+    next(error);
+  }
+};
+
+const getSnapshots = async (req, res, next) => {
+  try {
+    const { serverId, containerId } = req.params;
+
+    const server = await Server.findOne({
+      where: { id: serverId, userId: req.user.id },
+    });
+
+    if (!server) {
+      return res.status(404).json({ error: 'Server not found' });
+    }
+
+    const snapshots = await dockerService.getSnapshotsForContainer(server, containerId);
+    res.json({ snapshots });
+  } catch (error) {
+    logger.error(`Failed to get snapshots for container ${req.params.containerId}:`, error);
+    next(error);
+  }
+};
+
+const restoreSnapshot = async (req, res, next) => {
+  try {
+    const { serverId } = req.params;
+    const { imageName, containerName, ports, env, restart } = req.body;
+
+    if (!imageName || !imageName.trim()) {
+      return res.status(400).json({ error: 'Image name is required' });
+    }
+
+    const server = await Server.findOne({
+      where: { id: serverId, userId: req.user.id },
+    });
+
+    if (!server) {
+      return res.status(404).json({ error: 'Server not found' });
+    }
+
+    const result = await dockerService.createContainerFromImage(server, imageName, containerName, {
+      ports,
+      env,
+      restart: restart || 'unless-stopped',
+    });
+
+    res.json(result);
+  } catch (error) {
+    logger.error(`Failed to restore snapshot:`, error);
+    next(error);
+  }
+};
+
+const createSnapshot = async (req, res, next) => {
+  try {
+    const { serverId, containerId } = req.params;
+    const { imageName, tag, download = false } = req.body;
+
+    if (!imageName || !imageName.trim()) {
+      return res.status(400).json({ error: 'Image name is required' });
+    }
+
+    const server = await Server.findOne({
+      where: { id: serverId, userId: req.user.id },
+    });
+
+    if (!server) {
+      return res.status(404).json({ error: 'Server not found' });
+    }
+
+    const snapshotTag = tag || 'snapshot';
+    const fullImageName = `${imageName}:${snapshotTag}`;
+
+    // Step 1: Commit container to image (this keeps it on the server)
+    logger.info(`Committing container ${containerId} to image ${fullImageName}`);
+    const commitResult = await dockerService.commitContainer(server, containerId, imageName, snapshotTag);
+
+    let fileData = null;
+    let downloadFileName = null;
+
+    // Step 2: If download is requested, export and download the image
+    if (download === true || download === 'true') {
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const exportFileName = `/tmp/${imageName}-${snapshotTag}-${timestamp}.tar`;
+
+      try {
+        // Export image to tar file
+        logger.info(`Exporting image ${commitResult.imageName} to ${exportFileName}`);
+        await dockerService.exportImage(server, commitResult.imageName, exportFileName);
+
+        // Download the file
+        logger.info(`Downloading file ${exportFileName} from server`);
+        fileData = await dockerService.downloadFile(server, exportFileName);
+
+        // Clean up the file on remote server
+        await dockerService.deleteFile(server, exportFileName);
+
+        downloadFileName = `${imageName}-${snapshotTag}-${timestamp}.tar`;
+      } catch (exportError) {
+        logger.error('Failed to export/download snapshot, but image is saved on server:', exportError);
+        // Continue even if export fails - the image is still saved on the server
+      }
+    }
+
+    // If download was requested and successful, send file
+    if (fileData && downloadFileName) {
+      res.setHeader('Content-Type', 'application/x-tar');
+      res.setHeader('Content-Disposition', `attachment; filename="${downloadFileName}"`);
+      res.setHeader('Content-Length', fileData.length);
+      res.send(fileData);
+    } else {
+      // Otherwise, just return success with image info
+      res.json({
+        success: true,
+        message: `Snapshot created successfully. Image saved as ${fullImageName}`,
+        imageName: fullImageName,
+        image: commitResult.imageName,
+      });
+    }
+  } catch (error) {
+    logger.error(`Failed to create snapshot for container ${req.params.containerId}:`, error);
+    next(error);
+  }
+};
+
 module.exports = {
   getContainers,
   getContainerDetails,
@@ -198,4 +355,8 @@ module.exports = {
   removeContainer,
   getContainerStats,
   updateRestartPolicy,
+  executeCommand,
+  createSnapshot,
+  getSnapshots,
+  restoreSnapshot,
 };

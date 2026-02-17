@@ -23,4 +23,50 @@ export const containersService = {
     api.delete(`/api/v1/servers/${serverId}/containers/${containerId}?force=${force}`),
   updateRestartPolicy: (serverId, containerId, policy) =>
     api.put(`/api/v1/servers/${serverId}/containers/${containerId}/restart-policy`, { policy }),
+  executeCommand: (serverId, containerId, command, shell = '/bin/sh') =>
+    api.post(`/api/v1/servers/${serverId}/containers/${containerId}/execute`, { command, shell }),
+  getSnapshots: (serverId, containerId) =>
+    api.get(`/api/v1/servers/${serverId}/containers/${containerId}/snapshots`),
+  restoreSnapshot: (serverId, imageName, containerName, options = {}) =>
+    api.post(`/api/v1/servers/${serverId}/containers/restore`, {
+      imageName,
+      containerName,
+      ...options,
+    }),
+  createSnapshot: async (serverId, containerId, imageName, tag = 'snapshot', download = false) => {
+    const config = {
+      responseType: download ? 'blob' : 'json',
+    };
+    
+    const response = await api.post(
+      `/api/v1/servers/${serverId}/containers/${containerId}/snapshot`,
+      { imageName, tag, download },
+      config
+    );
+    
+    // If download was requested and response is a blob, trigger download
+    if (download && response.data instanceof Blob) {
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      const contentDisposition = response.headers['content-disposition'];
+      let filename = `${imageName}-${tag}.tar`;
+      if (contentDisposition) {
+        const filenameMatch = contentDisposition.match(/filename="(.+)"/);
+        if (filenameMatch) {
+          filename = filenameMatch[1];
+        }
+      }
+      link.setAttribute('download', filename);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      
+      return { success: true, filename, data: response.data };
+    }
+    
+    // Otherwise return the JSON response
+    return response;
+  },
 };
