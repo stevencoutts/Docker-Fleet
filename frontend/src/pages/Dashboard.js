@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { serversService } from '../services/servers.service';
 import { containersService } from '../services/containers.service';
 import { systemService } from '../services/system.service';
@@ -20,8 +20,10 @@ const Dashboard = () => {
     totalChecked: 0,
     errors: [],
   });
+  const [updatingFromOverview, setUpdatingFromOverview] = useState(null); // { serverId, containerId }
   const [containersVersion, setContainersVersion] = useState(0); // Version counter to trigger recalculation only when stable data updates
   const socket = useSocket();
+  const navigate = useNavigate();
   const refreshTimeoutRef = useRef(null);
   const isRefreshingRef = useRef(false); // Track if we're currently refreshing to prevent flicker
   const stableContainersRef = useRef({}); // Store stable container data that only updates when complete
@@ -459,6 +461,24 @@ const Dashboard = () => {
     setEnablingAutoRestart(false);
   };
 
+  const handleUpdateFromOverview = async (item) => {
+    setUpdatingFromOverview({ serverId: item.serverId, containerId: item.containerId });
+    try {
+      const res = await containersService.pullAndUpdate(item.serverId, item.containerId);
+      const data = res.data || {};
+      if (data.success && data.newContainerId) {
+        navigate(`/servers/${item.serverId}/containers/${data.newContainerId}`, { replace: true, state: { updateResult: data } });
+      } else {
+        runUpdateCheck();
+      }
+    } catch (err) {
+      alert(err.response?.data?.error || err.message || 'Update failed');
+      runUpdateCheck();
+    } finally {
+      setUpdatingFromOverview(null);
+    }
+  };
+
   return (
     <div className="px-4 py-6 sm:px-0">
       <div className="mb-6 flex items-center justify-between">
@@ -670,21 +690,44 @@ const Dashboard = () => {
                       {updateOverview.containers.length !== 1 ? 's' : ''} with image updates available:
                     </p>
                     <ul className="mt-1 list-disc list-inside space-y-1">
-                      {updateOverview.containers.slice(0, 5).map((item, idx) => (
-                        <li key={`${item.serverId}-${item.containerId}-${idx}`}>
-                          <Link
-                            to={`/servers/${item.serverId}/containers/${item.containerId}`}
-                            className="font-medium hover:underline"
-                          >
-                            {item.containerName}
-                          </Link>
-                          {' '}on {item.serverName} ({item.serverHost}) —{' '}
-                          <span className="font-mono text-xs">
-                            {item.currentDigestShort || 'current'} →{' '}
-                            {item.availableDigestShort || 'new'}
-                          </span>
-                        </li>
-                      ))}
+                      {updateOverview.containers.slice(0, 5).map((item, idx) => {
+                        const isUpdating = updatingFromOverview && String(updatingFromOverview.serverId) === String(item.serverId) && String(updatingFromOverview.containerId) === String(item.containerId);
+                        return (
+                          <li key={`${item.serverId}-${item.containerId}-${idx}`} className="flex flex-wrap items-center gap-1">
+                            <span>
+                              <Link
+                                to={`/servers/${item.serverId}/containers/${item.containerId}`}
+                                className="font-medium hover:underline"
+                              >
+                                {item.containerName}
+                              </Link>
+                              {' '}on {item.serverName} ({item.serverHost}) —{' '}
+                              <span className="font-mono text-xs">
+                                {item.currentDigestShort || 'current'} →{' '}
+                                {item.availableDigestShort || 'new'}
+                              </span>
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleUpdateFromOverview(item)}
+                              disabled={!!updatingFromOverview}
+                              className="ml-1 inline-flex items-center px-2 py-0.5 text-xs font-medium rounded text-white bg-green-600 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              {isUpdating ? (
+                                <>
+                                  <svg className="animate-spin mr-1 h-3 w-3" fill="none" viewBox="0 0 24 24">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                                  </svg>
+                                  Updating…
+                                </>
+                              ) : (
+                                'Update'
+                              )}
+                            </button>
+                          </li>
+                        );
+                      })}
                       {updateOverview.containers.length > 5 && (
                         <li className="text-blue-600 dark:text-blue-400">
                           ...and {updateOverview.containers.length - 5} more
