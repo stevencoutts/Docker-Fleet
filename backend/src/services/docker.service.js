@@ -423,7 +423,14 @@ class DockerService {
         return { success: false, error: errDetail ? `Failed to rename new container: ${errDetail}. You may have a container with ID ${newContainerId.substring(0, 12)} that you can rename or remove manually.` : 'Failed to rename new container', steps };
       }
 
-      const startResult = await this.startContainer(server, name);
+      // Brief delay so the daemon releases the old container's port bindings before we start the new one
+      await new Promise((r) => setTimeout(r, 1500));
+
+      let startResult = await this.startContainer(server, name);
+      if (!startResult.success && /port is already allocated|address already in use/i.test(startResult.message || '')) {
+        await new Promise((r) => setTimeout(r, 2000));
+        startResult = await this.startContainer(server, name);
+      }
       addStep('Start new container', startResult.success, startResult.success ? 'Running' : (startResult.message || 'Start failed'));
       if (!startResult.success) {
         return { success: false, error: 'Container recreated but start failed: ' + (startResult.message || ''), newContainerId, steps };
@@ -577,7 +584,14 @@ class DockerService {
         return { success: false, error: errDetail ? `Failed to rename new container: ${errDetail}. You may have a container with ID ${newContainerId.substring(0, 12)} that you can rename or remove manually.` : 'Failed to rename new container', steps };
       }
 
-      const startResult = await this.startContainer(server, name);
+      // Brief delay so the daemon releases the old container's port bindings before we start the new one
+      await new Promise((r) => setTimeout(r, 1500));
+
+      let startResult = await this.startContainer(server, name);
+      if (!startResult.success && /port is already allocated|address already in use/i.test(startResult.message || '')) {
+        await new Promise((r) => setTimeout(r, 2000));
+        startResult = await this.startContainer(server, name);
+      }
       addStep('Start new container', startResult.success, startResult.success ? 'Running' : (startResult.message || 'Start failed'));
       if (!startResult.success) {
         return { success: false, error: 'Container recreated but start failed: ' + (startResult.message || ''), newContainerId, steps };
