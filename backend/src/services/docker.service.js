@@ -248,11 +248,11 @@ class DockerService {
             out.newestTagDisplay = registryService.stripVersionTagPrefix(newest.tag) || newest.tag;
             out.newestVersion = `${newest.version.major}.${newest.version.minor}.${newest.version.patch}${newest.version.scheme === 'semver' && newest.version.ls ? '.' + newest.version.ls : ''}-r${newest.version.r}${newest.version.scheme !== 'semver' && newest.version.ls ? `-ls${newest.version.ls}` : ''}`;
             out.updateAvailableByVersion = true;
-            // Show update when digest differs, or when newest is a different (newer) build. Only suppress when digest matches and versions are equal (e.g. 0.4 and 0.4.208 same image).
-            // Use resolved version from labels when available so tag 0.4 with resolved 0.4.208 matches newest 0.4.208.
+            // Show update when digest differs, or when we have a resolved/current version that is strictly older than newest. When digest matches and we have no version to compare (e.g. latest with no labels), trust digest and don't show update.
             const effectiveForSameCheck = resolvedParsed || currentParsed;
             const sameVersion = effectiveForSameCheck && registryService.compareVersionParts(effectiveForSameCheck, newest.version) === 0;
-            if (result.updateAvailable || !sameVersion) out.updateAvailable = true;
+            const newerByVersion = effectiveForSameCheck && registryService.compareVersionParts(effectiveForSameCheck, newest.version) < 0;
+            if (result.updateAvailable || newerByVersion) out.updateAvailable = true;
           } else if (resolvedVersion) {
             out.resolvedNewerThanTagList = true;
           }
