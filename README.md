@@ -14,16 +14,22 @@ A production-ready full-stack web application for managing Docker containers acr
 
 ### Multi-Server Management
 - Add and manage multiple remote Docker hosts
+- Support for IP addresses and DNS hostnames
 - Secure SSH key-based authentication
 - Encrypted private key storage
 - Connection testing
+- View host system information (architecture, CPU, memory, hostname)
 
 ### Container Management
-- List all containers (running and stopped)
-- View detailed container information
+- List all containers (running and stopped) with filtering
+- View detailed container information with visual stats graphs
 - Start, stop, restart, and remove containers
-- View container logs with live streaming
-- Monitor container stats (CPU, memory, network)
+- View container logs with live streaming via WebSocket
+- Monitor container stats (CPU, memory, network I/O, block I/O) with real-time graphs
+- Manage container restart policies (no, always, unless-stopped, on-failure)
+- Interactive console/terminal access for running containers
+- Container snapshots: commit containers to images, view snapshots, restore from snapshots
+- Delete snapshot images
 
 ### Image Management
 - List all Docker images
@@ -33,21 +39,29 @@ A production-ready full-stack web application for managing Docker containers acr
 ### Security
 - JWT-based authentication
 - Role-based access control (admin/user)
+- User management (admin can manage all users)
 - Encrypted SSH private keys
 - Helmet security headers
-- Rate limiting
+- Rate limiting (disabled for localhost/development)
 - Input validation and sanitization
+- Dark/light mode support
 
 ### Real-time Updates
 - WebSocket support for live log streaming
-- Real-time container status updates
-- Live container statistics
+- Real-time container status updates on dashboard
+- Live container statistics with auto-refresh
+- Instant dashboard updates when container states change
 
 ### Email Alerts
 - Automatic email notifications when containers with auto-restart go down
 - Recovery alerts when containers come back online
-- Configurable SMTP settings
-- Alert cooldown to prevent spam
+- Alerts for containers running without auto-restart policy
+- Configurable SMTP settings via environment variables
+- **Web UI configuration** for per-user alert preferences:
+  - Enable/disable specific alert types
+  - Configure alert cooldown periods (default: 12 hours)
+  - Set minimum down time threshold before alerting
+- Per-user settings stored in database with config fallback
 
 ## 🚀 Quick Start
 
@@ -188,10 +202,14 @@ dockerMgmr/
 │   │   │   ├── auth/        # Authentication
 │   │   │   ├── servers/     # Server management
 │   │   │   ├── containers/  # Container management
-│   │   │   └── images/      # Image management
+│   │   │   ├── images/      # Image management
+│   │   │   ├── users/       # User management
+│   │   │   └── monitoring/  # Monitoring settings
 │   │   ├── services/        # Business logic services
 │   │   │   ├── ssh.service.js
-│   │   │   └── docker.service.js
+│   │   │   ├── docker.service.js
+│   │   │   ├── email.service.js
+│   │   │   └── monitoring.service.js
 │   │   ├── routes/          # Route definitions
 │   │   ├── utils/           # Utility functions
 │   │   ├── websocket/       # Socket.IO handlers
@@ -241,10 +259,10 @@ dockerMgmr/
 3. **Add server in the application**
    - Login to the web interface
    - Navigate to Dashboard
-   - Click "Add Server"
+   - Click "Add Server" button (always visible in header)
    - Fill in:
      - Name: Friendly name for the server
-     - Host: IP address or hostname
+     - Host: IP address or DNS hostname (e.g., `192.168.1.100` or `server.example.com`)
      - Port: SSH port (default: 22)
      - Username: SSH username
      - Private Key: Contents of your private key file
@@ -276,11 +294,27 @@ dockerMgmr/
 - `POST /api/v1/servers/:serverId/containers/:containerId/stop` - Stop container
 - `POST /api/v1/servers/:serverId/containers/:containerId/restart` - Restart container
 - `DELETE /api/v1/servers/:serverId/containers/:containerId` - Remove container
+- `PUT /api/v1/servers/:serverId/containers/:containerId/restart-policy` - Update restart policy
+- `POST /api/v1/servers/:serverId/containers/:containerId/execute` - Execute command in container
+- `GET /api/v1/servers/:serverId/containers/:containerId/snapshots` - List snapshots
+- `POST /api/v1/servers/:serverId/containers/:containerId/snapshots` - Create snapshot
+- `POST /api/v1/servers/:serverId/containers/restore` - Restore container from snapshot
 
 ### Images
 - `GET /api/v1/servers/:serverId/images` - List images
 - `POST /api/v1/servers/:serverId/images/pull` - Pull image
 - `DELETE /api/v1/servers/:serverId/images/:imageId` - Remove image
+
+### Users (Admin Only)
+- `GET /api/v1/users` - List all users
+- `GET /api/v1/users/:id` - Get user details
+- `PUT /api/v1/users/:id` - Update user
+- `PUT /api/v1/users/:id/password` - Update user password
+- `DELETE /api/v1/users/:id` - Delete user
+
+### Monitoring Settings
+- `GET /api/v1/monitoring` - Get current user's monitoring settings
+- `PUT /api/v1/monitoring` - Update current user's monitoring settings
 
 ## 🔌 WebSocket Events
 
@@ -299,6 +333,7 @@ dockerMgmr/
 - `logs:data` - Log data chunk
 - `logs:error` - Log streaming error
 - `stats:data` - Container stats update
+- `container:status:changed` - Container status changed (triggers dashboard refresh)
 - `error` - General error
 
 ## 🛠️ Development
@@ -392,7 +427,12 @@ docker-compose exec backend npm run migrate
 | `SMTP_PASSWORD` | SMTP password | - (optional for port 25) |
 | `SMTP_REJECT_UNAUTHORIZED` | Reject unauthorized certs | `true` |
 | `MONITORING_CHECK_INTERVAL_MS` | Container check interval | `60000` (1 min) |
-| `MONITORING_ALERT_COOLDOWN_MS` | Alert cooldown period | `300000` (5 min) |
+| `MONITORING_ALERT_COOLDOWN_MS` | Alert cooldown period | `43200000` (12 hours) |
+| `MONITORING_NO_AUTO_RESTART_COOLDOWN_MS` | No auto-restart alert cooldown | `43200000` (12 hours) |
+| `MONITORING_ALERT_ON_CONTAINER_DOWN` | Enable down alerts | `true` |
+| `MONITORING_ALERT_ON_CONTAINER_RECOVERY` | Enable recovery alerts | `true` |
+| `MONITORING_ALERT_ON_NO_AUTO_RESTART` | Enable no auto-restart alerts | `true` |
+| `MONITORING_MIN_DOWN_TIME_MS` | Min down time before alert | `0` (immediate) |
 
 ### Frontend
 
@@ -478,28 +518,63 @@ The application can send email alerts when containers with auto-restart enabled 
 
 ### Monitoring Settings
 
+#### Environment Variables (Global Defaults)
+
 - `MONITORING_CHECK_INTERVAL_MS`: How often to check containers (default: 60000ms = 1 minute)
-- `MONITORING_ALERT_COOLDOWN_MS`: Minimum time between alerts for the same container (default: 300000ms = 5 minutes)
+- `MONITORING_ALERT_COOLDOWN_MS`: Minimum time between alerts for the same container (default: 43200000ms = 12 hours)
+- `MONITORING_NO_AUTO_RESTART_COOLDOWN_MS`: Cooldown for no auto-restart alerts (default: 43200000ms = 12 hours)
+- `MONITORING_ALERT_ON_CONTAINER_DOWN`: Enable/disable down alerts (default: `true`)
+- `MONITORING_ALERT_ON_CONTAINER_RECOVERY`: Enable/disable recovery alerts (default: `true`)
+- `MONITORING_ALERT_ON_NO_AUTO_RESTART`: Enable/disable no auto-restart alerts (default: `true`)
+- `MONITORING_MIN_DOWN_TIME_MS`: Minimum time container must be down before first alert (default: 0 = immediate)
+
+#### Web UI Configuration
+
+You can configure monitoring settings per-user via the web interface:
+
+1. Navigate to **Monitoring** in the navigation menu
+2. Configure your preferences:
+   - **Alert Types**: Toggle which alerts you want to receive
+   - **Alert Cooldown Periods**: Set how long to wait before resending alerts (in hours)
+   - **Alert Thresholds**: Set minimum down time before alerting (in minutes)
+3. Click **Save Settings**
+
+**Note**: Web UI settings override environment variable defaults for your user account. Settings are stored per-user in the database.
 
 ### How It Works
 
 - The monitoring service automatically checks all containers every minute
 - Alerts are sent when:
-  - A container with auto-restart enabled goes down
-  - A previously down container recovers
+  - A container with auto-restart enabled goes down (if enabled)
+  - A previously down container recovers (if enabled)
+  - A container is running without auto-restart policy (if enabled)
 - Alerts are sent to the email address of the user who owns the server
-- Cooldown prevents spam - alerts for the same container are limited to once per cooldown period
+- Cooldown prevents spam - alerts for the same container are limited to once per cooldown period (default: 12 hours)
+- Each user can configure their own alert preferences via the web UI
+
+## 🎨 User Interface Features
+
+- **Dark/Light Mode**: Toggle between themes with system preference detection
+- **Dashboard Overview**: Real-time overview of all servers and containers with health indicators
+- **Container Filtering**: Filter containers by status (All, Running, Stopped)
+- **Visual Stats**: Interactive graphs for CPU, Memory, Network I/O, and Block I/O
+- **Live Logs**: Real-time log streaming with auto-scroll toggle
+- **Container Console**: Interactive terminal for executing commands in containers
+- **Snapshots**: Create, view, and restore container snapshots
+- **User Management**: Admin interface for managing users (admin only)
+- **Profile Management**: Personal settings and password management
+- **Monitoring Settings**: Per-user email alert configuration
 
 ## 🔮 Future Enhancements
 
 - [ ] Kubernetes support
-- [ ] Container filtering and search
 - [ ] Activity audit logs
 - [ ] API documentation with Swagger
 - [ ] Automated backups
-- [ ] Multi-user collaboration
 - [ ] Container templates
 - [ ] Docker Compose file management
+- [ ] Container health checks
+- [ ] Resource usage alerts
 
 ## 📄 License
 
