@@ -14,7 +14,25 @@ const Dashboard = () => {
   const [restarting, setRestarting] = useState(false);
   const [enablingAutoRestart, setEnablingAutoRestart] = useState(false);
   const [checkingUpdates, setCheckingUpdates] = useState(false);
-  const [updateOverview, setUpdateOverview] = useState({
+  const UPDATE_OVERVIEW_STORAGE_KEY = 'dockerfleet.imageUpdateOverview';
+  const loadSavedUpdateOverview = () => {
+    try {
+      const raw = localStorage.getItem(UPDATE_OVERVIEW_STORAGE_KEY);
+      if (!raw) return null;
+      const saved = JSON.parse(raw);
+      if (saved && typeof saved.ranOnce === 'boolean' && Array.isArray(saved.containers)) {
+        return {
+          ranOnce: saved.ranOnce,
+          containers: saved.containers || [],
+          totalChecked: saved.totalChecked ?? 0,
+          errors: Array.isArray(saved.errors) ? saved.errors : [],
+          lastCheckedAt: saved.lastCheckedAt || null,
+        };
+      }
+    } catch (e) { /* ignore */ }
+    return null;
+  };
+  const [updateOverview, setUpdateOverview] = useState(() => loadSavedUpdateOverview() || {
     ranOnce: false,
     containers: [],
     totalChecked: 0,
@@ -282,12 +300,17 @@ const Dashboard = () => {
     try {
       await Promise.all(promises);
     } finally {
-      setUpdateOverview({
+      const next = {
         ranOnce: true,
         containers: containersWithUpdates,
         totalChecked,
         errors,
-      });
+        lastCheckedAt: new Date().toISOString(),
+      };
+      setUpdateOverview(next);
+      try {
+        localStorage.setItem(UPDATE_OVERVIEW_STORAGE_KEY, JSON.stringify(next));
+      } catch (e) { /* ignore */ }
       setCheckingUpdates(false);
     }
   };
@@ -304,7 +327,7 @@ const Dashboard = () => {
     runUpdateCheck();
   };
 
-  // Auto-run update check when dashboard has container data, then every 6 hours
+  // Schedule update check every 6 hours only (no check on load – use state; user can click Refresh)
   useEffect(() => {
     if (containersVersion === 0) return;
 
@@ -316,7 +339,6 @@ const Dashboard = () => {
 
     if (!hasRunInitialUpdateCheckRef.current) {
       hasRunInitialUpdateCheckRef.current = true;
-      runUpdateCheck();
       const intervalMs = 6 * 60 * 60 * 1000; // 6 hours
       updateCheckIntervalRef.current = setInterval(runUpdateCheck, intervalMs);
     }
@@ -678,16 +700,29 @@ const Dashboard = () => {
                   <p>Checking for image updates across all containers…</p>
                 )}
                 {!checkingUpdates && !updateOverview.ranOnce && (
-                  <p>Update status loads automatically. Use the button to refresh.</p>
+                  <p>Use Refresh to check for updates.</p>
                 )}
                 {!checkingUpdates && updateOverview.ranOnce && updateOverview.containers.length === 0 && (
-                  <p>No image updates available for the checked containers.</p>
+                  <p>
+                    No image updates available for the checked containers.
+                    {updateOverview.lastCheckedAt && (
+                      <span className="text-blue-600/80 dark:text-blue-400/80 ml-1">
+                        (Last checked: {new Date(updateOverview.lastCheckedAt).toLocaleString()})
+                      </span>
+                    )}
+                  </p>
                 )}
                 {!checkingUpdates && updateOverview.ranOnce && updateOverview.containers.length > 0 && (
                   <>
                     <p className="mb-2">
                       Found {updateOverview.containers.length} container
-                      {updateOverview.containers.length !== 1 ? 's' : ''} with image updates available:
+                      {updateOverview.containers.length !== 1 ? 's' : ''} with image updates available
+                      {updateOverview.lastCheckedAt && (
+                        <span className="text-blue-600/80 dark:text-blue-400/80 ml-1">
+                          (last checked {new Date(updateOverview.lastCheckedAt).toLocaleString()})
+                        </span>
+                      )}
+                      :
                     </p>
                     <ul className="mt-1 list-disc list-inside space-y-1">
                       {updateOverview.containers.slice(0, 5).map((item, idx) => {

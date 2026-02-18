@@ -842,20 +842,20 @@ const ContainerDetails = () => {
                                   Update available
                                   {updateStatus.updateAvailableByVersion && updateStatus.newestTag && (
                                     <span className="font-normal">
-                                      {updateStatus.track === 'dev' ? ` (newer dev build: ${updateStatus.newestTag})` : ` (newer version: ${updateStatus.newestTag})`}
+                                      {updateStatus.track === 'dev' ? ` (newer dev build: ${updateStatus.newestTagDisplay || updateStatus.newestTag})` : ` (newer version: ${updateStatus.newestTagDisplay || updateStatus.newestTag})`}
                                     </span>
                                   )}
                                 </span>
                               )}
-                              {!updateStatus.updateAvailable && !updateStatus.pinned && (!updateStatus.error || (updateStatus.resolvedVersion && updateStatus.newestTag)) && (
+                              {!updateStatus.updateAvailable && !updateStatus.pinned && (!updateStatus.error || (updateStatus.resolvedVersion && (updateStatus.newestTag || updateStatus.resolvedNewerThanTagList))) && (
                                 <span className="text-gray-600 dark:text-gray-400">Up to date</span>
                               )}
                               {updateStatus.reason && <span className="text-gray-500 dark:text-gray-400"> – {updateStatus.reason}</span>}
-                              {updateStatus.error && !(updateStatus.resolvedVersion && updateStatus.newestTag) && (
+                              {updateStatus.error && !(updateStatus.resolvedVersion && (updateStatus.newestTag || updateStatus.resolvedNewerThanTagList)) && (
                                 <span className="text-red-600 dark:text-red-400"> – {updateStatus.error}</span>
                               )}
                             </p>
-                            {!updateStatus.pinned && (updateStatus.currentTag || updateStatus.resolvedVersion || updateStatus.newestTag) && (
+                            {!updateStatus.pinned && (updateStatus.currentTag || updateStatus.resolvedVersion || updateStatus.newestTag || updateStatus.newestTagFromRegistry) && (
                               <div className="text-xs font-mono text-gray-600 dark:text-gray-400 mb-2 bg-gray-50 dark:bg-gray-900/50 rounded p-3">
                                 {updateStatus.currentTag && (
                                   <div>
@@ -875,7 +875,13 @@ const ContainerDetails = () => {
                                     <span className="text-gray-500 dark:text-gray-500">
                                       {updateStatus.track === 'dev' ? 'Newest dev build: ' : 'Newest version: '}
                                     </span>
-                                    <span className="text-gray-800 dark:text-gray-200 font-medium">{updateStatus.newestTag}</span>
+                                    <span className="text-gray-800 dark:text-gray-200 font-medium">{updateStatus.newestTagDisplay || updateStatus.newestTag}</span>
+                                  </div>
+                                )}
+                                {updateStatus.newestTagFromRegistry && (
+                                  <div className="mt-0.5">
+                                    <span className="text-gray-400 dark:text-gray-500 text-xs">Registry tag: </span>
+                                    <span className="text-gray-500 dark:text-gray-500 font-mono text-xs">{updateStatus.newestTagFromRegistry}</span>
                                   </div>
                                 )}
                               </div>

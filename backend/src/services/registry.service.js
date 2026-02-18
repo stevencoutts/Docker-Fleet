@@ -185,6 +185,7 @@ async function checkUpdateAvailable(opts) {
  * Parse version from a tag. Supports:
  * - LinuxServer: 4.1.0-r0-ls330, amd64-4.1.0-r0-ls330
  * - GHCR timestamp: 0.19.0-20260217191538, 0.19.0-20260217191538-amd64
+ * - Semver: v3.3.21, 3.3.21, 3.3.21-slim (e.g. flaresolverr)
  * Returns { major, minor, patch, r, ls } or null for non-version tags (e.g. latest, dev).
  */
 function parseVersionFromTag(tag) {
@@ -200,6 +201,7 @@ function parseVersionFromTag(tag) {
       patch: parseInt(m[3], 10),
       r: parseInt(m[4], 10),
       ls: m[5] ? parseInt(m[5], 10) : 0,
+      scheme: 'linuxserver',
     };
   }
   // GHCR timestamp style: X.Y.Z-YYYYMMDDHHMMSS or X.Y.Z-YYYYMMDDHHMMSS-arch
@@ -211,13 +213,38 @@ function parseVersionFromTag(tag) {
       patch: parseInt(m[3], 10),
       r: 0,
       ls: parseInt(m[4], 10), // timestamp compared numerically
+      scheme: 'timestamp',
+    };
+  }
+  // Semver 4-part: vX.Y.Z.W or X.Y.Z.W (e.g. v8.9.1.1)
+  m = t.match(/(?:v)?(\d+)\.(\d+)\.(\d+)\.(\d+)(?=$|-[a-zA-Z][a-z0-9]*)/);
+  if (m) {
+    return {
+      major: parseInt(m[1], 10),
+      minor: parseInt(m[2], 10),
+      patch: parseInt(m[3], 10),
+      r: 0,
+      ls: parseInt(m[4], 10),
+      scheme: 'semver',
+    };
+  }
+  // Semver 3-part: vX.Y.Z or X.Y.Z or X.Y.Z-suffix (suffix = letter then alphanumeric, e.g. -slim)
+  m = t.match(/(?:v)?(\d+)\.(\d+)\.(\d+)(?=$|-[a-zA-Z][a-z0-9]*)/);
+  if (m) {
+    return {
+      major: parseInt(m[1], 10),
+      minor: parseInt(m[2], 10),
+      patch: parseInt(m[3], 10),
+      r: 0,
+      ls: 0,
+      scheme: 'semver',
     };
   }
   return null;
 }
 
 /**
- * Parse version from a string (tag or label), e.g. "4.0.3-r0-ls168", "4.0.3", "0.19.0-20260217164428".
+ * Parse version from a string (tag or label), e.g. "4.0.3-r0-ls168", "4.0.3", "v3.3.21", "0.19.0-20260217164428".
  * Same return shape as parseVersionFromTag; for "X.Y.Z" only, r and ls are 0.
  */
 function parseVersionFromString(s) {
@@ -233,6 +260,7 @@ function parseVersionFromString(s) {
       patch: parseInt(m[3], 10),
       r: m[4] ? parseInt(m[4], 10) : 0,
       ls: m[5] ? parseInt(m[5], 10) : 0,
+      scheme: 'linuxserver',
     };
   }
   const m2 = raw.match(/^(\d+)\.(\d+)\.(\d+)-(\d{8,})$/);
@@ -243,6 +271,29 @@ function parseVersionFromString(s) {
       patch: parseInt(m2[3], 10),
       r: 0,
       ls: parseInt(m2[4], 10),
+      scheme: 'timestamp',
+    };
+  }
+  const m3 = raw.match(/^(?:v)?(\d+)\.(\d+)\.(\d+)$/);
+  if (m3) {
+    return {
+      major: parseInt(m3[1], 10),
+      minor: parseInt(m3[2], 10),
+      patch: parseInt(m3[3], 10),
+      r: 0,
+      ls: 0,
+      scheme: 'semver',
+    };
+  }
+  const m4 = raw.match(/^(?:v)?(\d+)\.(\d+)\.(\d+)\.(\d+)$/);
+  if (m4) {
+    return {
+      major: parseInt(m4[1], 10),
+      minor: parseInt(m4[2], 10),
+      patch: parseInt(m4[3], 10),
+      r: 0,
+      ls: parseInt(m4[4], 10),
+      scheme: 'semver',
     };
   }
   return null;
@@ -250,13 +301,29 @@ function parseVersionFromString(s) {
 
 /**
  * Extract a clean version string from label text.
- * Supports LinuxServer (4.1.0-r0-ls330) and GHCR timestamp (0.19.0-20260217164428) style.
+ * Supports LinuxServer (4.1.0-r0-ls330), GHCR timestamp (0.19.0-20260217164428), and semver (v3.3.21).
  */
 function extractVersionFromLabel(labelValue) {
   if (!labelValue || typeof labelValue !== 'string') return null;
   const raw = labelValue.trim();
-  const m = raw.match(/(\d+\.\d+\.\d+-r\d+(?:-ls\d+)?)|(\d+\.\d+\.\d+-\d{8,})/);
-  return m ? (m[1] || m[2]) : raw;
+  const m = raw.match(/(\d+\.\d+\.\d+-r\d+(?:-ls\d+)?)|(\d+\.\d+\.\d+-\d{8,})|(?:v)?(\d+\.\d+\.\d+\.\d+)(?=\s|$|[^.\d])|(?:v)?(\d+\.\d+\.\d+)(?=\s|$|[^.\d])/);
+  if (m) {
+    if (m[1]) return m[1];
+    if (m[2]) return m[2];
+    if (m[3]) return m[3]; // 4-part semver
+    if (m[4]) return m[4]; // 3-part semver
+  }
+  return raw;
+}
+
+/**
+ * Strip arch/prefix from a tag for display (e.g. amd64-version-v8.9.1.1 -> v8.9.1.1).
+ */
+function stripVersionTagPrefix(tag) {
+  if (!tag || typeof tag !== 'string') return tag;
+  const t = tag.trim();
+  const stripped = t.replace(/^[a-z0-9]+-version-/i, '');
+  return stripped !== t ? stripped : t;
 }
 
 /**
@@ -273,15 +340,25 @@ function compareVersionParts(a, b) {
 }
 
 /**
- * From a list of tags, return the newest by version (LinuxServer-style X.Y.Z-rN-lsNNN).
- * Prefers a tag without arch prefix (e.g. 4.1.0-r0-ls330 over amd64-4.1.0-r0-ls330) when equal.
+ * From a list of tags, return the newest by version.
+ * Optionally filter by scheme (linuxserver|timestamp|semver) so we only compare like-with-like.
+ * Prefers a tag without arch prefix/suffix when equal.
+ * @param {string[]} tags
+ * @param {{ scheme?: string, excludeDevelopment?: boolean }} options - scheme: only consider tags of this format; excludeDevelopment: skip tags containing "development"
  * @returns {{ tag: string, version: object } | null}
  */
-function getNewestVersionTag(tags) {
+function getNewestVersionTag(tags, options = {}) {
   if (!Array.isArray(tags) || tags.length === 0) return null;
-  const withVersion = tags
+  const { scheme, excludeDevelopment } = options;
+  let withVersion = tags
     .map((tag) => ({ tag, parsed: parseVersionFromTag(tag) }))
     .filter((x) => x.parsed);
+  if (scheme) {
+    withVersion = withVersion.filter((x) => x.parsed.scheme === scheme);
+  }
+  if (excludeDevelopment) {
+    withVersion = withVersion.filter((x) => !/development/i.test(x.tag));
+  }
   if (withVersion.length === 0) return null;
   withVersion.sort((a, b) => -compareVersionParts(a.parsed, b.parsed)); // newest first
   const best = withVersion[0];
@@ -434,6 +511,7 @@ module.exports = {
   parseVersionFromTag,
   parseVersionFromString,
   extractVersionFromLabel,
+  stripVersionTagPrefix,
   getNewestVersionTag,
   compareVersionParts,
 };

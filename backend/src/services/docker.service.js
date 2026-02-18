@@ -226,16 +226,27 @@ class DockerService {
       if (resolvedVersion) out.resolvedVersion = resolvedVersion;
       if (tagsResult && !tagsResult.error && Array.isArray(tagsResult.tags) && tagsResult.tags.length > 0) {
         out.availableTags = tagsResult.tags;
-        const newest = registryService.getNewestVersionTag(tagsResult.tags);
+        const currentTag = parsed.tag || '';
+        const resolvedParsed = resolvedVersion ? registryService.parseVersionFromString(resolvedVersion) : null;
+        const scheme = resolvedParsed?.scheme || undefined;
+        const excludeDevelopment = currentTag === 'latest';
+        const newest = registryService.getNewestVersionTag(tagsResult.tags, { scheme, excludeDevelopment });
         if (newest) {
-          out.newestTag = newest.tag;
-          out.newestVersion = `${newest.version.major}.${newest.version.minor}.${newest.version.patch}-r${newest.version.r}${newest.version.ls ? `-ls${newest.version.ls}` : ''}`;
-          const currentTag = parsed.tag || '';
           let currentParsed = null;
           if (currentTag && currentTag !== 'latest' && currentTag !== 'dev' && !/^dev[-_]/.test(currentTag)) {
             currentParsed = registryService.parseVersionFromTag(currentTag);
           } else if (resolvedVersion && (currentTag === 'latest' || currentTag === 'dev' || /^dev[-_]/.test(currentTag))) {
-            currentParsed = registryService.parseVersionFromString(resolvedVersion);
+            currentParsed = resolvedParsed || registryService.parseVersionFromString(resolvedVersion);
+          }
+          out.newestTagFromRegistry = newest.tag;
+          const versionLeapOk = !currentParsed || newest.version.major <= currentParsed.major + 1;
+          const newestIsActuallyNewer = versionLeapOk && (!currentParsed || registryService.compareVersionParts(currentParsed, newest.version) < 0);
+          if (newestIsActuallyNewer) {
+            out.newestTag = newest.tag;
+            out.newestTagDisplay = registryService.stripVersionTagPrefix(newest.tag) || newest.tag;
+            out.newestVersion = `${newest.version.major}.${newest.version.minor}.${newest.version.patch}${newest.version.scheme === 'semver' && newest.version.ls ? '.' + newest.version.ls : ''}-r${newest.version.r}${newest.version.scheme !== 'semver' && newest.version.ls ? `-ls${newest.version.ls}` : ''}`;
+          } else if (resolvedVersion) {
+            out.resolvedNewerThanTagList = true;
           }
           if (currentParsed && registryService.compareVersionParts(currentParsed, newest.version) < 0) {
             out.updateAvailableByVersion = true;
