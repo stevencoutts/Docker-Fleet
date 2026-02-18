@@ -10,6 +10,7 @@ const { errorHandler, notFoundHandler } = require('./middleware/error.middleware
 const routes = require('./routes');
 const setupSocketIO = require('./websocket/socket.handler');
 const monitoringService = require('./services/monitoring.service');
+const backupSchedulerService = require('./services/backup-scheduler.service');
 const db = require('./models');
 const socketConfig = require('./config/socket');
 
@@ -301,13 +302,12 @@ const PORT = config.port;
 server.listen(PORT, () => {
   logger.info(`Server running on port ${PORT} in ${config.env} mode`);
   
-  // Start monitoring service if email is enabled
-  if (config.email && config.email.enabled) {
-    // Wait a bit for database to be ready
-    setTimeout(async () => {
+  setTimeout(async () => {
+    if (config.email && config.email.enabled) {
       await monitoringService.start();
-    }, 5000);
-  }
+    }
+    backupSchedulerService.start();
+  }, 5000);
 });
 
 module.exports = { app, io };

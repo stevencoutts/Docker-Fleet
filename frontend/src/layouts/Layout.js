@@ -1,15 +1,13 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
-import ServerSelector from '../components/ServerSelector';
 import Footer from '../components/Footer';
 
 const Layout = () => {
   const { user, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const location = useLocation();
-  const [selectedServerId, setSelectedServerId] = useState(null);
 
   // Admin-only navigation items
   const adminNavigation = user?.role === 'admin' ? [
@@ -18,6 +16,7 @@ const Layout = () => {
 
         // Personal navigation items (for all users)
         const personalNavigation = [
+          { name: 'Scheduled backups', path: '/scheduled-backups' },
           { name: 'Profile', path: '/profile' },
           { name: 'Monitoring', path: '/monitoring' },
         ];
@@ -33,42 +32,40 @@ const Layout = () => {
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col transition-colors duration-200">
       <nav className="bg-white dark:bg-gray-800 shadow-sm border-b border-gray-200 dark:border-gray-700 transition-colors duration-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between h-16">
-            <div className="flex">
-              <div className="flex-shrink-0 flex items-center">
-                <Link to="/" className="text-xl font-bold text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors">
+          <div className="flex flex-wrap items-stretch justify-between gap-x-6 gap-y-3 py-3 min-h-[4rem] sm:py-4 sm:min-h-0 sm:h-16 sm:flex-nowrap">
+            <div className="flex flex-wrap items-center gap-x-6 gap-y-2 min-w-0">
+              <div className="flex-shrink-0">
+                <Link to="/" className="text-xl font-bold text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors whitespace-nowrap">
                   DockerFleet Manager
                 </Link>
               </div>
-              <div className="hidden sm:ml-6 sm:flex sm:space-x-8">
+              <div className="hidden sm:flex items-center gap-1 border-l border-gray-200 dark:border-gray-600 pl-6">
                 {adminNavigation.length > 0 && (
                   <>
                     {adminNavigation.map((item) => (
                       <Link
                         key={item.name}
                         to={item.path}
-                        className={`inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium transition-colors ${
+                        className={`inline-flex items-center px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap ${
                           isActive(item.path)
-                            ? 'border-primary-500 dark:border-primary-400 text-gray-900 dark:text-gray-100'
-                            : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:border-gray-300 dark:hover:border-gray-600'
+                            ? 'bg-primary-50 dark:bg-primary-900/20 text-primary-700 dark:text-primary-300'
+                            : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700'
                         }`}
                       >
                         {item.name}
                       </Link>
                     ))}
-                    <span className="inline-flex items-center px-1 pt-1 text-sm font-medium text-gray-400 dark:text-gray-500">
-                      |
-                    </span>
+                    <span className="text-gray-300 dark:text-gray-600 mx-1" aria-hidden>|</span>
                   </>
                 )}
                 {personalNavigation.map((item) => (
                   <Link
                     key={item.name}
                     to={item.path}
-                    className={`inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium transition-colors ${
+                    className={`inline-flex items-center px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap ${
                       isActive(item.path)
-                        ? 'border-primary-500 dark:border-primary-400 text-gray-900 dark:text-gray-100'
-                        : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:border-gray-300 dark:hover:border-gray-600'
+                        ? 'bg-primary-50 dark:bg-primary-900/20 text-primary-700 dark:text-primary-300'
+                        : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700'
                     }`}
                   >
                     {item.name}
@@ -76,7 +73,7 @@ const Layout = () => {
                 ))}
               </div>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-2 sm:gap-4 flex-shrink-0">
               <button
                 onClick={toggleTheme}
                 className="p-2 rounded-lg text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
@@ -92,26 +89,22 @@ const Layout = () => {
                   </svg>
                 )}
               </button>
-              <ServerSelector
-                selectedServerId={selectedServerId}
-                onServerChange={setSelectedServerId}
-              />
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-gray-700 dark:text-gray-300 hidden sm:inline">{user?.email}</span>
-                <button
-                  onClick={logout}
-                  className="px-4 py-2 text-sm text-white bg-red-600 hover:bg-red-700 dark:bg-red-700 dark:hover:bg-red-600 rounded-lg transition-colors"
-                >
-                  Logout
-                </button>
-              </div>
+              <span className="text-sm text-gray-600 dark:text-gray-400 truncate max-w-[10rem] sm:max-w-[12rem]" title={user?.email}>
+                {user?.email}
+              </span>
+              <button
+                onClick={logout}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 dark:bg-red-700 dark:hover:bg-red-600 rounded-lg transition-colors whitespace-nowrap"
+              >
+                Logout
+              </button>
             </div>
           </div>
         </div>
       </nav>
 
       <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8 flex-1 w-full">
-        <Outlet context={{ selectedServerId }} />
+        <Outlet />
       </main>
 
       <Footer />

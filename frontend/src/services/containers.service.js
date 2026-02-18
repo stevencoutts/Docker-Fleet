@@ -41,6 +41,16 @@ export const containersService = {
     }, { timeout: 300000 }),
   deploy: (serverId, body) =>
     api.post(`/api/v1/servers/${serverId}/containers/deploy`, body, { timeout: 120000 }),
+  getBackupSchedules: (serverId, params = {}) => {
+    const queryParams = new URLSearchParams(params).toString();
+    return api.get(`/api/v1/servers/${serverId}/backup-schedules${queryParams ? `?${queryParams}` : ''}`);
+  },
+  createBackupSchedule: (serverId, body) =>
+    api.post(`/api/v1/servers/${serverId}/backup-schedules`, body),
+  updateBackupSchedule: (serverId, scheduleId, body) =>
+    api.put(`/api/v1/servers/${serverId}/backup-schedules/${scheduleId}`, body),
+  deleteBackupSchedule: (serverId, scheduleId) =>
+    api.delete(`/api/v1/servers/${serverId}/backup-schedules/${scheduleId}`),
   createSnapshot: async (serverId, containerId, imageName, tag = 'snapshot', download = false) => {
     const config = {
       responseType: download ? 'blob' : 'json',

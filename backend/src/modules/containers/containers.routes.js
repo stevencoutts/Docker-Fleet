@@ -19,9 +19,12 @@ const {
   getSnapshots,
   restoreSnapshot,
 } = require('./containers.controller');
+const { listBackupSchedules } = require('./backup-schedules.controller');
 const { authenticate } = require('../../middleware/auth.middleware');
 
 router.use(authenticate);
+
+router.get('/:serverId/backup-schedules', listBackupSchedules);
 
 router.get('/:serverId/containers', getContainers);
 router.get('/:serverId/containers/:containerId/update-status', getContainerUpdateStatus);
