@@ -1,12 +1,13 @@
 const { Server } = require('../../models');
 const dockerService = require('../../services/docker.service');
+const { groupContainers } = require('../grouping/grouping.controller');
 const sshService = require('../../services/ssh.service');
 const logger = require('../../config/logger');
 
 const getContainers = async (req, res, next) => {
   try {
     const { serverId } = req.params;
-    const { all = 'false' } = req.query;
+    const { all = 'false', grouped = 'false' } = req.query;
 
     const server = await Server.findOne({
       where: { id: serverId, userId: req.user.id },
@@ -17,6 +18,17 @@ const getContainers = async (req, res, next) => {
     }
 
     const containers = await dockerService.listContainers(server, all === 'true');
+    
+    // If grouping is requested, group the containers
+    if (grouped === 'true') {
+      const { grouped: groupedContainers, ungrouped } = await groupContainers(req.user.id, containers);
+      return res.json({ 
+        containers,
+        grouped: groupedContainers,
+        ungrouped,
+      });
+    }
+    
     res.json({ containers });
   } catch (error) {
     next(error);

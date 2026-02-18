@@ -1,9 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { serversService } from '../services/servers.service';
 import { containersService } from '../services/containers.service';
 import { systemService } from '../services/system.service';
+import groupingService from '../services/grouping.service';
 import LogsModal from '../components/LogsModal';
+import GroupingModal from '../components/GroupingModal';
 
 const ServerDetails = () => {
   const { serverId } = useParams();
@@ -17,11 +19,27 @@ const ServerDetails = () => {
   const [statusFilter, setStatusFilter] = useState('all'); // 'all', 'running', 'stopped'
   const [updatingPolicies, setUpdatingPolicies] = useState(new Set()); // Track containers being updated
   const [logsModal, setLogsModal] = useState({ isOpen: false, containerId: null, containerName: null });
+  const [groupingRules, setGroupingRules] = useState([]);
+  const [groupContainers, setGroupContainers] = useState(true); // Toggle for grouping
+  // Start with "Ungrouped" expanded by default so those containers are visible initially
+  const [expandedGroups, setExpandedGroups] = useState(() => new Set(['Ungrouped'])); // Track expanded groups
+  const [showGroupingModal, setShowGroupingModal] = useState(false); // Show grouping management modal
 
   useEffect(() => {
     fetchData();
+    fetchGroupingRules();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serverId, showAll]);
+
+  // Fetch grouping rules
+  const fetchGroupingRules = async () => {
+    try {
+      const response = await groupingService.getAll();
+      setGroupingRules(response.data.rules || []);
+    } catch (error) {
+      console.error('Failed to fetch grouping rules:', error);
+    }
+  };
 
   // Separate effect for live host info updates
   useEffect(() => {
@@ -126,6 +144,26 @@ const ServerDetails = () => {
     }
   };
 
+  // Helper to get container name
+  const getContainerName = (container) => {
+    let containerData = container;
+    if (typeof container === 'string') {
+      try {
+        containerData = JSON.parse(container);
+      } catch (e) {
+        containerData = { ID: container };
+      }
+    }
+    let name = containerData.Names || containerData['.Names'] || containerData.name || '';
+    if (name) {
+      name = name.replace(/^\//, ''); // Remove leading slash
+    }
+    if (!name) {
+      name = (containerData.ID || containerData.Id || containerData['.ID'] || containerData.id || '').substring(0, 12);
+    }
+    return name;
+  };
+
   // Filter containers based on search term and status
   const filteredContainers = containers.filter(container => {
     // Handle different container data formats
@@ -154,6 +192,70 @@ const ServerDetails = () => {
     return name.includes(search) || image.includes(search) || id.includes(search);
   });
 
+  // Helper to check if container matches a rule
+  const matchesRule = (containerName, rule) => {
+    if (!rule.enabled) return false;
+    
+    const name = containerName.toLowerCase();
+    const pattern = rule.pattern.toLowerCase();
+    
+    switch (rule.patternType) {
+      case 'prefix':
+        return name.startsWith(pattern);
+      case 'suffix':
+        return name.endsWith(pattern);
+      case 'contains':
+        return name.includes(pattern);
+      case 'regex':
+        try {
+          const regex = new RegExp(rule.pattern, 'i');
+          return regex.test(containerName);
+        } catch (e) {
+          return false;
+        }
+      default:
+        return false;
+    }
+  };
+
+  // Group containers based on rules
+  const groupedContainers = useMemo(() => {
+    if (!groupContainers || groupingRules.length === 0) {
+      return null; // Return null to indicate no grouping
+    }
+
+    const grouped = {};
+    const ungrouped = [];
+
+    // Sort rules by sortOrder
+    const sortedRules = [...groupingRules].sort((a, b) => {
+      if (a.sortOrder !== b.sortOrder) return a.sortOrder - b.sortOrder;
+      return a.groupName.localeCompare(b.groupName);
+    });
+
+    filteredContainers.forEach((container) => {
+      const containerName = getContainerName(container);
+      let matched = false;
+
+      for (const rule of sortedRules) {
+        if (matchesRule(containerName, rule)) {
+          if (!grouped[rule.groupName]) {
+            grouped[rule.groupName] = [];
+          }
+          grouped[rule.groupName].push(container);
+          matched = true;
+          break; // Only match to first rule
+        }
+      }
+
+      if (!matched) {
+        ungrouped.push(container);
+      }
+    });
+
+    return { grouped, ungrouped };
+  }, [filteredContainers, groupingRules, groupContainers]);
+
   // Helper function to parse memory values (e.g., "3.3Gi", "15Gi")
   const parseMemoryValue = (value) => {
     if (!value || value === 'Unknown') return 0;
@@ -181,6 +283,172 @@ const ServerDetails = () => {
 
   // Get CPU usage percentage
   const cpuUsage = hostInfo ? parseCPUPercent(hostInfo.cpuUsage) : 0;
+
+  // Render container card (extracted for reuse)
+  const renderContainerCard = (container) => {
+    // Handle different container data formats
+    let containerData = container;
+    if (typeof container === 'string') {
+      try {
+        containerData = JSON.parse(container);
+      } catch (e) {
+        containerData = { ID: container };
+      }
+    }
+    
+    const status = containerData.Status || containerData['.Status'] || containerData.status || '';
+    const isRunning = status.toLowerCase().includes('up') || 
+                     status.toLowerCase().includes('running') ||
+                     status.toLowerCase().startsWith('up');
+    
+    const containerId = containerData.ID || containerData.Id || containerData['.ID'] || containerData.id || '';
+    let containerName = getContainerName(container);
+    
+    const image = containerData.Image || containerData['.Image'] || containerData.image || 'Unknown';
+    const ports = containerData.Ports || containerData['.Ports'] || containerData.ports || '';
+    const restartPolicy = containerData.RestartPolicy || containerData.restartPolicy || 'no';
+    const hasAutoRestart = restartPolicy !== 'no';
+
+    const handleToggleRestart = async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      
+      if (updatingPolicies.has(containerId)) return;
+      
+      setUpdatingPolicies(prev => new Set(prev).add(containerId));
+      
+      try {
+        const newPolicy = restartPolicy === 'no' ? 'unless-stopped' : 'no';
+        await containersService.updateRestartPolicy(serverId, containerId, newPolicy);
+        
+        setContainers(containers.map(c => {
+          const cData = typeof c === 'string' ? (() => { try { return JSON.parse(c); } catch { return { ID: c }; } })() : c;
+          const cId = cData.ID || cData.Id || cData['.ID'] || cData.id;
+          if (cId === containerId) {
+            return { ...cData, RestartPolicy: newPolicy };
+          }
+          return c;
+        }));
+      } catch (error) {
+        console.error('Failed to update restart policy:', error);
+        alert(error.response?.data?.error || 'Failed to update restart policy');
+      } finally {
+        setUpdatingPolicies(prev => {
+          const next = new Set(prev);
+          next.delete(containerId);
+          return next;
+        });
+      }
+    };
+
+    return (
+      <div key={containerId} className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:shadow-md dark:hover:shadow-gray-700 transition-all duration-200 bg-white dark:bg-gray-800">
+        <div className="flex items-start justify-between mb-3">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <Link
+                to={`/servers/${serverId}/containers/${containerId}`}
+                className="text-sm font-semibold text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 truncate"
+                title={containerName}
+              >
+                {containerName.replace(/^\//, '')}
+              </Link>
+              <button
+                onClick={handleToggleRestart}
+                disabled={updatingPolicies.has(containerId)}
+                className={`flex-shrink-0 p-1 rounded transition-colors ${
+                  hasAutoRestart
+                    ? 'text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20'
+                    : 'text-gray-400 dark:text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700'
+                } ${updatingPolicies.has(containerId) ? 'opacity-50 cursor-not-allowed' : ''}`}
+                title={hasAutoRestart 
+                  ? `Auto-restart: ${restartPolicy} (click to disable)` 
+                  : 'Auto-restart disabled (click to enable)'}
+              >
+                {updatingPolicies.has(containerId) ? (
+                  <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 14M20 20v-5h-.582m-15.356 2a8.001 8.001 0 0015.356-2m0 0V9M20 4v5" />
+                  </svg>
+                ) : (
+                  <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clipRule="evenodd" />
+                  </svg>
+                )}
+              </button>
+            </div>
+            <p className="text-xs text-gray-500 dark:text-gray-400 truncate mt-1" title={image}>
+              {image}
+            </p>
+          </div>
+          <span
+            className={`ml-2 px-2 py-1 text-xs font-medium rounded-full flex-shrink-0 ${
+              isRunning
+                ? 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200'
+                : 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200'
+            }`}
+          >
+            {isRunning ? 'Running' : 'Stopped'}
+          </span>
+        </div>
+
+        {ports && (
+          <div className="mb-3">
+            <p className="text-xs text-gray-500 dark:text-gray-400 truncate" title={ports}>
+              <span className="font-medium">Ports:</span> {ports || 'None'}
+            </p>
+          </div>
+        )}
+
+        <div className="flex items-center gap-2 mt-4">
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setLogsModal({ isOpen: true, containerId, containerName });
+              }}
+              className="px-3 py-1.5 text-xs font-medium text-purple-800 dark:text-purple-200 bg-purple-50 dark:bg-purple-900/30 rounded hover:bg-purple-100 dark:hover:bg-purple-900/50 transition-colors flex items-center gap-1"
+              title="View live logs"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              Logs
+            </button>
+            {isRunning ? (
+              <>
+                <button
+                  onClick={() => handleContainerAction('stop', containerId)}
+                  className="px-3 py-1.5 text-xs font-medium text-yellow-800 dark:text-yellow-200 bg-yellow-50 dark:bg-yellow-900/30 rounded hover:bg-yellow-100 dark:hover:bg-yellow-900/50 transition-colors"
+                >
+                  Stop
+                </button>
+                <button
+                  onClick={() => handleContainerAction('restart', containerId)}
+                  className="px-3 py-1.5 text-xs font-medium text-blue-800 dark:text-blue-200 bg-blue-50 dark:bg-blue-900/30 rounded hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors"
+                >
+                  Restart
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={() => handleContainerAction('start', containerId)}
+                className="px-3 py-1.5 text-xs font-medium text-green-800 dark:text-green-200 bg-green-50 dark:bg-green-900/30 rounded hover:bg-green-100 dark:hover:bg-green-900/50 transition-colors"
+              >
+                Start
+              </button>
+            )}
+            <button
+              onClick={() => handleContainerAction('remove', containerId)}
+              className="px-3 py-1.5 text-xs font-medium text-red-800 dark:text-red-200 bg-red-50 dark:bg-red-900/30 rounded hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors"
+            >
+              Remove
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   // Calculate stats with better parsing
   const stats = {
@@ -522,16 +790,36 @@ const ServerDetails = () => {
                 />
                 Show all containers
               </label>
+              <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer whitespace-nowrap">
+                <input
+                  type="checkbox"
+                  checked={groupContainers}
+                  onChange={(e) => setGroupContainers(e.target.checked)}
+                  className="rounded text-primary-600 dark:text-primary-400 focus:ring-primary-500 dark:focus:ring-primary-400"
+                />
+                Group containers
+              </label>
             </div>
-            <Link
-              to={`/servers/${serverId}/images`}
-              className="text-sm font-medium text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 flex items-center gap-1 transition-colors whitespace-nowrap"
-            >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-              </svg>
-              View Images
-            </Link>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowGroupingModal(true)}
+                className="text-sm font-medium text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 flex items-center gap-1 transition-colors whitespace-nowrap"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+                </svg>
+                Manage Groups
+              </button>
+              <Link
+                to={`/servers/${serverId}/images`}
+                className="text-sm font-medium text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 flex items-center gap-1 transition-colors whitespace-nowrap"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+                View Images
+              </Link>
+            </div>
           </div>
           
           {/* Status Filter Tags */}
@@ -585,182 +873,196 @@ const ServerDetails = () => {
               {searchTerm ? 'Try adjusting your search terms.' : 'No containers are running on this server.'}
             </p>
           </div>
-        ) : (
-          <div className="grid grid-cols-1 gap-4 p-4 sm:grid-cols-2 lg:grid-cols-3">
-            {filteredContainers.map((container) => {
-              // Handle different container data formats
-              let containerData = container;
-              if (typeof container === 'string') {
-                try {
-                  containerData = JSON.parse(container);
-                } catch (e) {
-                  containerData = { ID: container };
+        ) : groupedContainers && groupContainers ? (
+          // Grouped display
+          <div className="p-4 space-y-4">
+            {/* Render grouped containers */}
+            {Object.entries(groupedContainers.grouped).sort(([a], [b]) => a.localeCompare(b)).map(([groupName, groupContainers]) => {
+              const isExpanded = expandedGroups.has(groupName);
+              
+              // Calculate status for this group
+              const groupStats = groupContainers.reduce((acc, container) => {
+                let containerData = container;
+                if (typeof container === 'string') {
+                  try {
+                    containerData = JSON.parse(container);
+                  } catch (e) {
+                    containerData = { ID: container };
+                  }
                 }
-              }
-              
-              const status = containerData.Status || containerData['.Status'] || containerData.status || '';
-              // More comprehensive status detection
-              const isRunning = status.toLowerCase().includes('up') || 
-                               status.toLowerCase().includes('running') ||
-                               status.toLowerCase().startsWith('up');
-              
-              const containerId = containerData.ID || containerData.Id || containerData['.ID'] || containerData.id || '';
-              // Extract name - remove leading slash if present
-              let containerName = containerData.Names || containerData['.Names'] || containerData.name || '';
-              if (containerName) {
-                containerName = containerName.replace(/^\//, ''); // Remove leading slash
-              }
-              if (!containerName || containerName === containerId) {
-                containerName = containerId.substring(0, 12) || 'Unnamed';
-              }
-              
-              const image = containerData.Image || containerData['.Image'] || containerData.image || 'Unknown';
-              const ports = containerData.Ports || containerData['.Ports'] || containerData.ports || '';
-              const restartPolicy = containerData.RestartPolicy || containerData.restartPolicy || 'no';
-              const hasAutoRestart = restartPolicy !== 'no';
-
-              const handleToggleRestart = async (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                
-                if (updatingPolicies.has(containerId)) return; // Prevent double-clicks
-                
-                setUpdatingPolicies(prev => new Set(prev).add(containerId));
-                
-                try {
-                  // Toggle between 'no' and 'unless-stopped' (most common use case)
-                  const newPolicy = restartPolicy === 'no' ? 'unless-stopped' : 'no';
-                  await containersService.updateRestartPolicy(serverId, containerId, newPolicy);
-                  
-                  // Update local state
-                  setContainers(containers.map(c => {
-                    const cData = typeof c === 'string' ? (() => { try { return JSON.parse(c); } catch { return { ID: c }; } })() : c;
-                    const cId = cData.ID || cData.Id || cData['.ID'] || cData.id;
-                    if (cId === containerId) {
-                      return { ...cData, RestartPolicy: newPolicy };
-                    }
-                    return c;
-                  }));
-                } catch (error) {
-                  console.error('Failed to update restart policy:', error);
-                  alert(error.response?.data?.error || 'Failed to update restart policy');
-                } finally {
-                  setUpdatingPolicies(prev => {
-                    const next = new Set(prev);
-                    next.delete(containerId);
-                    return next;
-                  });
+                const status = (containerData.Status || containerData['.Status'] || containerData.status || '').toLowerCase();
+                const isRunning = status.includes('up') || status.includes('running') || status.startsWith('up');
+                if (isRunning) {
+                  acc.running++;
+                } else {
+                  acc.stopped++;
                 }
-              };
-
+                return acc;
+              }, { running: 0, stopped: 0 });
+              
+              const allRunning = groupStats.stopped === 0 && groupStats.running > 0;
+              const allStopped = groupStats.running === 0 && groupStats.stopped > 0;
+              
               return (
-                <div key={containerId} className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:shadow-md dark:hover:shadow-gray-700 transition-all duration-200 bg-white dark:bg-gray-800">
-                  <div className="flex items-start justify-between mb-3">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <Link
-                          to={`/servers/${serverId}/containers/${containerId}`}
-                          className="text-sm font-semibold text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 truncate"
-                          title={containerName}
-                        >
-                          {containerName.replace(/^\//, '')}
-                        </Link>
-                        <button
-                          onClick={handleToggleRestart}
-                          disabled={updatingPolicies.has(containerId)}
-                          className={`flex-shrink-0 p-1 rounded transition-colors ${
-                            hasAutoRestart
-                              ? 'text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20'
-                              : 'text-gray-400 dark:text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700'
-                          } ${updatingPolicies.has(containerId) ? 'opacity-50 cursor-not-allowed' : ''}`}
-                          title={hasAutoRestart 
-                            ? `Auto-restart: ${restartPolicy} (click to disable)` 
-                            : 'Auto-restart disabled (click to enable)'}
-                        >
-                          {updatingPolicies.has(containerId) ? (
-                            <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 14M20 20v-5h-.582m-15.356 2a8.001 8.001 0 0015.356-2m0 0V9M20 4v5" />
-                            </svg>
-                          ) : (
-                            <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
-                              <path fillRule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clipRule="evenodd" />
-                            </svg>
-                          )}
-                        </button>
-                      </div>
-                      <p className="text-xs text-gray-500 dark:text-gray-400 truncate mt-1" title={image}>
-                        {image}
-                      </p>
+                <div key={groupName} className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+                  <button
+                    onClick={() => {
+                      setExpandedGroups(prev => {
+                        const next = new Set(prev);
+                        if (isExpanded) {
+                          next.delete(groupName);
+                        } else {
+                          next.add(groupName);
+                        }
+                        return next;
+                      });
+                    }}
+                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600 flex items-center justify-between transition-colors"
+                  >
+                    <div className="flex items-center gap-2">
+                      <svg className={`w-5 h-5 text-gray-500 dark:text-gray-400 transition-transform ${isExpanded ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
+                      <span className="font-semibold text-gray-900 dark:text-gray-100">{groupName}</span>
+                      <span className="text-sm text-gray-500 dark:text-gray-400">({groupContainers.length})</span>
                     </div>
-                    <span
-                      className={`ml-2 px-2 py-1 text-xs font-medium rounded-full flex-shrink-0 ${
-                        isRunning
-                          ? 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200'
-                          : 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200'
-                      }`}
-                    >
-                      {isRunning ? 'Running' : 'Stopped'}
-                    </span>
-                  </div>
-
-                  {ports && (
-                    <div className="mb-3">
-                      <p className="text-xs text-gray-500 dark:text-gray-400 truncate" title={ports}>
-                        <span className="font-medium">Ports:</span> {ports || 'None'}
-                      </p>
+                    <div className="flex items-center gap-3">
+                      {!isExpanded && (
+                        <>
+                          <div className="flex items-center gap-2">
+                            {allRunning && (
+                              <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
+                                <span className="w-2 h-2 rounded-full bg-green-500"></span>
+                                All Running
+                              </span>
+                            )}
+                            {allStopped && (
+                              <span className="flex items-center gap-1 text-xs text-gray-600 dark:text-gray-400">
+                                <span className="w-2 h-2 rounded-full bg-gray-400"></span>
+                                All Stopped
+                              </span>
+                            )}
+                            {!allRunning && !allStopped && (
+                              <span className="flex items-center gap-1 text-xs text-yellow-600 dark:text-yellow-400">
+                                <span className="w-2 h-2 rounded-full bg-yellow-500"></span>
+                                {groupStats.running}/{groupContainers.length} Running
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-xs text-gray-500 dark:text-gray-400">
+                            {groupStats.running > 0 && <span className="text-green-600 dark:text-green-400">{groupStats.running} up</span>}
+                            {groupStats.running > 0 && groupStats.stopped > 0 && <span className="mx-1">•</span>}
+                            {groupStats.stopped > 0 && <span className="text-gray-600 dark:text-gray-400">{groupStats.stopped} down</span>}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </button>
+                  {isExpanded && (
+                    <div className="grid grid-cols-1 gap-4 p-4 sm:grid-cols-2 lg:grid-cols-3">
+                      {groupContainers.map((container) => {
+                        return renderContainerCard(container);
+                      })}
                     </div>
                   )}
-
-                  <div className="flex items-center gap-2 mt-4">
-                        <div className="flex flex-wrap gap-2">
-                          <button
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              setLogsModal({ isOpen: true, containerId, containerName });
-                            }}
-                            className="px-3 py-1.5 text-xs font-medium text-purple-800 dark:text-purple-200 bg-purple-50 dark:bg-purple-900/30 rounded hover:bg-purple-100 dark:hover:bg-purple-900/50 transition-colors flex items-center gap-1"
-                            title="View live logs"
-                          >
-                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                            </svg>
-                            Logs
-                          </button>
-                          {isRunning ? (
-                            <>
-                              <button
-                                onClick={() => handleContainerAction('stop', containerId)}
-                                className="px-3 py-1.5 text-xs font-medium text-yellow-800 dark:text-yellow-200 bg-yellow-50 dark:bg-yellow-900/30 rounded hover:bg-yellow-100 dark:hover:bg-yellow-900/50 transition-colors"
-                              >
-                                Stop
-                              </button>
-                              <button
-                                onClick={() => handleContainerAction('restart', containerId)}
-                                className="px-3 py-1.5 text-xs font-medium text-blue-800 dark:text-blue-200 bg-blue-50 dark:bg-blue-900/30 rounded hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors"
-                              >
-                                Restart
-                              </button>
-                            </>
-                          ) : (
-                            <button
-                              onClick={() => handleContainerAction('start', containerId)}
-                              className="px-3 py-1.5 text-xs font-medium text-green-800 dark:text-green-200 bg-green-50 dark:bg-green-900/30 rounded hover:bg-green-100 dark:hover:bg-green-900/50 transition-colors"
-                            >
-                              Start
-                            </button>
-                          )}
-                          <button
-                            onClick={() => handleContainerAction('remove', containerId)}
-                            className="px-3 py-1.5 text-xs font-medium text-red-800 dark:text-red-200 bg-red-50 dark:bg-red-900/30 rounded hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors"
-                          >
-                            Remove
-                          </button>
-                        </div>
-                  </div>
                 </div>
               );
             })}
+            {/* Render ungrouped containers */}
+            {groupedContainers.ungrouped.length > 0 && (() => {
+              const ungroupedGroupName = 'Ungrouped';
+              const isUngroupedExpanded = expandedGroups.has(ungroupedGroupName);
+              
+              const ungroupedStats = groupedContainers.ungrouped.reduce((acc, container) => {
+                let containerData = container;
+                if (typeof container === 'string') {
+                  try {
+                    containerData = JSON.parse(container);
+                  } catch (e) {
+                    containerData = { ID: container };
+                  }
+                }
+                const status = (containerData.Status || containerData['.Status'] || containerData.status || '').toLowerCase();
+                const isRunning = status.includes('up') || status.includes('running') || status.startsWith('up');
+                if (isRunning) {
+                  acc.running++;
+                } else {
+                  acc.stopped++;
+                }
+                return acc;
+              }, { running: 0, stopped: 0 });
+              
+              const allRunning = ungroupedStats.stopped === 0 && ungroupedStats.running > 0;
+              const allStopped = ungroupedStats.running === 0 && ungroupedStats.stopped > 0;
+              
+              return (
+                <div key={ungroupedGroupName} className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+                  <button
+                    onClick={() => {
+                      setExpandedGroups(prev => {
+                        const next = new Set(prev);
+                        if (isUngroupedExpanded) {
+                          next.delete(ungroupedGroupName);
+                        } else {
+                          next.add(ungroupedGroupName);
+                        }
+                        return next;
+                      });
+                    }}
+                    className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600 flex items-center justify-between transition-colors"
+                  >
+                    <div className="flex items-center gap-2">
+                      <svg className={`w-5 h-5 text-gray-500 dark:text-gray-400 transition-transform ${isUngroupedExpanded ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
+                      <span className="font-semibold text-gray-900 dark:text-gray-100">Ungrouped</span>
+                      <span className="text-sm text-gray-500 dark:text-gray-400">({groupedContainers.ungrouped.length})</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      {!isUngroupedExpanded && (
+                        <>
+                          {allRunning && (
+                            <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
+                              <span className="w-2 h-2 rounded-full bg-green-500"></span>
+                              All Running
+                            </span>
+                          )}
+                          {allStopped && (
+                            <span className="flex items-center gap-1 text-xs text-gray-600 dark:text-gray-400">
+                              <span className="w-2 h-2 rounded-full bg-gray-400"></span>
+                              All Stopped
+                            </span>
+                          )}
+                          {!allRunning && !allStopped && (
+                            <span className="flex items-center gap-1 text-xs text-yellow-600 dark:text-yellow-400">
+                              <span className="w-2 h-2 rounded-full bg-yellow-500"></span>
+                              {ungroupedStats.running}/{groupedContainers.ungrouped.length} Running
+                            </span>
+                          )}
+                          <div className="text-xs text-gray-500 dark:text-gray-400">
+                            {ungroupedStats.running > 0 && <span className="text-green-600 dark:text-green-400">{ungroupedStats.running} up</span>}
+                            {ungroupedStats.running > 0 && ungroupedStats.stopped > 0 && <span className="mx-1">•</span>}
+                            {ungroupedStats.stopped > 0 && <span className="text-gray-600 dark:text-gray-400">{ungroupedStats.stopped} down</span>}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </button>
+                  {isUngroupedExpanded && (
+                    <div className="grid grid-cols-1 gap-4 p-4 sm:grid-cols-2 lg:grid-cols-3">
+                      {groupedContainers.ungrouped.map((container) => {
+                        return renderContainerCard(container);
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+          </div>
+        ) : (
+          // Flat display (original)
+          <div className="grid grid-cols-1 gap-4 p-4 sm:grid-cols-2 lg:grid-cols-3">
+            {filteredContainers.map((container) => renderContainerCard(container))}
           </div>
         )}
       </div>
@@ -773,6 +1075,15 @@ const ServerDetails = () => {
         containerId={logsModal.containerId}
         containerName={logsModal.containerName}
       />
+
+      {/* Grouping Management Modal */}
+      {showGroupingModal && (
+        <GroupingModal
+          isOpen={showGroupingModal}
+          onClose={() => setShowGroupingModal(false)}
+          onRulesUpdated={fetchGroupingRules}
+        />
+      )}
     </div>
   );
 };
