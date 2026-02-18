@@ -2,6 +2,22 @@ const sshService = require('./ssh.service');
 const registryService = require('./registry.service');
 const logger = require('../config/logger');
 
+/** Comma-separated name suffixes; containers whose name ends with one of these are treated as dev/skip-update. */
+const DEFAULT_SKIP_UPDATE_SUFFIXES = '-db-1,-postgres-1,-db';
+
+function getSkipUpdateNamePatterns() {
+  const envVal = process.env.SKIP_UPDATE_NAME_PATTERNS ?? process.env.DOCKERFLEET_SKIP_UPDATE_NAME_PATTERNS;
+  const raw = (envVal !== undefined && envVal !== null) ? String(envVal) : DEFAULT_SKIP_UPDATE_SUFFIXES;
+  return raw.split(',').map(s => s.trim()).filter(Boolean);
+}
+
+function matchesSkipUpdateNamePattern(containerName) {
+  const name = (containerName || '').replace(/^\//, '');
+  if (!name) return false;
+  const patterns = getSkipUpdateNamePatterns();
+  return patterns.some(suffix => name.endsWith(suffix) || name === suffix);
+}
+
 class DockerService {
   async listContainers(server, all = false) {
     // Use a simpler format that's more reliable
@@ -67,7 +83,10 @@ class DockerService {
             const mounts = Array.isArray(data.Mounts) ? data.Mounts : [];
             const networks = (data.NetworkSettings && data.NetworkSettings && data.NetworkSettings.Networks && typeof data.NetworkSettings.Networks === 'object') ? data.NetworkSettings.Networks : {};
             const labels = data.Config?.Labels || {};
-            const skipUpdate = !!(labels['com.dockerfleet.skip-update'] || labels['com.dockerfleet.dev']);
+            const name = (data.Name || '').replace(/^\//, '');
+            const skipByLabel = !!(labels['com.dockerfleet.skip-update'] || labels['com.dockerfleet.dev']);
+            const skipByName = matchesSkipUpdateNamePattern(name);
+            const skipUpdate = skipByLabel || skipByName;
             detailsMap[shortId] = { RestartPolicy: policy, Mounts: mounts, Networks: networks, SkipUpdate: skipUpdate };
           }
 
@@ -141,6 +160,10 @@ class DockerService {
       const labels = details.Config?.Labels || {};
       if (labels['com.dockerfleet.skip-update'] || labels['com.dockerfleet.dev']) {
         return { updateAvailable: false, pinned: true, reason: 'Container marked as dev/pinned' };
+      }
+      const containerName = (details.Name || '').replace(/^\//, '');
+      if (matchesSkipUpdateNamePattern(containerName)) {
+        return { updateAvailable: false, pinned: true, reason: 'Container name matches dev/local pattern' };
       }
 
       const imageRef = details.Config?.Image || details.Image || '';

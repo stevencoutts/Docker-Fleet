@@ -12,11 +12,26 @@ const Dashboard = () => {
   const [loading, setLoading] = useState(true);
   const [loadingServers, setLoadingServers] = useState(new Set()); // Track which servers are loading
   const [restarting, setRestarting] = useState(false);
+  const [enablingAutoRestart, setEnablingAutoRestart] = useState(false);
+  const [checkingUpdates, setCheckingUpdates] = useState(false);
+  const [updateOverview, setUpdateOverview] = useState({
+    ranOnce: false,
+    containers: [],
+    totalChecked: 0,
+    errors: [],
+  });
   const [containersVersion, setContainersVersion] = useState(0); // Version counter to trigger recalculation only when stable data updates
   const socket = useSocket();
   const refreshTimeoutRef = useRef(null);
   const isRefreshingRef = useRef(false); // Track if we're currently refreshing to prevent flicker
   const stableContainersRef = useRef({}); // Store stable container data that only updates when complete
+  const hasRunInitialUpdateCheckRef = useRef(false);
+  const updateCheckIntervalRef = useRef(null);
+  const serversRef = useRef(servers);
+
+  useEffect(() => {
+    serversRef.current = servers;
+  }, [servers]);
 
   useEffect(() => {
     fetchData(true);
@@ -298,6 +313,152 @@ const Dashboard = () => {
     }
   };
 
+  const handleEnableAutoRestartOnAll = async () => {
+    if (containersWithoutAutoRestart.length === 0) return;
+    setEnablingAutoRestart(true);
+    const results = { success: 0, failed: 0, errors: [] };
+    const policy = 'unless-stopped';
+    const promises = containersWithoutAutoRestart.map(async (container) => {
+      try {
+        await containersService.updateRestartPolicy(container.serverId, container.ID, policy);
+        results.success++;
+      } catch (error) {
+        results.failed++;
+        results.errors.push({
+          container: container.containerName,
+          error: error.response?.data?.error || error.message || 'Unknown error',
+        });
+      }
+    });
+    await Promise.all(promises);
+    if (results.failed === 0) {
+      alert(`Auto-restart enabled on ${results.success} container${results.success !== 1 ? 's' : ''}`);
+    } else {
+      const errorMsg = results.errors.map(e => `${e.container}: ${e.error}`).join('\n');
+      alert(`Enabled on ${results.success}, failed ${results.failed}:\n${errorMsg}`);
+    }
+    setTimeout(() => fetchData(false), 500);
+    setEnablingAutoRestart(false);
+  };
+
+  const runUpdateCheck = async () => {
+    const stableContainers = stableContainersRef.current || {};
+    const entries = Object.entries(stableContainers).filter(([, serverContainers]) =>
+      Array.isArray(serverContainers) && serverContainers.length > 0
+    );
+
+    if (entries.length === 0) {
+      setUpdateOverview({ ranOnce: true, containers: [], totalChecked: 0, errors: [] });
+      return;
+    }
+
+    setCheckingUpdates(true);
+    setUpdateOverview({ ranOnce: true, containers: [], totalChecked: 0, errors: [] });
+
+    const containersWithUpdates = [];
+    const errors = [];
+    let totalChecked = 0;
+
+    const promises = [];
+
+    const serversList = serversRef.current || servers;
+    entries.forEach(([serverId, serverContainers]) => {
+      const server = serversList.find((s) => String(s.id) === String(serverId));
+      if (!server) return;
+
+      serverContainers.forEach((container) => {
+        if (container.SkipUpdate) return;
+
+        const containerId = container.ID;
+        if (!containerId) return;
+
+        totalChecked += 1;
+
+        promises.push(
+          containersService
+            .getUpdateStatus(serverId, containerId)
+            .then((res) => {
+              const status = res.data?.updateStatus || res.data || {};
+              if (status.updateAvailable) {
+                containersWithUpdates.push({
+                  serverId,
+                  serverName: server.name || 'Unknown',
+                  serverHost: server.host || 'Unknown',
+                  containerId,
+                  containerName: getContainerName(container),
+                  imageRef: status.imageRef,
+                  currentDigestShort: status.currentDigestShort,
+                  availableDigestShort: status.availableDigestShort,
+                  pinned: status.pinned,
+                  reason: status.reason,
+                });
+              }
+            })
+            .catch((error) => {
+              errors.push({
+                serverId,
+                containerId,
+                containerName: getContainerName(container),
+                error: error.response?.data?.error || error.message || 'Update check failed',
+              });
+            })
+        );
+      });
+    });
+
+    try {
+      await Promise.all(promises);
+    } finally {
+      setUpdateOverview({
+        ranOnce: true,
+        containers: containersWithUpdates,
+        totalChecked,
+        errors,
+      });
+      setCheckingUpdates(false);
+    }
+  };
+
+  const handleCheckAllUpdates = () => {
+    const stableContainers = stableContainersRef.current || {};
+    const entries = Object.entries(stableContainers).filter(([, serverContainers]) =>
+      Array.isArray(serverContainers) && serverContainers.length > 0
+    );
+    if (entries.length === 0) {
+      alert('No containers are currently loaded to check for updates.');
+      return;
+    }
+    runUpdateCheck();
+  };
+
+  // Auto-run update check when dashboard has container data, then every 5 minutes
+  useEffect(() => {
+    if (containersVersion === 0) return;
+
+    const totalContainers = Object.values(stableContainersRef.current || {}).reduce(
+      (sum, serverContainers) => sum + (Array.isArray(serverContainers) ? serverContainers.length : 0),
+      0
+    );
+    if (totalContainers === 0) return;
+
+    if (!hasRunInitialUpdateCheckRef.current) {
+      hasRunInitialUpdateCheckRef.current = true;
+      runUpdateCheck();
+      const intervalMs = 5 * 60 * 1000;
+      updateCheckIntervalRef.current = setInterval(runUpdateCheck, intervalMs);
+    }
+  }, [containersVersion]);
+
+  // Clear update-check interval on unmount
+  useEffect(() => {
+    return () => {
+      if (updateCheckIntervalRef.current) {
+        clearInterval(updateCheckIntervalRef.current);
+        updateCheckIntervalRef.current = null;
+      }
+    };
+  }, []);
+
   return (
     <div className="px-4 py-6 sm:px-0">
       <div className="mb-6 flex items-center justify-between">
@@ -389,9 +550,33 @@ const Dashboard = () => {
               </svg>
             </div>
             <div className="ml-3 flex-1">
-              <h3 className="text-sm font-medium text-orange-800 dark:text-orange-200">
-                {containersWithoutAutoRestart.length} Container{containersWithoutAutoRestart.length !== 1 ? 's' : ''} Running Without Auto-Restart
-              </h3>
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-medium text-orange-800 dark:text-orange-200">
+                  {containersWithoutAutoRestart.length} Container{containersWithoutAutoRestart.length !== 1 ? 's' : ''} Running Without Auto-Restart
+                </h3>
+                <button
+                  onClick={handleEnableAutoRestartOnAll}
+                  disabled={enablingAutoRestart}
+                  className="ml-4 inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md text-white bg-orange-600 hover:bg-orange-700 dark:bg-orange-500 dark:hover:bg-orange-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {enablingAutoRestart ? (
+                    <>
+                      <svg className="animate-spin -ml-1 mr-2 h-3 w-3 text-white" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      Enabling...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-3 h-3 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                      </svg>
+                      Enable auto-restart on all
+                    </>
+                  )}
+                </button>
+              </div>
               <div className="mt-2 text-sm text-orange-700 dark:text-orange-300">
                 <p>The following containers are running but do NOT have auto-restart enabled. They will not automatically restart after a server reboot:</p>
                 <ul className="mt-2 list-disc list-inside space-y-1">
@@ -412,6 +597,102 @@ const Dashboard = () => {
                     </li>
                   )}
                 </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Image update overview */}
+      {servers.length > 0 && totalContainers > 0 && (
+        <div className="mb-6 bg-blue-50 dark:bg-blue-900/20 border-l-4 border-blue-400 dark:border-blue-500 p-4 rounded-r-lg">
+          <div className="flex items-start">
+            <div className="flex-shrink-0">
+              <svg className="h-5 w-5 text-blue-400 dark:text-blue-500" fill="currentColor" viewBox="0 0 20 20">
+                <path
+                  fillRule="evenodd"
+                  d="M10 2a6 6 0 00-6 6v2.586l-.707.707A1 1 0 004 13h12a1 1 0 00.707-1.707L16 10.586V8a6 6 0 00-6-6zm-1 9a1 1 0 112 0v1a1 1 0 11-2 0v-1zm1-7a4 4 0 00-4 4v1a1 1 0 001 1h6a1 1 0 001-1V8a4 4 0 00-4-4z"
+                  clipRule="evenodd"
+                />
+              </svg>
+            </div>
+            <div className="ml-3 flex-1">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-medium text-blue-800 dark:text-blue-200">
+                  Image Updates Overview
+                </h3>
+                <button
+                  onClick={handleCheckAllUpdates}
+                  disabled={checkingUpdates}
+                  className="ml-4 inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {checkingUpdates ? (
+                    <>
+                      <svg className="animate-spin -ml-1 mr-2 h-3 w-3 text-white" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path
+                          className="opacity-75"
+                          fill="currentColor"
+                          d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                        ></path>
+                      </svg>
+                      Checking updates...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-3 h-3 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                        />
+                      </svg>
+                      Refresh
+                    </>
+                  )}
+                </button>
+              </div>
+              <div className="mt-2 text-sm text-blue-700 dark:text-blue-300">
+                {checkingUpdates && (
+                  <p>Checking for image updates across all containers…</p>
+                )}
+                {!checkingUpdates && !updateOverview.ranOnce && (
+                  <p>Update status loads automatically. Use the button to refresh.</p>
+                )}
+                {!checkingUpdates && updateOverview.ranOnce && updateOverview.containers.length === 0 && (
+                  <p>No image updates available for the checked containers.</p>
+                )}
+                {!checkingUpdates && updateOverview.ranOnce && updateOverview.containers.length > 0 && (
+                  <>
+                    <p className="mb-2">
+                      Found {updateOverview.containers.length} container
+                      {updateOverview.containers.length !== 1 ? 's' : ''} with image updates available:
+                    </p>
+                    <ul className="mt-1 list-disc list-inside space-y-1">
+                      {updateOverview.containers.slice(0, 5).map((item, idx) => (
+                        <li key={`${item.serverId}-${item.containerId}-${idx}`}>
+                          <Link
+                            to={`/servers/${item.serverId}/containers/${item.containerId}`}
+                            className="font-medium hover:underline"
+                          >
+                            {item.containerName}
+                          </Link>
+                          {' '}on {item.serverName} ({item.serverHost}) —{' '}
+                          <span className="font-mono text-xs">
+                            {item.currentDigestShort || 'current'} →{' '}
+                            {item.availableDigestShort || 'new'}
+                          </span>
+                        </li>
+                      ))}
+                      {updateOverview.containers.length > 5 && (
+                        <li className="text-blue-600 dark:text-blue-400">
+                          ...and {updateOverview.containers.length - 5} more
+                        </li>
+                      )}
+                    </ul>
+                  </>
+                )}
               </div>
             </div>
           </div>
