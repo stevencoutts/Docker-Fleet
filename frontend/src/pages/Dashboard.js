@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { serversService } from '../services/servers.service';
 import { containersService } from '../services/containers.service';
@@ -10,17 +10,24 @@ const Dashboard = () => {
   const [containers, setContainers] = useState({});
   const [hostInfos, setHostInfos] = useState({}); // Store hostname info for each server
   const [loading, setLoading] = useState(true);
+  const [loadingServers, setLoadingServers] = useState(new Set()); // Track which servers are loading
   const [restarting, setRestarting] = useState(false);
+  const [containersVersion, setContainersVersion] = useState(0); // Version counter to trigger recalculation only when stable data updates
   const socket = useSocket();
   const refreshTimeoutRef = useRef(null);
+  const isRefreshingRef = useRef(false); // Track if we're currently refreshing to prevent flicker
+  const stableContainersRef = useRef({}); // Store stable container data that only updates when complete
 
   useEffect(() => {
     fetchData(true);
     
-    // Auto-refresh every 3 seconds to detect container state changes
+    // Auto-refresh every 5 seconds to detect container state changes (increased from 3s to reduce flicker)
     const refreshInterval = setInterval(() => {
-      fetchData(false);
-    }, 3000);
+      // Only refresh if not already refreshing
+      if (!isRefreshingRef.current) {
+        fetchData(false);
+      }
+    }, 5000);
     
     // Listen for container status changes via WebSocket
     if (socket) {
@@ -30,8 +37,11 @@ const Dashboard = () => {
           clearTimeout(refreshTimeoutRef.current);
         }
         refreshTimeoutRef.current = setTimeout(() => {
-          fetchData(false);
-        }, 300);
+          // Only refresh if not already refreshing
+          if (!isRefreshingRef.current) {
+            fetchData(false);
+          }
+        }, 500); // Increased debounce time
       };
 
       // Listen for container status change events
@@ -59,54 +69,89 @@ const Dashboard = () => {
         setLoading(true);
       }
       
+      // First, fetch servers quickly to show the page immediately
       const serversResponse = await serversService.getAll();
       const serversData = serversResponse.data.servers;
       setServers(serversData);
+      
+      // Show the page immediately with server data (containers will load progressively)
+      if (showLoading) {
+        setLoading(false);
+      }
 
-      // Fetch containers and host info for each server in parallel for better performance
-      const serverPromises = serversData.map(async (server) => {
+      // Fetch containers for each server in parallel
+      // Keep previous container data visible while loading new data to prevent flickering
+      const containerPromises = serversData.map(async (server) => {
+        setLoadingServers(prev => new Set(prev).add(server.id));
         try {
-          const [containersResponse, hostInfoResponse] = await Promise.all([
-            containersService.getAll(server.id, { all: 'true' }).catch(() => ({ data: { containers: [] } })),
-            systemService.getHostInfo(server.id).catch(() => ({ data: { hostInfo: null } })),
-          ]);
+          const containersResponse = await containersService.getAll(server.id, { all: 'true' }).catch(() => ({ data: { containers: [] } }));
           return {
             serverId: server.id,
             containers: containersResponse.data.containers || [],
-            hostInfo: hostInfoResponse.data.hostInfo || null,
           };
         } catch (error) {
-          console.error(`Failed to fetch data for server ${server.id}:`, error);
-          return { serverId: server.id, containers: [], hostInfo: null };
+          console.error(`Failed to fetch containers for server ${server.id}:`, error);
+          // On error, return null to indicate we should keep previous data
+          return { serverId: server.id, containers: null };
+        } finally {
+          setLoadingServers(prev => {
+            const next = new Set(prev);
+            next.delete(server.id);
+            return next;
+          });
         }
       });
       
-      const serverResults = await Promise.all(serverPromises);
-      const containersData = {};
-      const hostInfosData = {};
-      serverResults.forEach(({ serverId, containers: serverContainers, hostInfo }) => {
-        containersData[serverId] = serverContainers;
-        if (hostInfo) {
-          hostInfosData[serverId] = hostInfo;
+      // Wait for all containers to load, then update state once to prevent flickering
+      const containerResults = await Promise.all(containerPromises);
+      
+      // Build new containers object, preserving previous data for servers that failed
+      // Always start from the stable ref to ensure we preserve displayed data
+      const currentStable = stableContainersRef.current || {};
+      const newContainers = { ...currentStable }; // Start with stable previous data
+      
+      containerResults.forEach(({ serverId, containers: serverContainers }) => {
+        if (serverContainers !== null) {
+          // Only update if we got new data (not null from error)
+          newContainers[serverId] = serverContainers;
         }
+        // If serverContainers is null, keep previous data (already preserved in spread above)
       });
       
-      setContainers(containersData);
-      setHostInfos(hostInfosData);
+      // Update stable ref FIRST (before state update) - this is what calculations use
+      stableContainersRef.current = newContainers;
+      
+      // Increment version counter to trigger recalculation (only when stable data actually changes)
+      setContainersVersion(prev => prev + 1);
+      
+      // Then update state (for display purposes, but calculations use stable ref)
+      setContainers(newContainers);
+
+      // Fetch host info separately and lazily (non-blocking, can fail silently)
+      // This is less critical data, so we load it after containers and don't block the UI
+      // Load host info in the background without blocking
+      serversData.forEach(async (server) => {
+        try {
+          const hostInfoResponse = await systemService.getHostInfo(server.id).catch(() => ({ data: { hostInfo: null } }));
+          if (hostInfoResponse.data.hostInfo) {
+            setHostInfos(prev => ({
+              ...prev,
+              [server.id]: hostInfoResponse.data.hostInfo,
+            }));
+          }
+        } catch (error) {
+          // Silently fail for host info - it's not critical
+        }
+      });
     } catch (error) {
       console.error('Failed to fetch data:', error);
+      if (showLoading) {
+        setLoading(false);
+      }
     } finally {
-      setLoading(false);
+      isRefreshingRef.current = false;
     }
   };
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-lg">Loading...</div>
-      </div>
-    );
-  }
 
   // Helper function to check if container is running
   const isContainerRunning = (container) => {
@@ -129,18 +174,43 @@ const Dashboard = () => {
   };
 
   // Calculate totals and identify issues
+  // Use stable containers ref for calculations to prevent flickering during updates
   const totalServers = servers.length;
-  const totalContainers = Object.values(containers).reduce((sum, serverContainers) => sum + serverContainers.length, 0);
-  const totalRunning = Object.values(containers).reduce((sum, serverContainers) => {
-    return sum + serverContainers.filter(isContainerRunning).length;
-  }, 0);
-  const totalStopped = totalContainers - totalRunning;
+  
+  // Calculate totals from stable ref - only recalculate when version changes (i.e., when stable data updates)
+  const totalContainers = useMemo(() => {
+    // Always read from stable ref which only updates when we have complete data
+    const stableContainers = stableContainersRef.current;
+    return Object.values(stableContainers).reduce((sum, serverContainers) => {
+      return sum + (Array.isArray(serverContainers) ? serverContainers.length : 0);
+    }, 0);
+  }, [containersVersion]); // Only recalculate when version increments (stable data updated)
+  
+  const totalRunning = useMemo(() => {
+    // Always read from stable ref which only updates when we have complete data
+    const stableContainers = stableContainersRef.current;
+    return Object.values(stableContainers).reduce((sum, serverContainers) => {
+      if (!Array.isArray(serverContainers)) return sum;
+      return sum + serverContainers.filter(isContainerRunning).length;
+    }, 0);
+  }, [containersVersion]); // Only recalculate when version increments (stable data updated)
+  
+  const totalStopped = useMemo(() => totalContainers - totalRunning, [totalContainers, totalRunning]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-lg">Loading...</div>
+      </div>
+    );
+  }
 
   // Find containers that should be running but aren't
+  // Use stable containers ref to prevent flickering
   const containersThatShouldBeRunning = [];
   // Find containers running without auto-restart
   const containersWithoutAutoRestart = [];
-  Object.entries(containers).forEach(([serverId, serverContainers]) => {
+  Object.entries(stableContainersRef.current).forEach(([serverId, serverContainers]) => {
     const server = servers.find(s => s.id === serverId);
     serverContainers.forEach(container => {
       const restartPolicy = container.RestartPolicy || container.restartPolicy || 'no';
@@ -486,10 +556,13 @@ const Dashboard = () => {
       ) : (
         <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
           {servers.map((server) => {
-            const serverContainers = containers[server.id] || [];
+            // Use stable containers ref for display to prevent flickering
+            const serverContainers = stableContainersRef.current[server.id] || containers[server.id] || [];
+            const isLoadingServer = loadingServers.has(server.id);
             const runningCount = serverContainers.filter(isContainerRunning).length;
             const stoppedCount = serverContainers.length - runningCount;
-            const serverIssues = containersThatShouldBeRunning.filter(c => c.serverId === server.id).length;
+            const serverIssues = containersThatShouldBeRunning.filter(c => c.serverId === server.id).length +
+                                containersWithoutAutoRestart.filter(c => c.serverId === server.id).length;
             const serverHealth = serverContainers.length > 0 
               ? Math.round((runningCount / serverContainers.length) * 100) 
               : 100;
@@ -536,9 +609,13 @@ const Dashboard = () => {
                   <div className="mt-4 space-y-2">
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-gray-500 dark:text-gray-400">Containers</span>
-                      <span className="font-medium text-gray-900 dark:text-gray-100">
-                        {runningCount} / {serverContainers.length} running
-                      </span>
+                      {isLoadingServer ? (
+                        <span className="text-gray-400 dark:text-gray-500 text-xs">Loading...</span>
+                      ) : (
+                        <span className="font-medium text-gray-900 dark:text-gray-100">
+                          {runningCount} / {serverContainers.length} running
+                        </span>
+                      )}
                     </div>
                     {serverContainers.length > 0 && (
                       <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
