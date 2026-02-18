@@ -6,7 +6,7 @@ export const containersService = {
     return api.get(`/api/v1/servers/${serverId}/containers?${queryParams}`);
   },
   getById: (serverId, containerId) =>
-    api.get(`/api/v1/servers/${serverId}/containers/${containerId}`),
+    api.get(`/api/v1/servers/${serverId}/containers/${containerId}`, { timeout: 20000 }),
   getUpdateStatus: (serverId, containerId) =>
     api.get(`/api/v1/servers/${serverId}/containers/${containerId}/update-status`, { timeout: 30000 }),
   pullAndUpdate: (serverId, containerId) =>
@@ -38,7 +38,7 @@ export const containersService = {
       imageName,
       containerName,
       ...options,
-    }),
+    }, { timeout: 300000 }),
   createSnapshot: async (serverId, containerId, imageName, tag = 'snapshot', download = false) => {
     const config = {
       responseType: download ? 'blob' : 'json',

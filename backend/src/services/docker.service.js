@@ -134,7 +134,7 @@ class DockerService {
 
   async getContainerDetails(server, containerId) {
     const command = `docker inspect ${containerId}`;
-    const result = await sshService.executeCommand(server, command);
+    const result = await sshService.executeCommand(server, command, { timeout: 15000 });
     
     try {
       const details = JSON.parse(result.stdout);
@@ -1185,6 +1185,23 @@ class DockerService {
     const command = `rm -f ${filePath}`;
     const result = await sshService.executeCommand(server, command, { allowFailure: true });
     return { success: result.code === 0 };
+  }
+
+  /**
+   * Load an image from a tar buffer on a server (e.g. after copying from another host).
+   * @param {object} server - Server model
+   * @param {Buffer} tarBuffer - Image tar from docker save
+   * @returns {Promise<{ success: boolean, message?: string }>}
+   */
+  async loadImageFromTar(server, tarBuffer) {
+    const result = await sshService.executeCommandWithStdin(server, 'docker load', tarBuffer, {
+      timeout: 300000,
+      allowFailure: true,
+    });
+    if (result.code !== 0) {
+      throw new Error(`Failed to load image: ${result.stderr || result.stdout}`);
+    }
+    return { success: true, message: result.stdout || 'Image loaded' };
   }
 
   async getSystemInfo(server) {

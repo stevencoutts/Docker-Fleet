@@ -417,22 +417,45 @@ const getSnapshots = async (req, res, next) => {
 
 const restoreSnapshot = async (req, res, next) => {
   try {
-    const { serverId } = req.params;
-    const { imageName, containerName, ports, env, restart } = req.body;
+    const { serverId: sourceServerId } = req.params;
+    const { imageName, containerName, ports, env, restart, targetServerId } = req.body;
 
     if (!imageName || !imageName.trim()) {
       return res.status(400).json({ error: 'Image name is required' });
     }
 
-    const server = await Server.findOne({
-      where: { id: serverId, userId: req.user.id },
+    const sourceServer = await Server.findOne({
+      where: { id: sourceServerId, userId: req.user.id },
     });
-
-    if (!server) {
-      return res.status(404).json({ error: 'Server not found' });
+    if (!sourceServer) {
+      return res.status(404).json({ error: 'Source server not found' });
     }
 
-    const result = await dockerService.createContainerFromImage(server, imageName, containerName, {
+    const targetId = targetServerId && targetServerId.trim() ? targetServerId.trim() : sourceServerId;
+    const isCrossServer = targetId !== sourceServerId;
+
+    let targetServer = sourceServer;
+    if (isCrossServer) {
+      targetServer = await Server.findOne({
+        where: { id: targetId, userId: req.user.id },
+      });
+      if (!targetServer) {
+        return res.status(404).json({ error: 'Target server not found' });
+      }
+      // Export image from source, then load on target and create container
+      const exportFileName = `/tmp/dockerfleet-restore-${Date.now()}-${Math.random().toString(36).slice(2)}.tar`;
+      try {
+        await dockerService.exportImage(sourceServer, imageName.trim(), exportFileName);
+        const fileData = await dockerService.downloadFile(sourceServer, exportFileName);
+        await dockerService.deleteFile(sourceServer, exportFileName);
+        await dockerService.loadImageFromTar(targetServer, fileData);
+      } catch (transferError) {
+        logger.error('Snapshot transfer to target server failed:', transferError);
+        throw transferError;
+      }
+    }
+
+    const result = await dockerService.createContainerFromImage(targetServer, imageName.trim(), containerName, {
       ports,
       env,
       restart: restart || 'unless-stopped',

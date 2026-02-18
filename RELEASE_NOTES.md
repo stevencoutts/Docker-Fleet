@@ -45,6 +45,11 @@ See README.md for detailed installation instructions.
   - Only suggests a “newest” tag when it’s within one major version (e.g. avoids suggesting 8.x when you’re on 3.x).
   - When your image digest already matches the registry, “Update available” is shown only if we have a resolved/tag version that is strictly older than the newest tag (avoids false updates for `latest` with same digest or for tags like 0.4 that point to the same image as 0.4.208).
   - For floating tags (`latest`, `dev`), resolved version from image labels is used so same-version checks are accurate.
+- **Snapshot restore to another host**
+  - Restore modal includes a “Restore to server” dropdown; you can restore a snapshot to a different Docker host. The image is exported on the source server, transferred, and loaded on the target server, then a new container is created there.
+  - Port mappings from the current container are applied when restoring (same host or different host), so the new container gets the same host port bindings.
+- **Container details loading**
+  - Shorter timeouts for container details (15s backend, 20s frontend) and a Retry button with a clear error message if the request times out.
 
 See git log for full commit history.
 

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
 import { containersService } from '../services/containers.service';
+import { serversService } from '../services/servers.service';
 import { useSocket } from '../context/SocketContext';
 import { imagesService } from '../services/images.service';
 import LogsViewer from '../components/LogsViewer';
@@ -94,6 +95,7 @@ const ContainerDetails = () => {
   const location = useLocation();
   const socket = useSocket();
   const [container, setContainer] = useState(null);
+  const [loadError, setLoadError] = useState(null);
   const [stats, setStats] = useState(null);
   const [statsHistory, setStatsHistory] = useState([]);
   const [activeTab, setActiveTab] = useState('details');
@@ -107,6 +109,9 @@ const ContainerDetails = () => {
   const [restoreModalOpen, setRestoreModalOpen] = useState(false);
   const [restoreImageName, setRestoreImageName] = useState('');
   const [restoreContainerName, setRestoreContainerName] = useState('');
+  const [restoreTargetServerId, setRestoreTargetServerId] = useState('');
+  const [restoreServers, setRestoreServers] = useState([]);
+  const [restoreLoading, setRestoreLoading] = useState(false);
   const [deletingSnapshot, setDeletingSnapshot] = useState(null);
   const [updateStatus, setUpdateStatus] = useState(null);
   const [updateStatusLoading, setUpdateStatusLoading] = useState(false);
@@ -150,6 +155,15 @@ const ContainerDetails = () => {
     fetchContainerDetails();
     fetchSnapshots();
   }, [serverId, containerId]);
+
+  // When restore modal opens, fetch servers for "Restore to server" dropdown
+  useEffect(() => {
+    if (!restoreModalOpen) return;
+    setRestoreTargetServerId(serverId);
+    serversService.getAll()
+      .then((res) => setRestoreServers(res.data.servers || []))
+      .catch(() => setRestoreServers([]));
+  }, [restoreModalOpen, serverId]);
 
   // Restore update/recreate success message when we were navigated here after completing one
   useEffect(() => {
@@ -208,11 +222,17 @@ const ContainerDetails = () => {
   }, [activeTab, containerId]);
 
   const fetchContainerDetails = async () => {
+    setLoadError(null);
+    setLoading(true);
     try {
       const response = await containersService.getById(serverId, containerId);
       setContainer(response.data.container);
     } catch (error) {
       console.error('Failed to fetch container details:', error);
+      const message = error.code === 'ECONNABORTED' || error.message?.includes('timeout')
+        ? 'Request timed out. The server may be slow or unreachable.'
+        : error.response?.data?.error || error.message || 'Failed to load container details.';
+      setLoadError(message);
     } finally {
       setLoading(false);
     }
@@ -371,7 +391,7 @@ const ContainerDetails = () => {
 
   const formatPorts = (ports) => {
     if (!ports || Object.keys(ports).length === 0) return [];
-    
+
     const formatted = [];
     for (const [containerPort, hostPorts] of Object.entries(ports)) {
       if (hostPorts && hostPorts.length > 0) {
@@ -391,6 +411,15 @@ const ContainerDetails = () => {
       }
     }
     return formatted;
+  };
+
+  /** Build port specs for restore API from container (hostPort:containerPort/tcp). */
+  const getPortsForRestore = (cont) => {
+    const formatted = formatPorts(cont?.NetworkSettings?.Ports);
+    const specs = formatted
+      .filter((p) => p.host !== 'Not mapped')
+      .map((p) => `${p.host.split(':').pop()}:${p.container}`);
+    return [...new Set(specs)];
   };
 
   const formatBytes = (bytes) => {
@@ -440,12 +469,25 @@ const ContainerDetails = () => {
           <svg className="mx-auto h-12 w-12 text-gray-400 dark:text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
-          <h3 className="mt-2 text-sm font-medium text-gray-900 dark:text-gray-100">Container not found</h3>
-          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">The container you're looking for doesn't exist or has been removed.</p>
-          <div className="mt-6">
+          <h3 className="mt-2 text-sm font-medium text-gray-900 dark:text-gray-100">
+            {loadError ? 'Failed to load container' : 'Container not found'}
+          </h3>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+            {loadError || "The container you're looking for doesn't exist or has been removed."}
+          </p>
+          <div className="mt-6 flex flex-wrap justify-center gap-3">
+            {loadError && (
+              <button
+                type="button"
+                onClick={() => fetchContainerDetails()}
+                className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 dark:bg-primary-500 dark:hover:bg-primary-600"
+              >
+                Retry
+              </button>
+            )}
             <Link
               to={`/servers/${serverId}`}
-              className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-primary-600 hover:bg-primary-700 dark:bg-primary-500 dark:hover:bg-primary-600"
+              className="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 shadow-sm text-sm font-medium rounded-md text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700"
             >
               ← Back to server
             </Link>
@@ -667,7 +709,8 @@ const ContainerDetails = () => {
               <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Restore Snapshot</h3>
               <button
                 onClick={() => setRestoreModalOpen(false)}
-                className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                disabled={restoreLoading}
+                className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 disabled:opacity-50"
               >
                 <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -680,6 +723,37 @@ const ContainerDetails = () => {
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Restore to server
+                </label>
+                <select
+                  value={restoreTargetServerId || serverId}
+                  onChange={(e) => setRestoreTargetServerId(e.target.value)}
+                  disabled={restoreLoading}
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                >
+                  {restoreServers.length === 0 ? (
+                    <option value={serverId}>This server</option>
+                  ) : (
+                    restoreServers.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name || s.host} ({s.host})
+                      </option>
+                    ))
+                  )}
+                </select>
+                {(restoreTargetServerId || serverId) !== serverId && (
+                  <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                    The snapshot image will be copied to the selected server first; this may take a minute.
+                  </p>
+                )}
+                {getPortsForRestore(container).length > 0 && (
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    Port mappings from this container will be applied ({getPortsForRestore(container).join(', ')}).
+                  </p>
+                )}
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                   Container Name *
                 </label>
                 <input
@@ -687,6 +761,7 @@ const ContainerDetails = () => {
                   value={restoreContainerName}
                   onChange={(e) => setRestoreContainerName(e.target.value)}
                   placeholder="e.g., my-restored-container"
+                  disabled={restoreLoading}
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-500"
                 />
               </div>
@@ -698,24 +773,33 @@ const ContainerDetails = () => {
                     alert('Please enter a container name');
                     return;
                   }
+                  const targetId = restoreTargetServerId || serverId;
+                  const portsForRestore = getPortsForRestore(container);
+                  setRestoreLoading(true);
                   try {
-                    await containersService.restoreSnapshot(serverId, restoreImageName, restoreContainerName.trim());
+                    await containersService.restoreSnapshot(serverId, restoreImageName, restoreContainerName.trim(), {
+                      ...(targetId !== serverId ? { targetServerId: targetId } : {}),
+                      ...(portsForRestore.length > 0 ? { ports: portsForRestore } : {}),
+                    });
                     setRestoreModalOpen(false);
                     setRestoreContainerName('');
                     alert('Container created successfully!');
-                    // Navigate to server page to see the new container
-                    window.location.href = `/servers/${serverId}`;
+                    window.location.href = `/servers/${targetId}`;
                   } catch (error) {
                     alert(error.response?.data?.error || error.message || 'Failed to restore snapshot');
+                  } finally {
+                    setRestoreLoading(false);
                   }
                 }}
-                className="flex-1 px-4 py-2 bg-primary-600 dark:bg-primary-500 text-white rounded-lg hover:bg-primary-700 dark:hover:bg-primary-600 transition-colors font-medium"
+                disabled={restoreLoading}
+                className="flex-1 px-4 py-2 bg-primary-600 dark:bg-primary-500 text-white rounded-lg hover:bg-primary-700 dark:hover:bg-primary-600 transition-colors font-medium disabled:opacity-50"
               >
-                Create Container
+                {restoreLoading ? 'Creating…' : 'Create Container'}
               </button>
               <button
                 onClick={() => setRestoreModalOpen(false)}
-                className="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
+                disabled={restoreLoading}
+                className="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors disabled:opacity-50"
               >
                 Cancel
               </button>

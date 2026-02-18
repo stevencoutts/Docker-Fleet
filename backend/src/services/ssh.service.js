@@ -130,6 +130,64 @@ class SSHService {
     });
   }
 
+  /**
+   * Execute a command with stdin data (e.g. pipe tar to docker load).
+   * @param {object} server - Server model
+   * @param {string} command - Command to run
+   * @param {Buffer} stdinData - Data to write to stdin
+   * @param {{ timeout?: number }} options - timeout in ms (default 120000 for large payloads)
+   */
+  async executeCommandWithStdin(server, command, stdinData, options = {}) {
+    const ssh = await this.connect(server);
+    const timeout = options.timeout || 120000;
+
+    return new Promise((resolve, reject) => {
+      let timeoutId = null;
+      let streamClosed = false;
+
+      ssh.exec(command, { cwd: '/', pty: false }, (err, stream) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+
+        timeoutId = setTimeout(() => {
+          if (!streamClosed) {
+            streamClosed = true;
+            stream.close();
+            reject(new Error(`Command timed out after ${timeout}ms`));
+          }
+        }, timeout);
+
+        let stdout = '';
+        let stderr = '';
+
+        stream.on('close', (code, signal) => {
+          if (timeoutId) clearTimeout(timeoutId);
+          if (streamClosed) return;
+          streamClosed = true;
+          if (code !== 0 && !options.allowFailure) {
+            reject(new Error(`Command failed: ${stderr || stdout}`));
+            return;
+          }
+          resolve({ stdout, stderr, code });
+        });
+
+        stream.on('data', (data) => { stdout += data.toString(); });
+        stream.stderr.on('data', (data) => { stderr += data.toString(); });
+
+        stream.write(stdinData, (err) => {
+          if (err) {
+            if (timeoutId) clearTimeout(timeoutId);
+            reject(err);
+            return;
+          }
+          stream.end();
+        });
+      });
+    });
+  }
+
   async executeStream(server, command, onData, onError) {
     const ssh = await this.connect(server);
     

@@ -29,7 +29,7 @@ A production-ready full-stack web application for managing Docker containers acr
 - Monitor container stats (CPU, memory, network I/O, block I/O) with real-time graphs
 - Manage container restart policies (no, always, unless-stopped, on-failure)
 - Interactive console/terminal access for running containers
-- Container snapshots: commit containers to images, view snapshots, restore from snapshots
+- Container snapshots: commit containers to images, view snapshots, restore from snapshots (optionally to a **different server**; the snapshot image is copied to the target host and port mappings from the source container are applied)
 - Delete snapshot images
 
 ### Image Management
