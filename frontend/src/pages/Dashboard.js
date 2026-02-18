@@ -212,6 +212,124 @@ const Dashboard = () => {
   
   const totalStopped = useMemo(() => totalContainers - totalRunning, [totalContainers, totalRunning]);
 
+  const runUpdateCheck = async () => {
+    const stableContainers = stableContainersRef.current || {};
+    const entries = Object.entries(stableContainers).filter(([, serverContainers]) =>
+      Array.isArray(serverContainers) && serverContainers.length > 0
+    );
+
+    if (entries.length === 0) {
+      setUpdateOverview({ ranOnce: true, containers: [], totalChecked: 0, errors: [] });
+      return;
+    }
+
+    setCheckingUpdates(true);
+    setUpdateOverview({ ranOnce: true, containers: [], totalChecked: 0, errors: [] });
+
+    const containersWithUpdates = [];
+    const errors = [];
+    let totalChecked = 0;
+
+    const promises = [];
+
+    const serversList = serversRef.current || servers;
+    entries.forEach(([serverId, serverContainers]) => {
+      const server = serversList.find((s) => String(s.id) === String(serverId));
+      if (!server) return;
+
+      serverContainers.forEach((container) => {
+        if (container.SkipUpdate) return;
+
+        const containerId = container.ID;
+        if (!containerId) return;
+
+        totalChecked += 1;
+
+        promises.push(
+          containersService
+            .getUpdateStatus(serverId, containerId)
+            .then((res) => {
+              const status = res.data?.updateStatus || res.data || {};
+              if (status.updateAvailable) {
+                containersWithUpdates.push({
+                  serverId,
+                  serverName: server.name || 'Unknown',
+                  serverHost: server.host || 'Unknown',
+                  containerId,
+                  containerName: getContainerName(container),
+                  imageRef: status.imageRef,
+                  currentDigestShort: status.currentDigestShort,
+                  availableDigestShort: status.availableDigestShort,
+                  pinned: status.pinned,
+                  reason: status.reason,
+                });
+              }
+            })
+            .catch((error) => {
+              errors.push({
+                serverId,
+                containerId,
+                containerName: getContainerName(container),
+                error: error.response?.data?.error || error.message || 'Update check failed',
+              });
+            })
+        );
+      });
+    });
+
+    try {
+      await Promise.all(promises);
+    } finally {
+      setUpdateOverview({
+        ranOnce: true,
+        containers: containersWithUpdates,
+        totalChecked,
+        errors,
+      });
+      setCheckingUpdates(false);
+    }
+  };
+
+  const handleCheckAllUpdates = () => {
+    const stableContainers = stableContainersRef.current || {};
+    const entries = Object.entries(stableContainers).filter(([, serverContainers]) =>
+      Array.isArray(serverContainers) && serverContainers.length > 0
+    );
+    if (entries.length === 0) {
+      alert('No containers are currently loaded to check for updates.');
+      return;
+    }
+    runUpdateCheck();
+  };
+
+  // Auto-run update check when dashboard has container data, then every 5 minutes
+  useEffect(() => {
+    if (containersVersion === 0) return;
+
+    const totalContainersCount = Object.values(stableContainersRef.current || {}).reduce(
+      (sum, serverContainers) => sum + (Array.isArray(serverContainers) ? serverContainers.length : 0),
+      0
+    );
+    if (totalContainersCount === 0) return;
+
+    if (!hasRunInitialUpdateCheckRef.current) {
+      hasRunInitialUpdateCheckRef.current = true;
+      runUpdateCheck();
+      const intervalMs = 5 * 60 * 1000;
+      updateCheckIntervalRef.current = setInterval(runUpdateCheck, intervalMs);
+    }
+  }, [containersVersion]);
+
+  // Clear update-check interval on unmount
+  useEffect(() => {
+    return () => {
+      if (updateCheckIntervalRef.current) {
+        clearInterval(updateCheckIntervalRef.current);
+        updateCheckIntervalRef.current = null;
+      }
+    };
+  }, []);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -340,124 +458,6 @@ const Dashboard = () => {
     setTimeout(() => fetchData(false), 500);
     setEnablingAutoRestart(false);
   };
-
-  const runUpdateCheck = async () => {
-    const stableContainers = stableContainersRef.current || {};
-    const entries = Object.entries(stableContainers).filter(([, serverContainers]) =>
-      Array.isArray(serverContainers) && serverContainers.length > 0
-    );
-
-    if (entries.length === 0) {
-      setUpdateOverview({ ranOnce: true, containers: [], totalChecked: 0, errors: [] });
-      return;
-    }
-
-    setCheckingUpdates(true);
-    setUpdateOverview({ ranOnce: true, containers: [], totalChecked: 0, errors: [] });
-
-    const containersWithUpdates = [];
-    const errors = [];
-    let totalChecked = 0;
-
-    const promises = [];
-
-    const serversList = serversRef.current || servers;
-    entries.forEach(([serverId, serverContainers]) => {
-      const server = serversList.find((s) => String(s.id) === String(serverId));
-      if (!server) return;
-
-      serverContainers.forEach((container) => {
-        if (container.SkipUpdate) return;
-
-        const containerId = container.ID;
-        if (!containerId) return;
-
-        totalChecked += 1;
-
-        promises.push(
-          containersService
-            .getUpdateStatus(serverId, containerId)
-            .then((res) => {
-              const status = res.data?.updateStatus || res.data || {};
-              if (status.updateAvailable) {
-                containersWithUpdates.push({
-                  serverId,
-                  serverName: server.name || 'Unknown',
-                  serverHost: server.host || 'Unknown',
-                  containerId,
-                  containerName: getContainerName(container),
-                  imageRef: status.imageRef,
-                  currentDigestShort: status.currentDigestShort,
-                  availableDigestShort: status.availableDigestShort,
-                  pinned: status.pinned,
-                  reason: status.reason,
-                });
-              }
-            })
-            .catch((error) => {
-              errors.push({
-                serverId,
-                containerId,
-                containerName: getContainerName(container),
-                error: error.response?.data?.error || error.message || 'Update check failed',
-              });
-            })
-        );
-      });
-    });
-
-    try {
-      await Promise.all(promises);
-    } finally {
-      setUpdateOverview({
-        ranOnce: true,
-        containers: containersWithUpdates,
-        totalChecked,
-        errors,
-      });
-      setCheckingUpdates(false);
-    }
-  };
-
-  const handleCheckAllUpdates = () => {
-    const stableContainers = stableContainersRef.current || {};
-    const entries = Object.entries(stableContainers).filter(([, serverContainers]) =>
-      Array.isArray(serverContainers) && serverContainers.length > 0
-    );
-    if (entries.length === 0) {
-      alert('No containers are currently loaded to check for updates.');
-      return;
-    }
-    runUpdateCheck();
-  };
-
-  // Auto-run update check when dashboard has container data, then every 5 minutes
-  useEffect(() => {
-    if (containersVersion === 0) return;
-
-    const totalContainers = Object.values(stableContainersRef.current || {}).reduce(
-      (sum, serverContainers) => sum + (Array.isArray(serverContainers) ? serverContainers.length : 0),
-      0
-    );
-    if (totalContainers === 0) return;
-
-    if (!hasRunInitialUpdateCheckRef.current) {
-      hasRunInitialUpdateCheckRef.current = true;
-      runUpdateCheck();
-      const intervalMs = 5 * 60 * 1000;
-      updateCheckIntervalRef.current = setInterval(runUpdateCheck, intervalMs);
-    }
-  }, [containersVersion]);
-
-  // Clear update-check interval on unmount
-  useEffect(() => {
-    return () => {
-      if (updateCheckIntervalRef.current) {
-        clearInterval(updateCheckIntervalRef.current);
-        updateCheckIntervalRef.current = null;
-      }
-    };
-  }, []);
 
   return (
     <div className="px-4 py-6 sm:px-0">
