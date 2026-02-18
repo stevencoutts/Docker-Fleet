@@ -35,7 +35,18 @@ See README.md for detailed installation instructions.
 
 ### 📝 Changelog
 
-See git log for detailed commit history.
+#### Recent (post–v1.0)
+
+- **Image updates and version tracking**
+  - Check for image updates per container (digest and registry tags); pull & update recreates the container with the latest image.
+  - Version numbers are read from image labels (`build_version`, `org.opencontainers.image.version`, etc.) and shown in the UI; after a successful update the UI shows previous → new version.
+  - Each successful pull-and-update is logged to `logs/container-updates.log` (JSON lines with timestamp, server, container, image refs, and versions).
+- **Update-availability logic**
+  - Only suggests a “newest” tag when it’s within one major version (e.g. avoids suggesting 8.x when you’re on 3.x).
+  - When your image digest already matches the registry, “Update available” is shown only if we have a resolved/tag version that is strictly older than the newest tag (avoids false updates for `latest` with same digest or for tags like 0.4 that point to the same image as 0.4.208).
+  - For floating tags (`latest`, `dev`), resolved version from image labels is used so same-version checks are accurate.
+
+See git log for full commit history.
 
 ### 🐛 Known Issues
 

@@ -24,6 +24,7 @@ A production-ready full-stack web application for managing Docker containers acr
 - List all containers (running and stopped) with filtering
 - View detailed container information with visual stats graphs
 - Start, stop, restart, and remove containers
+- **Image updates**: Check for image updates (digest and registry tags), pull & update containers in place; version numbers from image labels are shown and recorded
 - View container logs with live streaming via WebSocket
 - Monitor container stats (CPU, memory, network I/O, block I/O) with real-time graphs
 - Manage container restart policies (no, always, unless-stopped, on-failure)
@@ -269,6 +270,12 @@ dockerfleet-manager/  # or your project directory name
 
 4. **Test connection** before saving
 
+## 📦 Image Updates and Version Tracking
+
+- **Check for update**: On each container’s details page, the app checks whether a newer image is available by comparing the local image digest to the registry and (when available) comparing version tags (e.g. LinuxServer, GHCR timestamp, semver).
+- **Pull & update**: Recreates the container with the latest image for its tag while preserving configuration; the UI shows previous and new version when available (from image labels such as `build_version`, `org.opencontainers.image.version`).
+- **Update history**: Each successful pull-and-update is appended as one JSON line to **`logs/container-updates.log`** (under the backend working directory). Each line includes `timestamp`, `serverId`, `containerName`, `previousImageRef`, `newImageRef`, `previousVersion`, and `newVersion`. The `logs/` directory is in `.gitignore` and is created automatically when the first update is recorded.
+
 ## 📡 API Endpoints
 
 ### Authentication
@@ -295,6 +302,8 @@ dockerfleet-manager/  # or your project directory name
 - `POST /api/v1/servers/:serverId/containers/:containerId/restart` - Restart container
 - `DELETE /api/v1/servers/:serverId/containers/:containerId` - Remove container
 - `PUT /api/v1/servers/:serverId/containers/:containerId/restart-policy` - Update restart policy
+- `GET /api/v1/servers/:serverId/containers/:containerId/update-status` - Get image update availability (digest and version)
+- `POST /api/v1/servers/:serverId/containers/:containerId/pull-and-update` - Pull latest image and recreate container
 - `POST /api/v1/servers/:serverId/containers/:containerId/execute` - Execute command in container
 - `GET /api/v1/servers/:serverId/containers/:containerId/snapshots` - List snapshots
 - `POST /api/v1/servers/:serverId/containers/:containerId/snapshots` - Create snapshot
