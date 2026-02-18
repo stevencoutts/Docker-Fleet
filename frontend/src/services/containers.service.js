@@ -39,6 +39,8 @@ export const containersService = {
       containerName,
       ...options,
     }, { timeout: 300000 }),
+  deploy: (serverId, body) =>
+    api.post(`/api/v1/servers/${serverId}/containers/deploy`, body, { timeout: 120000 }),
   createSnapshot: async (serverId, containerId, imageName, tag = 'snapshot', download = false) => {
     const config = {
       responseType: download ? 'blob' : 'json',

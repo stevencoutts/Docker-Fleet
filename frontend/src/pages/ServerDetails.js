@@ -25,6 +25,14 @@ const ServerDetails = () => {
   // Start with "Ungrouped" expanded by default so those containers are visible initially
   const [expandedGroups, setExpandedGroups] = useState(() => new Set(['Ungrouped'])); // Track expanded groups
   const [showGroupingModal, setShowGroupingModal] = useState(false); // Show grouping management modal
+  const [deployModalOpen, setDeployModalOpen] = useState(false);
+  const [deployImage, setDeployImage] = useState('');
+  const [deployName, setDeployName] = useState('');
+  const [deployPorts, setDeployPorts] = useState('');
+  const [deployRestart, setDeployRestart] = useState('unless-stopped');
+  const [deployPullFirst, setDeployPullFirst] = useState(true);
+  const [deployLoading, setDeployLoading] = useState(false);
+  const [deployError, setDeployError] = useState('');
 
   useEffect(() => {
     fetchData();
@@ -570,6 +578,23 @@ const ServerDetails = () => {
             </p>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                setDeployError('');
+                setDeployImage('');
+                setDeployName('');
+                setDeployPorts('');
+                setDeployRestart('unless-stopped');
+                setDeployPullFirst(true);
+                setDeployModalOpen(true);
+              }}
+              className="px-4 py-2 text-sm font-medium text-white bg-primary-600 dark:bg-primary-500 border border-primary-600 dark:border-primary-500 rounded-lg hover:bg-primary-700 dark:hover:bg-primary-600 transition-colors flex items-center gap-2"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              Deploy container
+            </button>
             <Link
               to={`/servers/${serverId}/edit`}
               className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors flex items-center gap-2"
@@ -1095,6 +1120,142 @@ const ServerDetails = () => {
           </div>
         )}
       </div>
+
+      {/* Deploy container modal */}
+      {deployModalOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl p-6 max-w-md w-full mx-4">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Deploy new container</h3>
+              <button
+                type="button"
+                onClick={() => !deployLoading && setDeployModalOpen(false)}
+                className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 disabled:opacity-50"
+              >
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            {deployError && (
+              <div className="mb-4 rounded-md bg-red-50 dark:bg-red-900/20 p-3 text-sm text-red-800 dark:text-red-200">
+                {deployError}
+              </div>
+            )}
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Image *</label>
+                <input
+                  type="text"
+                  value={deployImage}
+                  onChange={(e) => setDeployImage(e.target.value)}
+                  placeholder="e.g. nginx:latest or ghcr.io/org/repo:tag"
+                  disabled={deployLoading}
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-primary-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Container name *</label>
+                <input
+                  type="text"
+                  value={deployName}
+                  onChange={(e) => setDeployName(e.target.value)}
+                  placeholder="e.g. my-app"
+                  disabled={deployLoading}
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-primary-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Port mappings (optional)</label>
+                <input
+                  type="text"
+                  value={deployPorts}
+                  onChange={(e) => setDeployPorts(e.target.value)}
+                  placeholder="e.g. 8080:80 or leave empty to auto-publish exposed ports"
+                  disabled={deployLoading}
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-primary-500"
+                />
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  Leave empty to publish all ports the image exposes (EXPOSE) to random host ports.
+                </p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Restart policy</label>
+                <select
+                  value={deployRestart}
+                  onChange={(e) => setDeployRestart(e.target.value)}
+                  disabled={deployLoading}
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-primary-500"
+                >
+                  <option value="unless-stopped">Unless stopped</option>
+                  <option value="always">Always</option>
+                  <option value="on-failure">On failure</option>
+                  <option value="no">No</option>
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="deploy-pull-first"
+                  checked={deployPullFirst}
+                  onChange={(e) => setDeployPullFirst(e.target.checked)}
+                  disabled={deployLoading}
+                  className="rounded border-gray-300 dark:border-gray-600 text-primary-600 focus:ring-primary-500"
+                />
+                <label htmlFor="deploy-pull-first" className="text-sm text-gray-700 dark:text-gray-300">Pull image before creating (recommended)</label>
+              </div>
+            </div>
+            <div className="flex gap-3 mt-6">
+              <button
+                type="button"
+                onClick={async () => {
+                  const image = deployImage.trim();
+                  const name = deployName.trim();
+                  if (!image || !name) {
+                    setDeployError('Image and container name are required.');
+                    return;
+                  }
+                  setDeployError('');
+                  setDeployLoading(true);
+                  try {
+                    const ports = deployPorts
+                      ? deployPorts.split(/[\s,]+/).map((p) => p.trim()).filter(Boolean)
+                      : undefined;
+                    const res = await containersService.deploy(serverId, {
+                      imageName: image,
+                      containerName: name,
+                      ports,
+                      restart: deployRestart,
+                      pullFirst: deployPullFirst,
+                    });
+                    setDeployModalOpen(false);
+                    fetchData(false);
+                    if (res.data?.containerId) {
+                      navigate(`/servers/${serverId}/containers/${res.data.containerId}`);
+                    }
+                  } catch (err) {
+                    setDeployError(err.response?.data?.error || err.message || 'Deploy failed');
+                  } finally {
+                    setDeployLoading(false);
+                  }
+                }}
+                disabled={deployLoading}
+                className="flex-1 px-4 py-2 bg-primary-600 dark:bg-primary-500 text-white rounded-lg hover:bg-primary-700 dark:hover:bg-primary-600 font-medium disabled:opacity-50"
+              >
+                {deployLoading ? 'Deploying…' : 'Deploy'}
+              </button>
+              <button
+                type="button"
+                onClick={() => !deployLoading && setDeployModalOpen(false)}
+                disabled={deployLoading}
+                className="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Logs Modal */}
       <LogsModal

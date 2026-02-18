@@ -540,12 +540,51 @@ const createSnapshot = async (req, res, next) => {
   }
 };
 
+const deployContainer = async (req, res, next) => {
+  try {
+    const { serverId } = req.params;
+    const { imageName, containerName, ports, env, restart, pullFirst } = req.body;
+
+    const server = await Server.findOne({
+      where: { id: serverId, userId: req.user.id },
+    });
+    if (!server) {
+      return res.status(404).json({ error: 'Server not found' });
+    }
+
+    const result = await dockerService.deployContainer(server, {
+      imageName,
+      containerName,
+      ports: Array.isArray(ports) ? ports : undefined,
+      env: Array.isArray(env) ? env : undefined,
+      restart: restart || 'unless-stopped',
+      pullFirst: pullFirst !== false,
+    });
+
+    const socketIO = require('../../config/socket').getIO();
+    if (socketIO && result.success) {
+      socketIO.emit('container:status:changed', {
+        serverId,
+        containerId: result.containerId,
+        action: 'deployed',
+        userId: req.user.id,
+      });
+    }
+
+    res.status(201).json(result);
+  } catch (error) {
+    logger.error('Deploy container failed:', error);
+    next(error);
+  }
+};
+
 module.exports = {
   getContainers,
   getContainerDetails,
   getContainerUpdateStatus,
   pullAndRecreateContainer,
   recreateContainer,
+  deployContainer,
   getContainerLogs,
   startContainer,
   stopContainer,

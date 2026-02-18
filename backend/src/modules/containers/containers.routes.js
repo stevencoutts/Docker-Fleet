@@ -6,6 +6,7 @@ const {
   getContainerUpdateStatus,
   pullAndRecreateContainer,
   recreateContainer,
+  deployContainer,
   getContainerLogs,
   startContainer,
   stopContainer,
@@ -34,6 +35,7 @@ router.put('/:serverId/containers/:containerId/restart-policy', updateRestartPol
 router.post('/:serverId/containers/:containerId/execute', executeCommand);
 router.post('/:serverId/containers/:containerId/snapshot', createSnapshot);
 router.post('/:serverId/containers/restore', restoreSnapshot);
+router.post('/:serverId/containers/deploy', deployContainer);
 router.post('/:serverId/containers/:containerId/start', startContainer);
 router.post('/:serverId/containers/:containerId/stop', stopContainer);
 router.post('/:serverId/containers/:containerId/restart', restartContainer);

@@ -1501,48 +1501,74 @@ class DockerService {
   }
 
   async createContainerFromImage(server, imageName, containerName, options = {}) {
-    // Create a new container from an image
-    // docker create --name containerName imageName
+    const escape = (s) => (s == null || s === '') ? '' : `'${String(s).replace(/'/g, "'\\''")}'`;
     let command = `docker create`;
-    
     if (containerName) {
-      command += ` --name ${containerName}`;
+      command += ` --name ${escape(containerName)}`;
     }
-    
-    // Add port mappings if provided
     if (options.ports && options.ports.length > 0) {
-      options.ports.forEach(port => {
+      options.ports.forEach((port) => {
         command += ` -p ${port}`;
       });
+    } else if (options.publishAllExposed !== false) {
+      // Publish all ports exposed by the image to random host ports (docker -P)
+      command += ' -P';
     }
-    
-    // Add environment variables if provided
     if (options.env && options.env.length > 0) {
-      options.env.forEach(env => {
-        command += ` -e ${env}`;
+      options.env.forEach((env) => {
+        command += ` -e ${escape(env)}`;
       });
     }
-    
-    // Add restart policy
     if (options.restart) {
       command += ` --restart=${options.restart}`;
     }
-    
-    command += ` ${imageName}`;
-    
+    command += ` ${escape(imageName)}`;
     const result = await sshService.executeCommand(server, command, { allowFailure: true });
-    
     if (result.code !== 0) {
       throw new Error(`Failed to create container: ${result.stderr || result.stdout}`);
     }
-    
-    // Extract container ID from output
     const containerId = result.stdout.trim();
-    
     return {
       success: true,
-      containerId: containerId,
+      containerId,
       message: `Container created from image ${imageName}`,
+    };
+  }
+
+  /**
+   * Deploy a new container: optionally pull image, create container, start it.
+   * @param {object} server - Server model
+   * @param {{ imageName: string, containerName: string, ports?: string[], env?: string[], restart?: string, pullFirst?: boolean }} opts
+   */
+  async deployContainer(server, opts = {}) {
+    const { imageName, containerName, ports, env, restart = 'unless-stopped', pullFirst = true } = opts;
+    if (!imageName || !String(imageName).trim()) {
+      throw new Error('Image name is required');
+    }
+    if (!containerName || !String(containerName).trim()) {
+      throw new Error('Container name is required');
+    }
+    const img = String(imageName).trim();
+    const name = String(containerName).trim();
+    if (pullFirst) {
+      const pullResult = await this.pullImage(server, img);
+      if (!pullResult.success) {
+        throw new Error(pullResult.message || 'Image pull failed');
+      }
+    }
+    const createResult = await this.createContainerFromImage(server, img, name, {
+      ports: Array.isArray(ports) ? ports : undefined,
+      env: Array.isArray(env) ? env : undefined,
+      restart: restart || 'unless-stopped',
+    });
+    const startResult = await this.startContainer(server, createResult.containerId);
+    if (!startResult.success) {
+      throw new Error(startResult.message || 'Container created but start failed');
+    }
+    return {
+      success: true,
+      containerId: createResult.containerId,
+      message: `Container "${name}" deployed and started.`,
     };
   }
 }
