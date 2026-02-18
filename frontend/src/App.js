@@ -15,6 +15,7 @@ import ContainerDetails from './pages/ContainerDetails';
 import Images from './pages/Images';
 import Users from './pages/Users';
 import Profile from './pages/Profile';
+import MonitoringSettings from './pages/MonitoringSettings';
 
 function App() {
   return (
@@ -48,6 +49,7 @@ function App() {
                 }
               />
               <Route path="profile" element={<Profile />} />
+              <Route path="monitoring" element={<MonitoringSettings />} />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

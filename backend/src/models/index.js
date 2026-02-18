@@ -27,10 +27,13 @@ const db = {};
 
 db.User = require('./User')(sequelize, Sequelize);
 db.Server = require('./Server')(sequelize, Sequelize);
+db.MonitoringSettings = require('./MonitoringSettings')(sequelize, Sequelize);
 
 // Associations
 db.Server.belongsTo(db.User, { foreignKey: 'userId', as: 'user' });
 db.User.hasMany(db.Server, { foreignKey: 'userId', as: 'servers' });
+db.MonitoringSettings.belongsTo(db.User, { foreignKey: 'userId', as: 'user' });
+db.User.hasOne(db.MonitoringSettings, { foreignKey: 'userId', as: 'monitoringSettings' });
 
 db.sequelize = sequelize;
 db.Sequelize = Sequelize;

@@ -54,4 +54,16 @@ module.exports = {
       rejectUnauthorized: process.env.SMTP_REJECT_UNAUTHORIZED !== 'false',
     },
   },
+  
+  monitoring: {
+    checkIntervalMs: parseInt(process.env.MONITORING_CHECK_INTERVAL_MS) || 60000, // Default: 1 minute
+    alertCooldownMs: parseInt(process.env.MONITORING_ALERT_COOLDOWN_MS) || 43200000, // Default: 12 hours
+    noAutoRestartCooldownMs: parseInt(process.env.MONITORING_NO_AUTO_RESTART_COOLDOWN_MS) || 43200000, // Default: 12 hours
+    // Alert type toggles
+    alertOnContainerDown: process.env.MONITORING_ALERT_ON_CONTAINER_DOWN !== 'false', // Default: true
+    alertOnContainerRecovery: process.env.MONITORING_ALERT_ON_CONTAINER_RECOVERY !== 'false', // Default: true
+    alertOnNoAutoRestart: process.env.MONITORING_ALERT_ON_NO_AUTO_RESTART !== 'false', // Default: true
+    // Thresholds
+    minDownTimeBeforeAlertMs: parseInt(process.env.MONITORING_MIN_DOWN_TIME_MS) || 0, // Default: 0 (alert immediately)
+  },
 };

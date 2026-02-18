@@ -75,6 +75,7 @@ const getContainerLogs = async (req, res, next) => {
 const startContainer = async (req, res, next) => {
   try {
     const { serverId, containerId } = req.params;
+    const socketIO = require('../../config/socket').getIO();
 
     const server = await Server.findOne({
       where: { id: serverId, userId: req.user.id },
@@ -85,6 +86,17 @@ const startContainer = async (req, res, next) => {
     }
 
     const result = await dockerService.startContainer(server, containerId);
+    
+    // Emit WebSocket event to notify all clients of status change
+    if (socketIO && result.success !== false) {
+      socketIO.emit('container:status:changed', {
+        serverId,
+        containerId,
+        action: 'started',
+        userId: req.user.id,
+      });
+    }
+    
     res.json(result);
   } catch (error) {
     next(error);
@@ -94,6 +106,7 @@ const startContainer = async (req, res, next) => {
 const stopContainer = async (req, res, next) => {
   try {
     const { serverId, containerId } = req.params;
+    const socketIO = require('../../config/socket').getIO();
 
     const server = await Server.findOne({
       where: { id: serverId, userId: req.user.id },
@@ -104,6 +117,17 @@ const stopContainer = async (req, res, next) => {
     }
 
     const result = await dockerService.stopContainer(server, containerId);
+    
+    // Emit WebSocket event to notify all clients of status change
+    if (socketIO && result.success !== false) {
+      socketIO.emit('container:status:changed', {
+        serverId,
+        containerId,
+        action: 'stopped',
+        userId: req.user.id,
+      });
+    }
+    
     res.json(result);
   } catch (error) {
     next(error);
@@ -113,6 +137,7 @@ const stopContainer = async (req, res, next) => {
 const restartContainer = async (req, res, next) => {
   try {
     const { serverId, containerId } = req.params;
+    const socketIO = require('../../config/socket').getIO();
 
     const server = await Server.findOne({
       where: { id: serverId, userId: req.user.id },
@@ -123,6 +148,17 @@ const restartContainer = async (req, res, next) => {
     }
 
     const result = await dockerService.restartContainer(server, containerId);
+    
+    // Emit WebSocket event to notify all clients of status change
+    if (socketIO && result.success !== false) {
+      socketIO.emit('container:status:changed', {
+        serverId,
+        containerId,
+        action: 'restarted',
+        userId: req.user.id,
+      });
+    }
+    
     res.json(result);
   } catch (error) {
     next(error);
@@ -172,6 +208,7 @@ const updateRestartPolicy = async (req, res, next) => {
   try {
     const { serverId, containerId } = req.params;
     const { policy = 'unless-stopped' } = req.body;
+    const socketIO = require('../../config/socket').getIO();
 
     const server = await Server.findOne({
       where: { id: serverId, userId: req.user.id },
@@ -182,6 +219,17 @@ const updateRestartPolicy = async (req, res, next) => {
     }
 
     const result = await dockerService.updateRestartPolicy(server, containerId, policy);
+    
+    // Emit WebSocket event to notify all clients of restart policy change
+    if (socketIO && result.success !== false) {
+      socketIO.emit('container:status:changed', {
+        serverId,
+        containerId,
+        action: 'restart-policy-updated',
+        userId: req.user.id,
+      });
+    }
+    
     res.json(result);
   } catch (error) {
     next(error);

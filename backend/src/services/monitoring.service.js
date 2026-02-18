@@ -1,4 +1,4 @@
-const { Server } = require('../models');
+const { Server, MonitoringSettings } = require('../models');
 const dockerService = require('./docker.service');
 const emailService = require('./email.service');
 const logger = require('../config/logger');
@@ -6,12 +6,17 @@ const config = require('../config/config');
 
 class MonitoringService {
   constructor() {
-    this.containerStates = new Map(); // Track container states: Map<userId-serverId-containerId, { wasDown: boolean, lastAlert: Date }>
+    this.containerStates = new Map(); // Track container states: Map<userId-serverId-containerId, { wasDown: boolean, lastAlert: Date, firstDownTime: Date }>
     this.noAutoRestartStates = new Map(); // Track containers without auto-restart: Map<userId-serverId-containerId, { lastAlert: Date }>
     this.isRunning = false;
     this.checkInterval = null;
-    this.checkIntervalMs = parseInt(process.env.MONITORING_CHECK_INTERVAL_MS) || 60000; // Default: 1 minute
-    this.alertCooldownMs = parseInt(process.env.MONITORING_ALERT_COOLDOWN_MS) || 300000; // Default: 5 minutes
+    this.checkIntervalMs = config.monitoring.checkIntervalMs;
+    this.alertCooldownMs = config.monitoring.alertCooldownMs;
+    this.noAutoRestartCooldownMs = config.monitoring.noAutoRestartCooldownMs;
+    this.alertOnContainerDown = config.monitoring.alertOnContainerDown;
+    this.alertOnContainerRecovery = config.monitoring.alertOnContainerRecovery;
+    this.alertOnNoAutoRestart = config.monitoring.alertOnNoAutoRestart;
+    this.minDownTimeBeforeAlertMs = config.monitoring.minDownTimeBeforeAlertMs;
   }
 
   async start() {
@@ -39,7 +44,11 @@ class MonitoringService {
     }
 
     this.isRunning = true;
-    logger.info(`Starting container monitoring service (check interval: ${this.checkIntervalMs}ms)`);
+    logger.info(`Starting container monitoring service (check interval: ${this.checkIntervalMs}ms, alert cooldown: ${Math.round(this.alertCooldownMs / 3600000)}h)`);
+    logger.info(`Alert settings: down=${this.alertOnContainerDown}, recovery=${this.alertOnContainerRecovery}, no-auto-restart=${this.alertOnNoAutoRestart}`);
+    if (this.minDownTimeBeforeAlertMs > 0) {
+      logger.info(`Minimum down time before alert: ${Math.round(this.minDownTimeBeforeAlertMs / 1000)}s`);
+    }
 
     // Run initial check
     this.checkContainers();
@@ -100,6 +109,19 @@ class MonitoringService {
         return;
       }
       
+      // Get user-specific monitoring settings (with fallback to config defaults)
+      let userSettings = await MonitoringSettings.findOne({
+        where: { userId: user.id },
+      });
+      
+      // Use user settings if available, otherwise fall back to config defaults
+      const alertOnContainerDown = userSettings?.alertOnContainerDown ?? this.alertOnContainerDown;
+      const alertOnContainerRecovery = userSettings?.alertOnContainerRecovery ?? this.alertOnContainerRecovery;
+      const alertOnNoAutoRestart = userSettings?.alertOnNoAutoRestart ?? this.alertOnNoAutoRestart;
+      const alertCooldownMs = userSettings?.alertCooldownMs ?? this.alertCooldownMs;
+      const noAutoRestartCooldownMs = userSettings?.noAutoRestartCooldownMs ?? this.noAutoRestartCooldownMs;
+      const minDownTimeBeforeAlertMs = userSettings?.minDownTimeBeforeAlertMs ?? this.minDownTimeBeforeAlertMs;
+      
       logger.info(`Checking containers for user ${user.email} on server ${server.name}`);
 
       for (const container of containers) {
@@ -131,19 +153,50 @@ class MonitoringService {
           if (!isRunning) {
             // Container is down
             if (!previousState) {
-              // First time we see this container - initialize state as down and send alert
-              logger.warn(`Container ${containerId.substring(0, 12)} (${container.Names?.replace(/^\//, '') || 'unknown'}) on server ${server.name} is down (should be running)`);
-              await this.sendDownAlert(server, container, user.email, stateKey);
-            } else if (!previousState.wasDown) {
-              // Container was running before, now it's down - state changed, send alert
-              logger.warn(`Container ${containerId.substring(0, 12)} (${container.Names?.replace(/^\//, '') || 'unknown'}) on server ${server.name} just went down (should be running)`);
-              await this.sendDownAlert(server, container, user.email, stateKey);
-            } else {
-              // Container was already down - check if we need to resend alert (cooldown)
-              const timeSinceLastAlert = now.getTime() - previousState.lastAlert.getTime();
-              if (timeSinceLastAlert >= this.alertCooldownMs) {
-                logger.warn(`Container ${containerId.substring(0, 12)} (${container.Names?.replace(/^\//, '') || 'unknown'}) on server ${server.name} still down, resending alert`);
+              // First time we see this container - initialize state as down
+              this.containerStates.set(stateKey, {
+                wasDown: true,
+                lastAlert: null,
+                firstDownTime: now,
+              });
+              // Check if we should alert immediately or wait for threshold
+              if (alertOnContainerDown && minDownTimeBeforeAlertMs === 0) {
+                logger.warn(`Container ${containerId.substring(0, 12)} (${container.Names?.replace(/^\//, '') || 'unknown'}) on server ${server.name} is down (should be running)`);
                 await this.sendDownAlert(server, container, user.email, stateKey);
+              } else if (alertOnContainerDown) {
+                logger.info(`Container ${containerId.substring(0, 12)} (${container.Names?.replace(/^\//, '') || 'unknown'}) on server ${server.name} is down, waiting ${minDownTimeBeforeAlertMs / 1000}s before alerting`);
+              }
+            } else if (!previousState.wasDown) {
+              // Container was running before, now it's down - state changed
+              const firstDownTime = now;
+              this.containerStates.set(stateKey, {
+                wasDown: true,
+                lastAlert: previousState.lastAlert,
+                firstDownTime,
+              });
+              // Check threshold before alerting
+              if (alertOnContainerDown && minDownTimeBeforeAlertMs === 0) {
+                logger.warn(`Container ${containerId.substring(0, 12)} (${container.Names?.replace(/^\//, '') || 'unknown'}) on server ${server.name} just went down (should be running)`);
+                await this.sendDownAlert(server, container, user.email, stateKey);
+              } else if (alertOnContainerDown) {
+                logger.info(`Container ${containerId.substring(0, 12)} (${container.Names?.replace(/^\//, '') || 'unknown'}) on server ${server.name} just went down, waiting ${minDownTimeBeforeAlertMs / 1000}s before alerting`);
+              }
+            } else {
+              // Container was already down
+              const timeSinceFirstDown = now.getTime() - (previousState.firstDownTime || previousState.lastAlert || now).getTime();
+              const timeSinceLastAlert = previousState.lastAlert ? (now.getTime() - previousState.lastAlert.getTime()) : Infinity;
+              
+              // Check if we've passed the threshold and haven't sent an alert yet, or if cooldown has passed
+              if (alertOnContainerDown) {
+                if (!previousState.lastAlert && timeSinceFirstDown >= minDownTimeBeforeAlertMs) {
+                  // First alert after threshold
+                  logger.warn(`Container ${containerId.substring(0, 12)} (${container.Names?.replace(/^\//, '') || 'unknown'}) on server ${server.name} has been down for ${Math.round(timeSinceFirstDown / 1000)}s, sending alert`);
+                  await this.sendDownAlert(server, container, user.email, stateKey);
+                } else if (previousState.lastAlert && timeSinceLastAlert >= alertCooldownMs) {
+                  // Resend alert after cooldown
+                  logger.warn(`Container ${containerId.substring(0, 12)} (${container.Names?.replace(/^\//, '') || 'unknown'}) on server ${server.name} still down, resending alert (cooldown: ${Math.round(alertCooldownMs / 3600000)}h)`);
+                  await this.sendDownAlert(server, container, user.email, stateKey);
+                }
               }
             }
           } else {
@@ -153,37 +206,43 @@ class MonitoringService {
               this.containerStates.set(stateKey, {
                 wasDown: false,
                 lastAlert: null,
+                firstDownTime: null,
               });
             } else if (previousState.wasDown) {
-              // Container recovered - send recovery alert
-              logger.info(`Container ${containerId.substring(0, 12)} (${container.Names?.replace(/^\//, '') || 'unknown'}) on server ${server.name} recovered`);
-              await this.sendUpAlert(server, container, user.email, stateKey);
+              // Container recovered - send recovery alert if enabled
+              if (alertOnContainerRecovery) {
+                logger.info(`Container ${containerId.substring(0, 12)} (${container.Names?.replace(/^\//, '') || 'unknown'}) on server ${server.name} recovered`);
+                await this.sendUpAlert(server, container, user.email, stateKey);
+              }
             } else {
               // Container is still running - update state to ensure wasDown is false
               this.containerStates.set(stateKey, {
                 wasDown: false,
                 lastAlert: previousState.lastAlert,
+                firstDownTime: null,
               });
             }
           }
         } else if (isRunning) {
-          // Container is running but doesn't have auto-restart - alert about this
-          const previousState = this.noAutoRestartStates.get(stateKey);
-          
-          logger.info(`Found running container without auto-restart: ${containerId.substring(0, 12)} (${container.Names?.replace(/^\//, '') || 'unknown'}) on server ${server.name}, restart policy: ${restartPolicy}`);
-          
-          if (!previousState) {
-            // First time we see this container - send alert
-            logger.warn(`Container ${containerId.substring(0, 12)} (${container.Names?.replace(/^\//, '') || 'unknown'}) on server ${server.name} is running without auto-restart enabled - sending alert`);
-            await this.sendNoAutoRestartAlert(server, container, user.email, stateKey);
-          } else {
-            // Check if we need to resend alert (cooldown)
-            const timeSinceLastAlert = now.getTime() - previousState.lastAlert.getTime();
-            if (timeSinceLastAlert >= this.alertCooldownMs) {
-              logger.warn(`Container ${containerId.substring(0, 12)} (${container.Names?.replace(/^\//, '') || 'unknown'}) on server ${server.name} still running without auto-restart, resending alert`);
+          // Container is running but doesn't have auto-restart - alert about this (if enabled)
+          if (alertOnNoAutoRestart) {
+            const previousState = this.noAutoRestartStates.get(stateKey);
+            
+            logger.info(`Found running container without auto-restart: ${containerId.substring(0, 12)} (${container.Names?.replace(/^\//, '') || 'unknown'}) on server ${server.name}, restart policy: ${restartPolicy}`);
+            
+            if (!previousState) {
+              // First time we see this container - send alert
+              logger.warn(`Container ${containerId.substring(0, 12)} (${container.Names?.replace(/^\//, '') || 'unknown'}) on server ${server.name} is running without auto-restart enabled - sending alert`);
               await this.sendNoAutoRestartAlert(server, container, user.email, stateKey);
             } else {
-              logger.debug(`Skipping alert for ${containerId.substring(0, 12)} - still in cooldown (${Math.round(timeSinceLastAlert / 1000)}s / ${this.alertCooldownMs / 1000}s)`);
+              // Check if we need to resend alert (cooldown)
+              const timeSinceLastAlert = now.getTime() - previousState.lastAlert.getTime();
+              if (timeSinceLastAlert >= noAutoRestartCooldownMs) {
+                logger.warn(`Container ${containerId.substring(0, 12)} (${container.Names?.replace(/^\//, '') || 'unknown'}) on server ${server.name} still running without auto-restart, resending alert (cooldown: ${Math.round(noAutoRestartCooldownMs / 3600000)}h)`);
+                await this.sendNoAutoRestartAlert(server, container, user.email, stateKey);
+              } else {
+                logger.debug(`Skipping alert for ${containerId.substring(0, 12)} - still in cooldown (${Math.round(timeSinceLastAlert / 3600000)}h / ${Math.round(noAutoRestartCooldownMs / 3600000)}h)`);
+              }
             }
           }
         } else {
@@ -200,9 +259,11 @@ class MonitoringService {
     try {
       const result = await emailService.sendContainerDownAlert(recipient, server, container);
       if (result.success) {
+        const currentState = this.containerStates.get(stateKey) || {};
         this.containerStates.set(stateKey, {
           wasDown: true,
           lastAlert: new Date(),
+          firstDownTime: currentState.firstDownTime || new Date(),
         });
         logger.info(`Down alert sent for container ${container.ID?.substring(0, 12)} on server ${server.name}`);
       } else {

@@ -11,6 +11,7 @@ const routes = require('./routes');
 const setupSocketIO = require('./websocket/socket.handler');
 const monitoringService = require('./services/monitoring.service');
 const db = require('./models');
+const socketConfig = require('./config/socket');
 
 const app = express();
 const server = http.createServer(app);
@@ -30,6 +31,9 @@ const io = new Server(server, {
     credentials: true,
   },
 });
+
+// Make io instance available to controllers
+socketConfig.setIO(io);
 
 setupSocketIO(io);
 

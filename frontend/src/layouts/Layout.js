@@ -16,10 +16,11 @@ const Layout = () => {
     { name: 'Users', path: '/admin/users' },
   ] : [];
 
-  // Personal navigation items (for all users)
-  const personalNavigation = [
-    { name: 'Profile', path: '/profile' },
-  ];
+        // Personal navigation items (for all users)
+        const personalNavigation = [
+          { name: 'Profile', path: '/profile' },
+          { name: 'Monitoring', path: '/monitoring' },
+        ];
 
   const isActive = (path) => {
     if (path === '/') {

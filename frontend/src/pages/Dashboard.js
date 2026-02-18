@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { serversService } from '../services/servers.service';
 import { containersService } from '../services/containers.service';
 import { systemService } from '../services/system.service';
+import { useSocket } from '../context/SocketContext';
 
 const Dashboard = () => {
   const [servers, setServers] = useState([]);
@@ -10,19 +11,47 @@ const Dashboard = () => {
   const [hostInfos, setHostInfos] = useState({}); // Store hostname info for each server
   const [loading, setLoading] = useState(true);
   const [restarting, setRestarting] = useState(false);
+  const socket = useSocket();
+  const refreshTimeoutRef = useRef(null);
 
   useEffect(() => {
-    fetchData();
+    fetchData(true);
     
-    // Auto-refresh every 5 seconds to detect container state changes
+    // Auto-refresh every 3 seconds to detect container state changes
     const refreshInterval = setInterval(() => {
-      fetchData();
-    }, 5000);
+      fetchData(false);
+    }, 3000);
+    
+    // Listen for container status changes via WebSocket
+    if (socket) {
+      const handleContainerStatusChange = () => {
+        // Debounce rapid status changes - refresh immediately but only once per batch
+        if (refreshTimeoutRef.current) {
+          clearTimeout(refreshTimeoutRef.current);
+        }
+        refreshTimeoutRef.current = setTimeout(() => {
+          fetchData(false);
+        }, 300);
+      };
+
+      // Listen for container status change events
+      socket.on('container:status:changed', handleContainerStatusChange);
+
+      return () => {
+        socket.off('container:status:changed', handleContainerStatusChange);
+        if (refreshTimeoutRef.current) {
+          clearTimeout(refreshTimeoutRef.current);
+        }
+      };
+    }
     
     return () => {
       clearInterval(refreshInterval);
+      if (refreshTimeoutRef.current) {
+        clearTimeout(refreshTimeoutRef.current);
+      }
     };
-  }, []);
+  }, [socket]);
 
   const fetchData = async (showLoading = false) => {
     try {
@@ -109,6 +138,8 @@ const Dashboard = () => {
 
   // Find containers that should be running but aren't
   const containersThatShouldBeRunning = [];
+  // Find containers running without auto-restart
+  const containersWithoutAutoRestart = [];
   Object.entries(containers).forEach(([serverId, serverContainers]) => {
     const server = servers.find(s => s.id === serverId);
     serverContainers.forEach(container => {
@@ -124,12 +155,35 @@ const Dashboard = () => {
           serverHost: server?.host || 'Unknown',
           containerName: getContainerName(container),
         });
+      } else if (!hasAutoRestart && isRunning) {
+        containersWithoutAutoRestart.push({
+          ...container,
+          serverId,
+          serverName: server?.name || 'Unknown',
+          serverHost: server?.host || 'Unknown',
+          containerName: getContainerName(container),
+        });
       }
     });
   });
 
-  // Calculate issues count
-  const issuesCount = containersThatShouldBeRunning.length;
+  // Calculate issues count (both types)
+  const issuesCount = containersThatShouldBeRunning.length + containersWithoutAutoRestart.length;
+
+  // Find the first server with issues for navigation
+  const getFirstServerWithIssues = () => {
+    // Check for stopped containers first
+    if (containersThatShouldBeRunning.length > 0) {
+      return containersThatShouldBeRunning[0].serverId;
+    }
+    // Then check for containers without auto-restart
+    if (containersWithoutAutoRestart.length > 0) {
+      return containersWithoutAutoRestart[0].serverId;
+    }
+    return null;
+  };
+
+  const firstServerWithIssues = getFirstServerWithIssues();
 
   // Restart all stopped containers that should be running
   const handleRestartStopped = async () => {
@@ -192,8 +246,8 @@ const Dashboard = () => {
         </Link>
       </div>
 
-      {/* Alerts Section */}
-      {issuesCount > 0 && (
+      {/* Alerts Section - Containers that should be running but are stopped */}
+      {containersThatShouldBeRunning.length > 0 && (
         <div className="mb-6 bg-yellow-50 dark:bg-yellow-900/20 border-l-4 border-yellow-400 dark:border-yellow-500 p-4 rounded-r-lg">
           <div className="flex items-start">
             <div className="flex-shrink-0">
@@ -204,7 +258,7 @@ const Dashboard = () => {
             <div className="ml-3 flex-1">
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-medium text-yellow-800 dark:text-yellow-200">
-                  {issuesCount} Container{issuesCount !== 1 ? 's' : ''} Should Be Running
+                  {containersThatShouldBeRunning.length} Container{containersThatShouldBeRunning.length !== 1 ? 's' : ''} Should Be Running
                 </h3>
                 <button
                   onClick={handleRestartStopped}
@@ -246,6 +300,45 @@ const Dashboard = () => {
                   {containersThatShouldBeRunning.length > 5 && (
                     <li className="text-yellow-600 dark:text-yellow-400">
                       ...and {containersThatShouldBeRunning.length - 5} more
+                    </li>
+                  )}
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Alerts Section - Containers running without auto-restart */}
+      {containersWithoutAutoRestart.length > 0 && (
+        <div className="mb-6 bg-orange-50 dark:bg-orange-900/20 border-l-4 border-orange-400 dark:border-orange-500 p-4 rounded-r-lg">
+          <div className="flex items-start">
+            <div className="flex-shrink-0">
+              <svg className="h-5 w-5 text-orange-400 dark:text-orange-500" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+              </svg>
+            </div>
+            <div className="ml-3 flex-1">
+              <h3 className="text-sm font-medium text-orange-800 dark:text-orange-200">
+                {containersWithoutAutoRestart.length} Container{containersWithoutAutoRestart.length !== 1 ? 's' : ''} Running Without Auto-Restart
+              </h3>
+              <div className="mt-2 text-sm text-orange-700 dark:text-orange-300">
+                <p>The following containers are running but do NOT have auto-restart enabled. They will not automatically restart after a server reboot:</p>
+                <ul className="mt-2 list-disc list-inside space-y-1">
+                  {containersWithoutAutoRestart.slice(0, 5).map((container, idx) => (
+                    <li key={idx}>
+                      <Link 
+                        to={`/servers/${container.serverId}/containers/${container.ID}`}
+                        className="font-medium hover:underline"
+                      >
+                        {container.containerName}
+                      </Link>
+                      {' '}on {container.serverName} ({container.serverHost})
+                    </li>
+                  ))}
+                  {containersWithoutAutoRestart.length > 5 && (
+                    <li className="text-orange-600 dark:text-orange-400">
+                      ...and {containersWithoutAutoRestart.length - 5} more
                     </li>
                   )}
                 </ul>
@@ -318,42 +411,65 @@ const Dashboard = () => {
             </div>
           </div>
 
-          <div className={`bg-white dark:bg-gray-800 overflow-hidden shadow rounded-lg transition-colors ${
-            issuesCount > 0 ? 'ring-2 ring-yellow-400 dark:ring-yellow-500' : ''
-          }`}>
-            <div className="p-5">
-              <div className="flex items-center">
-                <div className={`flex-shrink-0 rounded-md p-3 ${
-                  issuesCount > 0 ? 'bg-yellow-500' : 'bg-gray-500'
-                }`}>
-                  {issuesCount > 0 ? (
+          {issuesCount > 0 && firstServerWithIssues ? (
+            <Link
+              to={`/servers/${firstServerWithIssues}`}
+              className={`bg-white dark:bg-gray-800 overflow-hidden shadow rounded-lg transition-all hover:shadow-lg cursor-pointer ring-2 ring-yellow-400 dark:ring-yellow-500`}
+            >
+              <div className="p-5">
+                <div className="flex items-center">
+                  <div className="flex-shrink-0 rounded-md p-3 bg-yellow-500">
                     <svg className="h-6 w-6 text-white" fill="currentColor" viewBox="0 0 20 20">
                       <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
                     </svg>
-                  ) : (
+                  </div>
+                  <div className="ml-5 w-0 flex-1">
+                    <dl>
+                      <dt className="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">
+                        Issues Found
+                      </dt>
+                      <dd className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+                        {issuesCount}
+                      </dd>
+                      <dd className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                        {containersThatShouldBeRunning.length > 0 && containersWithoutAutoRestart.length > 0
+                          ? `${containersThatShouldBeRunning.length} stopped, ${containersWithoutAutoRestart.length} no auto-restart`
+                          : containersThatShouldBeRunning.length > 0
+                          ? 'Auto-start containers stopped'
+                          : 'Containers without auto-restart'}
+                      </dd>
+                      <dd className="text-xs text-yellow-600 dark:text-yellow-400 mt-1 font-medium">
+                        Click to view →
+                      </dd>
+                    </dl>
+                  </div>
+                </div>
+              </div>
+            </Link>
+          ) : (
+            <div className="bg-white dark:bg-gray-800 overflow-hidden shadow rounded-lg transition-colors">
+              <div className="p-5">
+                <div className="flex items-center">
+                  <div className="flex-shrink-0 rounded-md p-3 bg-gray-500">
                     <svg className="h-6 w-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
-                  )}
-                </div>
-                <div className="ml-5 w-0 flex-1">
-                  <dl>
-                    <dt className="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">
-                      {issuesCount > 0 ? 'Issues Found' : 'All Healthy'}
-                    </dt>
-                    <dd className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-                      {issuesCount > 0 ? issuesCount : '0'}
-                    </dd>
-                    <dd className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                      {issuesCount > 0 
-                        ? 'Auto-start containers stopped' 
-                        : 'No issues detected'}
-                    </dd>
-                  </dl>
+                  </div>
+                  <div className="ml-5 w-0 flex-1">
+                    <dl>
+                      <dt className="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">
+                        All Healthy
+                      </dt>
+                      <dd className="text-lg font-semibold text-gray-900 dark:text-gray-100">0</dd>
+                      <dd className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                        No issues detected
+                      </dd>
+                    </dl>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
+          )}
         </div>
       )}
 
