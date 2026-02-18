@@ -10,7 +10,20 @@ export const SocketProvider = ({ children }) => {
 
   useEffect(() => {
     if (token) {
-      const newSocket = io(process.env.REACT_APP_API_URL || 'http://localhost:5020', {
+      // Auto-detect API URL for WebSocket (same logic as API service)
+      const getSocketUrl = () => {
+        if (process.env.REACT_APP_API_URL) {
+          return process.env.REACT_APP_API_URL;
+        }
+        const host = window.location.hostname;
+        const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:';
+        if (host === 'localhost' || host === '127.0.0.1') {
+          return 'http://localhost:5020';
+        }
+        return `${protocol}//${host}:5020`;
+      };
+
+      const newSocket = io(getSocketUrl(), {
         auth: { token },
         transports: ['websocket', 'polling'],
       });
