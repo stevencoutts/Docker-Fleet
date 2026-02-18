@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
 import { containersService } from '../services/containers.service';
+import { useSocket } from '../context/SocketContext';
 import { imagesService } from '../services/images.service';
 import LogsViewer from '../components/LogsViewer';
 import Console from '../components/Console';
@@ -90,6 +91,8 @@ const formatDate = (dateValue, options = {}) => {
 const ContainerDetails = () => {
   const { serverId, containerId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
+  const socket = useSocket();
   const [container, setContainer] = useState(null);
   const [stats, setStats] = useState(null);
   const [statsHistory, setStatsHistory] = useState([]);
@@ -109,6 +112,8 @@ const ContainerDetails = () => {
   const [updateStatusLoading, setUpdateStatusLoading] = useState(false);
   const [pullAndUpdateLoading, setPullAndUpdateLoading] = useState(false);
   const [lastUpdateResult, setLastUpdateResult] = useState(null);
+  const [recreateLoading, setRecreateLoading] = useState(false);
+  const [lastRecreateResult, setLastRecreateResult] = useState(null);
   const maxHistoryPoints = 30;
 
   // Helper function to generate snapshot name with timestamp
@@ -145,6 +150,21 @@ const ContainerDetails = () => {
     fetchContainerDetails();
     fetchSnapshots();
   }, [serverId, containerId]);
+
+  // Restore update/recreate success message when we were navigated here after completing one
+  useEffect(() => {
+    const s = location.state;
+    if (!s) return;
+    if (s.updateResult && String(s.updateResult.newContainerId) === String(containerId)) {
+      setLastUpdateResult(s.updateResult);
+    }
+    if (s.recreateResult && String(s.recreateResult.newContainerId) === String(containerId)) {
+      setLastRecreateResult(s.recreateResult);
+    }
+    if (s.updateResult || s.recreateResult) {
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  }, [containerId, location.pathname, location.state, navigate]);
 
   const fetchSnapshots = async () => {
     try {
@@ -876,7 +896,12 @@ const ContainerDetails = () => {
                                 type="button"
                                 onClick={async () => {
                                   setPullAndUpdateLoading(true);
-                                  setLastUpdateResult(null);
+                                  setLastUpdateResult({ inProgress: true, steps: [] });
+                                  const progressHandler = (payload) => {
+                                    if (String(payload.serverId) !== String(serverId) || String(payload.containerId) !== String(containerId)) return;
+                                    setLastUpdateResult((prev) => ({ ...prev, steps: [...(prev.steps || []), { step: payload.step, success: payload.success, detail: payload.detail }] }));
+                                  };
+                                  socket?.on('container:update:progress', progressHandler);
                                   try {
                                     const res = await containersService.pullAndUpdate(serverId, containerId);
                                     const data = res.data || {};
@@ -884,17 +909,18 @@ const ContainerDetails = () => {
                                     if (data.success) {
                                       setUpdateStatus(null);
                                       if (data.newContainerId) {
-                                        // Stay on page so user can see "Last update" steps, then use "View new container" to go
+                                        navigate(`/servers/${serverId}/containers/${data.newContainerId}`, { replace: true, state: { updateResult: data } });
                                       } else {
                                         fetchContainerDetails();
                                       }
                                     } else {
-                                      setUpdateStatus(prev => ({ ...prev, error: data.error || 'Update failed' }));
+                                      setUpdateStatus((prev) => ({ ...prev, error: data.error || 'Update failed' }));
                                     }
                                   } catch (err) {
-                                    setLastUpdateResult({ success: false, error: err.response?.data?.error || err.message || 'Update failed', steps: [] });
-                                    setUpdateStatus(prev => ({ ...prev, error: err.response?.data?.error || err.message || 'Update failed' }));
+                                    setLastUpdateResult((prev) => ({ ...prev, success: false, error: err.response?.data?.error || err.message || 'Update failed', inProgress: false }));
+                                    setUpdateStatus((prev) => ({ ...prev, error: err.response?.data?.error || err.message || 'Update failed' }));
                                   } finally {
+                                    socket?.off('container:update:progress', progressHandler);
                                     setPullAndUpdateLoading(false);
                                   }
                                 }}
@@ -906,10 +932,12 @@ const ContainerDetails = () => {
                             )}
                           </div>
                         )}
-                        {!isPinned && lastUpdateResult && lastUpdateResult.steps && lastUpdateResult.steps.length > 0 && (
+                        {!isPinned && lastUpdateResult && (lastUpdateResult.inProgress || (lastUpdateResult.steps && lastUpdateResult.steps.length > 0)) && (
                           <div className="mt-3 p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-600">
                             <p className="text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide mb-2">
-                              {lastUpdateResult.success ? (
+                              {lastUpdateResult.inProgress ? (
+                                <span className="text-primary-600 dark:text-primary-400">Pulling & updating…</span>
+                              ) : lastUpdateResult.success ? (
                                 <span className="text-green-600 dark:text-green-400">Update completed successfully</span>
                               ) : (
                                 <span className="text-red-600 dark:text-red-400">Update failed</span>
@@ -933,7 +961,7 @@ const ContainerDetails = () => {
                             {lastUpdateResult.success && lastUpdateResult.message && (
                               <p className="mt-2 text-sm text-green-700 dark:text-green-300 font-medium">{lastUpdateResult.message}</p>
                             )}
-                            {lastUpdateResult.success && lastUpdateResult.newContainerId && (
+                            {lastUpdateResult.success && lastUpdateResult.newContainerId && String(lastUpdateResult.newContainerId) !== String(containerId) && (
                               <button
                                 type="button"
                                 onClick={() => navigate(`/servers/${serverId}/containers/${lastUpdateResult.newContainerId}`, { replace: true })}
@@ -949,6 +977,79 @@ const ContainerDetails = () => {
                         )}
                       </>
                     )}
+                    {/* Recreate container - same image & settings, e.g. to fix mounts */}
+                    <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-600">
+                      <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">Recreate this container with the same image and settings (e.g. to restore or fix mounts). No image pull.</p>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          setRecreateLoading(true);
+                          setLastRecreateResult({ inProgress: true, steps: [] });
+                          const progressHandler = (payload) => {
+                            if (String(payload.serverId) !== String(serverId) || String(payload.containerId) !== String(containerId)) return;
+                            setLastRecreateResult((prev) => ({ ...prev, steps: [...(prev.steps || []), { step: payload.step, success: payload.success, detail: payload.detail }] }));
+                          };
+                          socket?.on('container:update:progress', progressHandler);
+                          try {
+                            const res = await containersService.recreate(serverId, containerId);
+                            const data = res.data || {};
+                            setLastRecreateResult(data);
+                            if (data.success && data.newContainerId) {
+                              navigate(`/servers/${serverId}/containers/${data.newContainerId}`, { replace: true, state: { recreateResult: data } });
+                            }
+                          } catch (err) {
+                            setLastRecreateResult((prev) => ({ ...prev, success: false, error: err.response?.data?.error || err.message || 'Recreate failed', inProgress: false }));
+                          } finally {
+                            socket?.off('container:update:progress', progressHandler);
+                            setRecreateLoading(false);
+                          }
+                        }}
+                        disabled={recreateLoading || pullAndUpdateLoading}
+                        className="px-3 py-1.5 text-sm font-medium text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/30 rounded-lg hover:bg-amber-100 dark:hover:bg-amber-900/50 disabled:opacity-50"
+                      >
+                        {recreateLoading ? 'Recreating…' : 'Recreate container'}
+                      </button>
+                      {lastRecreateResult && (lastRecreateResult.inProgress || (lastRecreateResult.steps && lastRecreateResult.steps.length > 0)) && (
+                        <div className="mt-3 p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-600">
+                          <p className="text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide mb-2">
+                            {lastRecreateResult.inProgress ? (
+                              <span className="text-primary-600 dark:text-primary-400">Recreating…</span>
+                            ) : lastRecreateResult.success ? (
+                              <span className="text-green-600 dark:text-green-400">Recreate completed</span>
+                            ) : (
+                              <span className="text-red-600 dark:text-red-400">Recreate failed</span>
+                            )}
+                          </p>
+                          <ul className="space-y-1.5 text-sm">
+                            {lastRecreateResult.steps.map((s, i) => (
+                              <li key={i} className="flex items-start gap-2">
+                                <span className={`flex-shrink-0 ${s.success ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                                  {s.success ? (
+                                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" /></svg>
+                                  ) : (
+                                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" /></svg>
+                                  )}
+                                </span>
+                                <span className="text-gray-700 dark:text-gray-300">{s.step}</span>
+                                {s.detail && <span className="text-gray-500 dark:text-gray-400 truncate" title={s.detail}> — {s.detail}</span>}
+                              </li>
+                            ))}
+                          </ul>
+                          {lastRecreateResult.success && lastRecreateResult.newContainerId && String(lastRecreateResult.newContainerId) !== String(containerId) && (
+                            <button
+                              type="button"
+                              onClick={() => navigate(`/servers/${serverId}/containers/${lastRecreateResult.newContainerId}`, { replace: true })}
+                              className="mt-2 px-3 py-1.5 text-sm font-medium text-primary-700 dark:text-primary-300 bg-primary-50 dark:bg-primary-900/30 rounded-lg hover:bg-primary-100 dark:hover:bg-primary-900/50"
+                            >
+                              View new container
+                            </button>
+                          )}
+                          {!lastRecreateResult.success && lastRecreateResult.error && (
+                            <p className="mt-2 text-sm text-red-600 dark:text-red-400">{lastRecreateResult.error}</p>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 );
               })()}

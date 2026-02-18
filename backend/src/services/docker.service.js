@@ -215,10 +215,11 @@ class DockerService {
    * Pull the container's image and recreate the container so it uses the new image (same name and settings).
    * @returns {Promise<{ success: boolean, message?: string, error?: string }>}
    */
-  async pullAndRecreateContainer(server, containerId) {
+  async pullAndRecreateContainer(server, containerId, options = {}) {
     const steps = [];
     const addStep = (name, success, detail = null) => {
       steps.push({ step: name, success: !!success, detail: detail || undefined });
+      if (options.onStep) options.onStep(name, !!success, detail || undefined);
     };
     try {
       const details = await this.getContainerDetails(server, containerId);
@@ -241,6 +242,24 @@ class DockerService {
       }
 
       const tempName = `${name}-new-${Date.now()}`;
+
+      // Preserve mounts: prefer HostConfig.Binds; fallback to building from top-level Mounts (bind mounts store config/settings)
+      let binds = details.HostConfig?.Binds;
+      if (!binds || !Array.isArray(binds) || binds.length === 0) {
+        const topMounts = details.Mounts;
+        if (topMounts && Array.isArray(topMounts) && topMounts.length > 0) {
+          binds = topMounts.map((m) => {
+            const src = m.Source || m.Name || '';
+            const dst = m.Destination || m.Target || '';
+            const mode = m.RW === false ? 'ro' : 'rw';
+            return src && dst ? `${src}:${dst}:${mode}` : null;
+          }).filter(Boolean);
+        }
+      }
+      if (!binds || binds.length === 0) {
+        binds = null;
+      }
+
       const createBody = {
         Image: imageRef,
         Cmd: details.Config?.Cmd || null,
@@ -250,7 +269,7 @@ class DockerService {
         Labels: details.Config?.Labels || null,
         Hostname: details.Config?.Hostname || null,
         HostConfig: {
-          Binds: details.HostConfig?.Binds || null,
+          Binds: binds,
           PortBindings: details.HostConfig?.PortBindings || null,
           RestartPolicy: details.HostConfig?.RestartPolicy || null,
           NetworkMode: details.HostConfig?.NetworkMode || null,
@@ -333,6 +352,144 @@ class DockerService {
     } catch (error) {
       logger.debug('pullAndRecreateContainer failed:', error.message);
       addStep('Update process', false, error.message);
+      return { success: false, error: error.message, steps };
+    }
+  }
+
+  /**
+   * Recreate the container with the same image and settings (mounts, ports, env, etc.) without pulling.
+   * Use to fix missing mounts or refresh the container when there is no image update.
+   */
+  async recreateContainer(server, containerId, options = {}) {
+    const steps = [];
+    const addStep = (name, success, detail = null) => {
+      steps.push({ step: name, success: !!success, detail: detail || undefined });
+      if (options.onStep) options.onStep(name, !!success, detail || undefined);
+    };
+    try {
+      const details = await this.getContainerDetails(server, containerId);
+      const imageRef = details.Config?.Image || details.Image || '';
+      const name = (details.Name || '').replace(/^\//, '');
+      if (!imageRef) {
+        addStep('Validate container', false, 'No image reference');
+        return { success: false, error: 'Could not get container image', steps };
+      }
+      if (!name) {
+        addStep('Validate container', false, 'No container name');
+        return { success: false, error: 'Could not get container name', steps };
+      }
+      addStep('Validate container', true, `"${name}" using ${imageRef}`);
+
+      const tempName = `${name}-new-${Date.now()}`;
+
+      let binds = details.HostConfig?.Binds;
+      if (!binds || !Array.isArray(binds) || binds.length === 0) {
+        const topMounts = details.Mounts;
+        if (topMounts && Array.isArray(topMounts) && topMounts.length > 0) {
+          binds = topMounts.map((m) => {
+            const src = m.Source || m.Name || '';
+            const dst = m.Destination || m.Target || '';
+            const mode = m.RW === false ? 'ro' : 'rw';
+            return src && dst ? `${src}:${dst}:${mode}` : null;
+          }).filter(Boolean);
+        }
+      }
+      if (!binds || binds.length === 0) {
+        binds = null;
+      }
+
+      const createBody = {
+        Image: imageRef,
+        Cmd: details.Config?.Cmd || null,
+        Entrypoint: details.Config?.Entrypoint || null,
+        Env: details.Config?.Env || null,
+        WorkingDir: details.Config?.WorkingDir || null,
+        Labels: details.Config?.Labels || null,
+        Hostname: details.Config?.Hostname || null,
+        HostConfig: {
+          Binds: binds,
+          PortBindings: details.HostConfig?.PortBindings || null,
+          RestartPolicy: details.HostConfig?.RestartPolicy || null,
+          NetworkMode: details.HostConfig?.NetworkMode || null,
+          Mounts: details.HostConfig?.Mounts || null,
+          Links: details.HostConfig?.Links || null,
+          ExtraHosts: details.HostConfig?.ExtraHosts || null,
+        },
+      };
+      const payload = JSON.stringify(createBody);
+      const b64 = Buffer.from(payload, 'utf8').toString('base64');
+
+      const createCmd = `echo ${b64} | base64 -d > /tmp/dockerfleet-create.json && curl -s -X POST --unix-socket /var/run/docker.sock -H "Content-Type: application/json" -d @/tmp/dockerfleet-create.json "http://localhost/v1.44/containers/create?name=${tempName}"`;
+      const createResult = await sshService.executeCommand(server, createCmd, { allowFailure: true, timeout: 15000 });
+      await sshService.executeCommand(server, 'rm -f /tmp/dockerfleet-create.json', { allowFailure: true });
+
+      let createResp = null;
+      try {
+        createResp = JSON.parse(createResult.stdout.trim());
+      } catch (e) {
+        createResp = {};
+      }
+      if (createResult.code !== 0 || !createResult.stdout.trim()) {
+        const errMsg = (createResult.stderr || createResult.stdout || '').trim() || 'Create failed';
+        try {
+          const errJson = JSON.parse(errMsg);
+          addStep('Create new container', false, errJson.message || errMsg);
+          return { success: false, error: errJson.message || errMsg, steps };
+        } catch (e) {
+          addStep('Create new container', false, errMsg);
+          return { success: false, error: errMsg, steps };
+        }
+      }
+      if (createResp.message && !createResp.Id && !createResp.id) {
+        addStep('Create new container', false, createResp.message);
+        return { success: false, error: createResp.message + ' (original container was not changed)', steps };
+      }
+
+      const newContainerId = createResp.Id || createResp.id;
+      if (!newContainerId || typeof newContainerId !== 'string') {
+        addStep('Create new container', false, 'No container ID in response');
+        return { success: false, error: 'Create did not return a container ID; original container was not changed', steps };
+      }
+      addStep('Create new container', true, `ID ${newContainerId.substring(0, 12)}`);
+
+      const verifyResult = await sshService.executeCommand(server, `docker inspect -f '{{.Id}}' ${newContainerId}`, { allowFailure: true, timeout: 5000 });
+      if (verifyResult.code !== 0 || !verifyResult.stdout.trim()) {
+        await sshService.executeCommand(server, `docker rm -f '${newContainerId}'`, { allowFailure: true });
+        addStep('Verify new container', false, 'Container not found after create');
+        return { success: false, error: 'New container could not be verified; original container was not changed', steps };
+      }
+      addStep('Verify new container', true, 'New container exists');
+
+      const stopResult = await this.stopContainer(server, containerId);
+      addStep('Stop old container', stopResult.success, stopResult.success ? containerId.substring(0, 12) : (stopResult.message || 'Stop failed'));
+      if (!stopResult.success) {
+        await sshService.executeCommand(server, `docker rm -f '${newContainerId}'`, { allowFailure: true });
+        return { success: false, error: 'Failed to stop existing container; new container was removed', steps };
+      }
+      const rmResult = await sshService.executeCommand(server, `docker rm ${containerId}`, { allowFailure: true });
+      addStep('Remove old container', rmResult.code === 0, rmResult.code === 0 ? 'Removed' : (rmResult.stderr || rmResult.stdout || 'Failed'));
+      if (rmResult.code !== 0) {
+        await sshService.executeCommand(server, `docker rm -f '${newContainerId}'`, { allowFailure: true });
+        return { success: false, error: 'Failed to remove existing container; new container was removed', steps };
+      }
+
+      const renameTarget = (name || '').replace(/'/g, "'\\''");
+      const renameResult = await sshService.executeCommand(server, `docker rename '${newContainerId}' '${renameTarget}'`, { allowFailure: true });
+      addStep('Rename new container', renameResult.code === 0, renameResult.code === 0 ? `"${name}"` : ((renameResult.stderr || renameResult.stdout || '').trim() || 'Failed'));
+      if (renameResult.code !== 0) {
+        const errDetail = (renameResult.stderr || renameResult.stdout || '').trim();
+        return { success: false, error: errDetail ? `Failed to rename new container: ${errDetail}. You may have a container with ID ${newContainerId.substring(0, 12)} that you can rename or remove manually.` : 'Failed to rename new container', steps };
+      }
+
+      const startResult = await this.startContainer(server, name);
+      addStep('Start new container', startResult.success, startResult.success ? 'Running' : (startResult.message || 'Start failed'));
+      if (!startResult.success) {
+        return { success: false, error: 'Container recreated but start failed: ' + (startResult.message || ''), newContainerId, steps };
+      }
+      return { success: true, message: `Container "${name}" recreated successfully with the same settings.`, newContainerId, steps };
+    } catch (error) {
+      logger.debug('recreateContainer failed:', error.message);
+      addStep('Recreate process', false, error.message);
       return { success: false, error: error.message, steps };
     }
   }

@@ -5,6 +5,7 @@ const {
   getContainerDetails,
   getContainerUpdateStatus,
   pullAndRecreateContainer,
+  recreateContainer,
   getContainerLogs,
   startContainer,
   stopContainer,
@@ -24,6 +25,7 @@ router.use(authenticate);
 router.get('/:serverId/containers', getContainers);
 router.get('/:serverId/containers/:containerId/update-status', getContainerUpdateStatus);
 router.post('/:serverId/containers/:containerId/pull-and-update', pullAndRecreateContainer);
+router.post('/:serverId/containers/:containerId/recreate', recreateContainer);
 router.get('/:serverId/containers/:containerId/logs', getContainerLogs);
 router.get('/:serverId/containers/:containerId/stats', getContainerStats);
 router.get('/:serverId/containers/:containerId/snapshots', getSnapshots);

@@ -11,6 +11,8 @@ export const containersService = {
     api.get(`/api/v1/servers/${serverId}/containers/${containerId}/update-status`, { timeout: 30000 }),
   pullAndUpdate: (serverId, containerId) =>
     api.post(`/api/v1/servers/${serverId}/containers/${containerId}/pull-and-update`, {}, { timeout: 120000 }),
+  recreate: (serverId, containerId) =>
+    api.post(`/api/v1/servers/${serverId}/containers/${containerId}/recreate`, {}, { timeout: 120000 }),
   getLogs: (serverId, containerId, params = {}) => {
     const queryParams = new URLSearchParams(params).toString();
     return api.get(`/api/v1/servers/${serverId}/containers/${containerId}/logs?${queryParams}`);
