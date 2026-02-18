@@ -23,18 +23,46 @@ const ServerDetails = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serverId, showAll]);
 
+  // Separate effect for live host info updates
+  useEffect(() => {
+    if (!serverId) return;
+
+    // Fetch host info immediately
+    const fetchHostInfo = async () => {
+      try {
+        const hostInfoResponse = await systemService.getHostInfo(serverId).catch((error) => {
+          console.error('Failed to fetch host info:', error);
+          return { data: { hostInfo: null } };
+        });
+        if (hostInfoResponse.data.hostInfo) {
+          setHostInfo(hostInfoResponse.data.hostInfo);
+        }
+      } catch (error) {
+        console.error('Error fetching host info:', error);
+      }
+    };
+
+    // Initial fetch
+    fetchHostInfo();
+
+    // Set up polling interval for live updates (every 3 seconds)
+    const hostInfoInterval = setInterval(() => {
+      fetchHostInfo();
+    }, 3000);
+
+    return () => {
+      clearInterval(hostInfoInterval);
+    };
+  }, [serverId]);
+
   const fetchData = async (showLoading = true) => {
     try {
       if (showLoading) setLoading(true);
       else setRefreshing(true);
 
-      const [serverResponse, containersResponse, hostInfoResponse] = await Promise.all([
+      const [serverResponse, containersResponse] = await Promise.all([
         serversService.getById(serverId),
         containersService.getAll(serverId, { all: showAll ? 'true' : 'false' }),
-        systemService.getHostInfo(serverId).catch((error) => {
-          console.error('Failed to fetch host info:', error);
-          return { data: { hostInfo: null } };
-        }),
       ]);
 
       setServer(serverResponse.data.server);
@@ -53,7 +81,9 @@ const ServerDetails = () => {
       });
       
       setContainers(parsedContainers);
-      setHostInfo(hostInfoResponse.data.hostInfo);
+      
+      // Host info is now fetched separately in its own effect for live updates
+      // No need to fetch here as it's handled by the separate polling effect
     } catch (error) {
       console.error('Failed to fetch data:', error);
     } finally {
@@ -124,6 +154,34 @@ const ServerDetails = () => {
     return name.includes(search) || image.includes(search) || id.includes(search);
   });
 
+  // Helper function to parse memory values (e.g., "3.3Gi", "15Gi")
+  const parseMemoryValue = (value) => {
+    if (!value || value === 'Unknown') return 0;
+    const match = value.toString().match(/^([\d.]+)\s*([KMGT]?i?B?)$/i);
+    if (!match) return 0;
+    const num = parseFloat(match[1]);
+    const unit = match[2].toUpperCase();
+    const multipliers = { 'B': 1, 'KB': 1024, 'MB': 1024 ** 2, 'GB': 1024 ** 3, 'TB': 1024 ** 4, 'KIB': 1024, 'MIB': 1024 ** 2, 'GIB': 1024 ** 3, 'TIB': 1024 ** 4 };
+    return num * (multipliers[unit] || 1);
+  };
+
+  // Helper function to parse CPU percentage (e.g., "1.0%")
+  const parseCPUPercent = (value) => {
+    if (!value || value === 'Unknown') return 0;
+    const match = value.toString().match(/([\d.]+)/);
+    return match ? parseFloat(match[1]) : 0;
+  };
+
+  // Calculate memory usage percentage
+  const memoryUsage = hostInfo ? (() => {
+    const total = parseMemoryValue(hostInfo.totalMemory);
+    const used = parseMemoryValue(hostInfo.usedMemory);
+    return total > 0 ? (used / total) * 100 : 0;
+  })() : 0;
+
+  // Get CPU usage percentage
+  const cpuUsage = hostInfo ? parseCPUPercent(hostInfo.cpuUsage) : 0;
+
   // Calculate stats with better parsing
   const stats = {
     total: containers.length,
@@ -137,6 +195,49 @@ const ServerDetails = () => {
       const status = (containerData.Status || containerData['.Status'] || containerData.status || '').toLowerCase();
       return !status.includes('up') && !status.includes('running') && !status.startsWith('up');
     }).length,
+  };
+
+  // Linear progress gauge component - only animates the fill, not the entire component
+  const LinearGauge = ({ value, max, label, unit, color }) => {
+    const percentage = Math.min((value / max) * 100, 100);
+    
+    const getColor = () => {
+      if (percentage < 50) return color || '#10b981'; // green
+      if (percentage < 80) return '#f59e0b'; // yellow
+      return '#ef4444'; // red
+    };
+
+    const gaugeColor = getColor();
+
+    return (
+      <div className="flex flex-col items-center justify-center p-4 w-full">
+        <div className="w-full">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm font-semibold text-gray-700 dark:text-gray-300">{label}</span>
+            <span 
+              className="text-2xl font-bold transition-colors duration-300" 
+              style={{ color: gaugeColor }}
+            >
+              {value.toFixed(1)}%
+            </span>
+          </div>
+          <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-6 overflow-hidden">
+            <div
+              className="h-full rounded-full transition-all duration-500 ease-out"
+              style={{
+                width: `${percentage}%`,
+                backgroundColor: gaugeColor,
+              }}
+            />
+          </div>
+          {unit && (
+            <div className="text-xs text-gray-600 dark:text-gray-400 mt-2 text-center">
+              {unit}
+            </div>
+          )}
+        </div>
+      </div>
+    );
   };
 
   if (loading) {
@@ -181,6 +282,49 @@ const ServerDetails = () => {
       {hostInfo && !hostInfo.error && (
         <div className="mb-6 bg-white dark:bg-gray-800 shadow dark:shadow-gray-700 rounded-lg p-6">
           <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">Host Information</h2>
+          
+          {/* CPU and Memory Gauges */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 mb-6 pb-6 border-b border-gray-200 dark:border-gray-700">
+            <div className="bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-900/20 dark:to-blue-800/20 rounded-lg p-6">
+              <LinearGauge 
+                value={cpuUsage} 
+                max={100} 
+                label="CPU Usage" 
+                color="#3b82f6"
+              />
+              <div className="mt-4 space-y-1">
+                <div className="text-xs text-gray-600 dark:text-gray-400">
+                  Current: {hostInfo.cpuUsage || 'Unknown'}
+                </div>
+                {hostInfo.loadAverage && (
+                  <div className="text-xs text-gray-500 dark:text-gray-500">
+                    Load Average: {hostInfo.loadAverage}
+                  </div>
+                )}
+              </div>
+            </div>
+            
+            <div className="bg-gradient-to-br from-purple-50 to-purple-100 dark:from-purple-900/20 dark:to-purple-800/20 rounded-lg p-6">
+              <LinearGauge 
+                value={memoryUsage} 
+                max={100} 
+                label="Memory Usage" 
+                color="#8b5cf6"
+              />
+              <div className="mt-4 space-y-1">
+                <div className="text-xs text-gray-600 dark:text-gray-400">
+                  {hostInfo.usedMemory || 'Unknown'} / {hostInfo.totalMemory || 'Unknown'}
+                </div>
+                {hostInfo.availableMemory && (
+                  <div className="text-xs text-gray-500 dark:text-gray-500">
+                    Available: {hostInfo.availableMemory}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Detailed Host Information Grid */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <div>
               <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Hostname</dt>
