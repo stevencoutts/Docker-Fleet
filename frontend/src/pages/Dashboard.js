@@ -588,44 +588,17 @@ const Dashboard = () => {
                       <div className="ml-5 w-0 flex-1">
                         <dl>
                           <dt className="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">
-                            {(() => {
-                              // Show server name as fallback, but prefer FQDN if available
-                              const hostname = hostInfos[server.id]?.hostname;
-                              const serverHost = server.host;
-                              
-                              // If hostname is available and not 'Unknown', use it (should be FQDN from backend)
-                              if (hostname && hostname !== 'Unknown') {
-                                return hostname;
-                              }
-                              
-                              // If no hostname from hostInfo, check if server.host is an FQDN (contains dots and not an IP)
-                              if (serverHost.includes('.') && !/^\d+\.\d+\.\d+\.\d+$/.test(serverHost)) {
-                                return serverHost;
-                              }
-                              
-                              // Fallback to server name
-                              return server.name;
-                            })()}
+                            {/* Always show the friendly name the user entered (e.g. plex.couttsnet.com) */}
+                            {server.name || server.host}
                           </dt>
                           <dd className="text-lg font-medium text-gray-900 dark:text-gray-100">
-                            {(() => {
-                              // Prefer FQDN hostname from hostInfo if available
-                              const hostname = hostInfos[server.id]?.hostname;
-                              const serverHost = server.host;
-                              
-                              // If hostname is available and not 'Unknown', use it (should be FQDN from backend)
-                              if (hostname && hostname !== 'Unknown') {
-                                return hostname;
-                              }
-                              
-                              // If no hostname from hostInfo, check if server.host is an FQDN (contains dots and not an IP)
-                              if (serverHost.includes('.') && !/^\d+\.\d+\.\d+\.\d+$/.test(serverHost)) {
-                                return serverHost;
-                              }
-                              
-                              // Default: show server.host (which might be IP or FQDN)
-                              return serverHost;
-                            })()}
+                            {/* Show name and IP together for quick reference, without flickering */}
+                            {server.name || server.host}
+                            {server.host && (
+                              <span className="text-xs text-gray-500 dark:text-gray-400 ml-2">
+                                ({server.host})
+                              </span>
+                            )}
                           </dd>
                         </dl>
                       </div>
@@ -641,13 +614,9 @@ const Dashboard = () => {
                   <div className="mt-4 space-y-2">
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-gray-500 dark:text-gray-400">Containers</span>
-                      {isLoadingServer ? (
-                        <span className="text-gray-400 dark:text-gray-500 text-xs">Loading...</span>
-                      ) : (
-                        <span className="font-medium text-gray-900 dark:text-gray-100">
-                          {runningCount} / {serverContainers.length} running
-                        </span>
-                      )}
+                      <span className="font-medium text-gray-900 dark:text-gray-100">
+                        {runningCount} / {serverContainers.length} running
+                      </span>
                     </div>
                     {serverContainers.length > 0 && (
                       <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
