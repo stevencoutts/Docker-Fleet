@@ -571,11 +571,18 @@ const Dashboard = () => {
               <Link
                 key={server.id}
                 to={`/servers/${server.id}`}
-                className={`bg-white dark:bg-gray-800 overflow-hidden shadow rounded-lg hover:shadow-lg transition-all duration-200 transform hover:-translate-y-1 ${
+                className={`bg-white dark:bg-gray-800 overflow-hidden shadow rounded-lg hover:shadow-lg transition-all duration-200 transform hover:-translate-y-1 relative ${
                   serverIssues > 0 ? 'ring-2 ring-yellow-400 dark:ring-yellow-500' : ''
                 }`}
               >
                 <div className="p-5">
+                  {serverIssues > 0 && (
+                    <div className="absolute top-3 right-3">
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">
+                        {serverIssues} issue{serverIssues !== 1 ? 's' : ''}
+                      </span>
+                    </div>
+                  )}
                   <div className="flex items-center justify-between">
                     <div className="flex items-center">
                       <div className="flex-shrink-0">
@@ -603,13 +610,6 @@ const Dashboard = () => {
                         </dl>
                       </div>
                     </div>
-                    {serverIssues > 0 && (
-                      <div className="flex-shrink-0">
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">
-                          {serverIssues} issue{serverIssues !== 1 ? 's' : ''}
-                        </span>
-                      </div>
-                    )}
                   </div>
                   <div className="mt-4 space-y-2">
                     <div className="flex items-center justify-between text-sm">
