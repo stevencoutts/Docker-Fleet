@@ -76,7 +76,7 @@ A production-ready full-stack web application for managing Docker containers acr
 1. **Clone the repository**
    ```bash
    git clone <repository-url>
-   cd dockerMgmr
+   cd dockerfleet-manager  # or your project directory name
    ```
 
 2. **Set up environment variables**
@@ -190,7 +190,7 @@ A production-ready full-stack web application for managing Docker containers acr
 ## 📁 Project Structure
 
 ```
-dockerMgmr/
+dockerfleet-manager/  # or your project directory name
 ├── backend/
 │   ├── src/
 │   │   ├── config/          # Configuration files
