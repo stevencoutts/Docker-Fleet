@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
 
@@ -105,16 +105,6 @@ const Login = () => {
             </button>
           </div>
         </form>
-        {isSetup && (
-          <div className="text-center text-sm">
-            <p className="text-gray-600">
-              Don't have an account?{' '}
-              <Link to="/register" className="font-medium text-primary-600 hover:text-primary-500">
-                Register here
-              </Link>
-            </p>
-          </div>
-        )}
       </div>
     </div>
   );
