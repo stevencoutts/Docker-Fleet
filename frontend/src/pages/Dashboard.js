@@ -304,7 +304,7 @@ const Dashboard = () => {
     runUpdateCheck();
   };
 
-  // Auto-run update check when dashboard has container data, then every 5 minutes
+  // Auto-run update check when dashboard has container data, then every 6 hours
   useEffect(() => {
     if (containersVersion === 0) return;
 
@@ -317,7 +317,7 @@ const Dashboard = () => {
     if (!hasRunInitialUpdateCheckRef.current) {
       hasRunInitialUpdateCheckRef.current = true;
       runUpdateCheck();
-      const intervalMs = 5 * 60 * 1000;
+      const intervalMs = 6 * 60 * 60 * 1000; // 6 hours
       updateCheckIntervalRef.current = setInterval(runUpdateCheck, intervalMs);
     }
   }, [containersVersion]);

@@ -838,19 +838,56 @@ const ContainerDetails = () => {
                             <p className="text-sm text-gray-700 dark:text-gray-300">
                               {updateStatus.pinned && <span className="text-amber-600 dark:text-amber-400">Pinned – updates not suggested.</span>}
                               {updateStatus.updateAvailable && !updateStatus.pinned && (
-                                <span className="text-green-600 dark:text-green-400 font-medium">Update available</span>
+                                <span className="text-green-600 dark:text-green-400 font-medium">
+                                  Update available
+                                  {updateStatus.updateAvailableByVersion && updateStatus.newestTag && (
+                                    <span className="font-normal">
+                                      {updateStatus.track === 'dev' ? ` (newer dev build: ${updateStatus.newestTag})` : ` (newer version: ${updateStatus.newestTag})`}
+                                    </span>
+                                  )}
+                                </span>
                               )}
-                              {!updateStatus.updateAvailable && !updateStatus.pinned && !updateStatus.error && (
+                              {!updateStatus.updateAvailable && !updateStatus.pinned && (!updateStatus.error || (updateStatus.resolvedVersion && updateStatus.newestTag)) && (
                                 <span className="text-gray-600 dark:text-gray-400">Up to date</span>
                               )}
                               {updateStatus.reason && <span className="text-gray-500 dark:text-gray-400"> – {updateStatus.reason}</span>}
-                              {updateStatus.error && <span className="text-red-600 dark:text-red-400"> – {updateStatus.error}</span>}
+                              {updateStatus.error && !(updateStatus.resolvedVersion && updateStatus.newestTag) && (
+                                <span className="text-red-600 dark:text-red-400"> – {updateStatus.error}</span>
+                              )}
                             </p>
-                            {!updateStatus.pinned && !updateStatus.error && (updateStatus.currentDigestShort || updateStatus.imageRef) && (
+                            {!updateStatus.pinned && (updateStatus.currentTag || updateStatus.resolvedVersion || updateStatus.newestTag) && (
+                              <div className="text-xs font-mono text-gray-600 dark:text-gray-400 mb-2 bg-gray-50 dark:bg-gray-900/50 rounded p-3">
+                                {updateStatus.currentTag && (
+                                  <div>
+                                    <span className="text-gray-500 dark:text-gray-500">Current tag: </span>
+                                    <span className="text-gray-800 dark:text-gray-200 font-medium">{updateStatus.currentTag}</span>
+                                  </div>
+                                )}
+                                {updateStatus.resolvedVersion && (
+                                  <div className={updateStatus.currentTag ? 'mt-1' : ''}>
+                                    <span className="text-gray-500 dark:text-gray-500">Resolved version: </span>
+                                    <span className="text-gray-800 dark:text-gray-200 font-medium">{updateStatus.resolvedVersion}</span>
+                                    <span className="text-gray-500 dark:text-gray-500 ml-1">(from image labels)</span>
+                                  </div>
+                                )}
+                                {updateStatus.newestTag && (
+                                  <div className={updateStatus.currentTag ? 'mt-1' : ''}>
+                                    <span className="text-gray-500 dark:text-gray-500">
+                                      {updateStatus.track === 'dev' ? 'Newest dev build: ' : 'Newest version: '}
+                                    </span>
+                                    <span className="text-gray-800 dark:text-gray-200 font-medium">{updateStatus.newestTag}</span>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                            {!updateStatus.pinned && !updateStatus.error && (updateStatus.currentDigestShort || updateStatus.imageRef || updateStatus.currentTag) && (
                               <div className="text-xs font-mono text-gray-600 dark:text-gray-400 space-y-1 bg-gray-50 dark:bg-gray-900/50 rounded p-3">
                                 <div>
                                   <span className="text-gray-500 dark:text-gray-500">Current: </span>
                                   <span className="text-gray-800 dark:text-gray-200">{updateStatus.imageRef || image}</span>
+                                  {updateStatus.currentTag && (
+                                    <span className="text-gray-600 dark:text-gray-300"> (tag: <span className="font-medium">{updateStatus.currentTag}</span>)</span>
+                                  )}
                                   {updateStatus.currentDigestShort && (
                                     <span className="text-gray-500 dark:text-gray-500"> @ <span title={updateStatus.currentDigest}>{updateStatus.currentDigestShort}</span></span>
                                   )}
@@ -891,7 +928,7 @@ const ContainerDetails = () => {
                             >
                               {updateStatusLoading ? 'Checking…' : 'Check for update'}
                             </button>
-                            {updateStatus?.updateAvailable && (
+                            {(updateStatus?.updateAvailable || updateStatus?.error) && (
                               <button
                                 type="button"
                                 onClick={async () => {
@@ -927,7 +964,7 @@ const ContainerDetails = () => {
                                 disabled={pullAndUpdateLoading || updateStatusLoading}
                                 className="px-3 py-1.5 text-sm font-medium text-green-700 dark:text-green-300 bg-green-50 dark:bg-green-900/30 rounded-lg hover:bg-green-100 dark:hover:bg-green-900/50 disabled:opacity-50"
                               >
-                                {pullAndUpdateLoading ? 'Pulling & updating…' : 'Pull & update'}
+                                {pullAndUpdateLoading ? 'Pulling & updating…' : updateStatus?.updateAvailable ? 'Pull & update' : 'Pull & update anyway'}
                               </button>
                             )}
                           </div>

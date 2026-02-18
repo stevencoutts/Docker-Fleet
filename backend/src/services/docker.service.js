@@ -189,11 +189,33 @@ class DockerService {
       }
 
       const localDigest = repoDigests[0].includes('@') ? repoDigests[0].split('@')[1] : repoDigests[0];
-      const result = await registryService.checkUpdateAvailable({ localDigest, imageRef });
+      const parsed = registryService.parseImageRef(imageRef);
+      const labelsCmd = `docker image inspect ${imageId} --format '{{json .Config.Labels}}'`;
+      const labelsResult = await sshService.executeCommand(server, labelsCmd, { allowFailure: true, timeout: 5000 });
+      let resolvedVersion = null;
+      if (labelsResult.stdout && labelsResult.code === 0) {
+        try {
+          const labels = JSON.parse(labelsResult.stdout.trim());
+          if (labels && typeof labels === 'object') {
+            const raw = labels.build_version || labels['org.opencontainers.image.version'] || labels.VERSION || labels.version || null;
+            if (raw != null) {
+              resolvedVersion = registryService.extractVersionFromLabel(String(raw)) || String(raw);
+            }
+          }
+        } catch (e) { /* ignore */ }
+      }
+      const [result, tagsResult] = await Promise.all([
+        registryService.checkUpdateAvailable({ localDigest, imageRef }),
+        !parsed.digestPinned && parsed.registry && parsed.path
+          ? registryService.listTags(parsed.registry, parsed.path)
+          : Promise.resolve(null),
+      ]);
       const short = (d) => (d && d.replace(/^sha256:/i, '').substring(0, 12)) || '';
-      return {
+      const out = {
         updateAvailable: result.updateAvailable,
         imageRef,
+        currentTag: parsed.tag || undefined,
+        track: (parsed.tag && /^dev($|[-_])/.test(parsed.tag)) ? 'dev' : 'release',
         currentDigest: localDigest,
         availableDigest: result.remoteDigest,
         currentDigestShort: short(localDigest),
@@ -201,6 +223,29 @@ class DockerService {
         remoteDigest: result.remoteDigest,
         error: result.error,
       };
+      if (resolvedVersion) out.resolvedVersion = resolvedVersion;
+      if (tagsResult && !tagsResult.error && Array.isArray(tagsResult.tags) && tagsResult.tags.length > 0) {
+        out.availableTags = tagsResult.tags;
+        const newest = registryService.getNewestVersionTag(tagsResult.tags);
+        if (newest) {
+          out.newestTag = newest.tag;
+          out.newestVersion = `${newest.version.major}.${newest.version.minor}.${newest.version.patch}-r${newest.version.r}${newest.version.ls ? `-ls${newest.version.ls}` : ''}`;
+          const currentTag = parsed.tag || '';
+          let currentParsed = null;
+          if (currentTag && currentTag !== 'latest' && currentTag !== 'dev' && !/^dev[-_]/.test(currentTag)) {
+            currentParsed = registryService.parseVersionFromTag(currentTag);
+          } else if (resolvedVersion && (currentTag === 'latest' || currentTag === 'dev' || /^dev[-_]/.test(currentTag))) {
+            currentParsed = registryService.parseVersionFromString(resolvedVersion);
+          }
+          if (currentParsed && registryService.compareVersionParts(currentParsed, newest.version) < 0) {
+            out.updateAvailableByVersion = true;
+          }
+          if (out.updateAvailableByVersion) {
+            out.updateAvailable = true;
+          }
+        }
+      }
+      return out;
     };
 
     try {
