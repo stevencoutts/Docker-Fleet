@@ -19,14 +19,36 @@ const server = http.createServer(app);
 // Trust proxy to get correct IP addresses (important for rate limiting)
 app.set('trust proxy', true);
 
-// Socket.IO setup
+// Socket.IO setup - use same CORS logic as Express
+const getCorsOrigins = () => {
+  const origins = [
+    'http://localhost:3020',
+    'http://127.0.0.1:3020',
+  ];
+  
+  // Add configured origin
+  if (config.cors.origin) {
+    origins.push(config.cors.origin);
+  }
+  
+  // Parse hostname from configured origin to allow same hostname with different ports
+  const corsOrigin = config.cors.origin || 'http://localhost:3020';
+  try {
+    const corsUrl = new URL(corsOrigin);
+    const corsHostname = corsUrl.hostname;
+    // Allow same hostname with common ports
+    origins.push(`http://${corsHostname}:3020`);
+    origins.push(`https://${corsHostname}:3020`);
+  } catch (e) {
+    // Invalid URL, skip
+  }
+  
+  return origins;
+};
+
 const io = new Server(server, {
   cors: {
-    origin: [
-      'http://localhost:3020',
-      'http://127.0.0.1:3020',
-      config.cors.origin,
-    ],
+    origin: getCorsOrigins(),
     methods: ['GET', 'POST'],
     credentials: true,
   },
@@ -44,27 +66,65 @@ app.use(cors({
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
     
-    // List of allowed origins
+    // Parse the configured CORS origin to extract hostname
+    const corsOrigin = config.cors.origin || 'http://localhost:3020';
+    let corsUrl;
+    try {
+      corsUrl = new URL(corsOrigin);
+    } catch (e) {
+      corsUrl = new URL('http://localhost:3020');
+    }
+    const corsHostname = corsUrl.hostname;
+    const corsProtocol = corsUrl.protocol;
+    
+    // List of explicitly allowed origins
     const allowedOrigins = [
       'http://localhost:3020',
       'http://127.0.0.1:3020',
       config.cors.origin,
     ];
     
-    // Check if origin is allowed
+    // Check if origin is explicitly allowed
     if (allowedOrigins.includes(origin)) {
       callback(null, true);
-    } else {
-      // For development, allow localhost and 127.0.0.1 with any port
-      if (config.env === 'development' && (
-        origin.startsWith('http://localhost:') || 
-        origin.startsWith('http://127.0.0.1:')
-      )) {
-        callback(null, true);
-      } else {
-        callback(new Error('Not allowed by CORS'));
-      }
+      return;
     }
+    
+    // Parse the request origin
+    let requestUrl;
+    try {
+      requestUrl = new URL(origin);
+    } catch (e) {
+      callback(new Error('Invalid origin'));
+      return;
+    }
+    
+    const requestHostname = requestUrl.hostname;
+    const requestProtocol = requestUrl.protocol;
+    
+    // Allow if hostname matches and protocol matches (http or https)
+    // This allows the same hostname with different ports
+    if (requestHostname === corsHostname && (requestProtocol === 'http:' || requestProtocol === 'https:')) {
+      callback(null, true);
+      return;
+    }
+    
+    // For development, allow localhost and 127.0.0.1 with any port
+    if (config.env === 'development' && (
+      origin.startsWith('http://localhost:') || 
+      origin.startsWith('http://127.0.0.1:')
+    )) {
+      callback(null, true);
+      return;
+    }
+    
+    // Allow private network IPs (192.168.x.x, 10.x.x.x) in production for internal deployments
+    if (requestHostname.match(/^(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)/)) {
+      callback(null, true);
+      return;
+    }
+    
+    callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
