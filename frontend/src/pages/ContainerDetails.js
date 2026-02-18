@@ -435,6 +435,9 @@ const ContainerDetails = () => {
   const image = container.Config?.Image || 'Unknown';
   const created = formatDate(container.Created);
   const ports = formatPorts(container.NetworkSettings?.Ports);
+  const mountsList = Array.isArray(container.Mounts) ? container.Mounts : (Array.isArray(container.mounts) ? container.mounts : []);
+  const networksObj = container.NetworkSettings?.Networks || container.networkSettings?.networks || container.Networks || {};
+  const networksList = typeof networksObj === 'object' && networksObj !== null ? Object.entries(networksObj) : [];
   const cpuPercent = stats ? calculateCPUPercent(stats) : 0;
   const memUsage = stats?.memory_stats?.usage || 0;
   const memLimit = stats?.memory_stats?.limit || 0;
@@ -818,6 +821,83 @@ const ContainerDetails = () => {
                   </div>
                 </div>
               )}
+
+              {/* Mounted storage – always show */}
+              <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+                <div className="flex items-center gap-2 mb-4">
+                  <svg className="w-5 h-5 text-primary-600 dark:text-primary-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4" />
+                  </svg>
+                  <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Mounted storage</h3>
+                  <span className="px-2 py-1 text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-full">
+                    {mountsList.length}
+                  </span>
+                </div>
+                {mountsList.length > 0 ? (
+                  <div className="space-y-2">
+                    {mountsList.map((m, idx) => {
+                      const dest = m.Destination || m.destination || '';
+                      const rw = m.RW !== undefined ? m.RW : m.rw;
+                      const mode = rw === false ? 'ro' : 'rw';
+                      const typeVal = m.Type || m.type || 'bind';
+                      const label = (typeVal === 'volume')
+                        ? (m.Name || m.name || (m.Source || m.source || '').split('/').pop() || '?')
+                        : (m.Source || m.source || '');
+                      const typeLabel = String(typeVal).toLowerCase();
+                      return (
+                        <div key={idx} className="flex items-start gap-2 p-3 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-600">
+                          <span className="px-2 py-0.5 text-xs font-medium rounded bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-200 flex-shrink-0">
+                            {typeLabel}
+                          </span>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-mono text-gray-900 dark:text-gray-100 break-all" title={label}>
+                              {label} → {dest}
+                            </p>
+                            <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Mode: {mode}</p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-sm text-gray-500 dark:text-gray-400">No volumes or bind mounts.</p>
+                )}
+              </div>
+
+              {/* Networks – always show */}
+              <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+                <div className="flex items-center gap-2 mb-4">
+                  <svg className="w-5 h-5 text-primary-600 dark:text-primary-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9a9 9 0 009 9m0 0a9 9 0 019-9" />
+                  </svg>
+                  <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Networks</h3>
+                  <span className="px-2 py-1 text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-full">
+                    {networksList.length}
+                  </span>
+                </div>
+                {networksList.length > 0 ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {networksList.map(([name, cfg]) => {
+                      const c = cfg && typeof cfg === 'object' ? cfg : {};
+                      const ip = c.IPAddress || c.ip || c.IpAddress;
+                      const gateway = c.Gateway || c.gateway;
+                      const aliases = c.Aliases || c.aliases || [];
+                      return (
+                        <div key={name} className="p-3 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-600">
+                          <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">{name}</p>
+                          {ip && <p className="text-xs font-mono text-gray-600 dark:text-gray-300 mt-1">IP: {ip}</p>}
+                          {gateway && <p className="text-xs text-gray-500 dark:text-gray-400">Gateway: {gateway}</p>}
+                          {Array.isArray(aliases) && aliases.length > 0 && (
+                            <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Aliases: {aliases.join(', ')}</p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-sm text-gray-500 dark:text-gray-400">No network information available.</p>
+                )}
+              </div>
 
               {/* Environment Variables */}
               {container.Config?.Env && container.Config.Env.length > 0 && (

@@ -42,49 +42,67 @@ class DockerService {
       }
     }
 
-    // Batch fetch restart policies for all containers at once
+    // Batch fetch restart policies, mounts, and networks: docker inspect with multiple IDs returns a single JSON array
     if (containerIds.length > 0) {
       try {
-        // Use docker inspect with multiple IDs to get all restart policies in one command
         const idsString = containerIds.join(' ');
-        const inspectCommand = `docker inspect ${idsString} --format '{{.Id}}|{{.HostConfig.RestartPolicy.Name}}'`;
+        const inspectCommand = `docker inspect ${idsString}`;
         const inspectResult = await sshService.executeCommand(server, inspectCommand, { allowFailure: true });
-        
-        if (inspectResult && inspectResult.stdout) {
-          const policyLines = inspectResult.stdout.trim().split('\n').filter(line => line.trim());
-          const policyMap = {};
-          
-          for (const policyLine of policyLines) {
-            const [id, policy] = policyLine.split('|');
-            if (id && policy) {
-              // Docker inspect returns full ID, but we need to match with short ID
-              const shortId = id.substring(0, 12);
-              policyMap[shortId] = policy.trim() || 'no';
-            }
+
+        if (inspectResult && inspectResult.code === 0 && inspectResult.stdout && inspectResult.stdout.trim()) {
+          let inspectArray = [];
+          try {
+            const parsed = JSON.parse(inspectResult.stdout.trim());
+            inspectArray = Array.isArray(parsed) ? parsed : [parsed];
+          } catch (e) {
+            logger.debug('Failed to parse docker inspect JSON array:', e.message);
           }
-          
-          // Update containers with restart policies
+
+          const detailsMap = {};
+          for (const data of inspectArray) {
+            const fullId = data.Id || data.ID || '';
+            const shortId = fullId.substring(0, 12);
+            const policy = (data.HostConfig && data.HostConfig.RestartPolicy && data.HostConfig.RestartPolicy.Name) ? data.HostConfig.RestartPolicy.Name : 'no';
+            const mounts = Array.isArray(data.Mounts) ? data.Mounts : [];
+            const networks = (data.NetworkSettings && data.NetworkSettings && data.NetworkSettings.Networks && typeof data.NetworkSettings.Networks === 'object') ? data.NetworkSettings.Networks : {};
+            detailsMap[shortId] = { RestartPolicy: policy, Mounts: mounts, Networks: networks };
+          }
+
           containers.forEach(container => {
-            const shortId = container.ID.substring(0, 12);
-            if (policyMap[shortId]) {
-              container.RestartPolicy = policyMap[shortId];
+            const shortId = (container.ID || '').substring(0, 12);
+            const details = detailsMap[shortId];
+            if (details) {
+              container.RestartPolicy = details.RestartPolicy;
+              container.Mounts = details.Mounts;
+              container.Networks = details.Networks;
             }
           });
-        }
-      } catch (error) {
-        logger.debug('Failed to batch fetch restart policies:', error.message);
-        // Fallback: try individual fetches for first few containers only
-        for (let i = 0; i < Math.min(containers.length, 5); i++) {
+        } else {
+          // Fallback: restart policy only via format
           try {
-            const inspectCommand = `docker inspect ${containers[i].ID} --format '{{.HostConfig.RestartPolicy.Name}}'`;
+            const idsString = containerIds.join(' ');
+            const inspectCommand = `docker inspect ${idsString} --format '{{.Id}}|{{.HostConfig.RestartPolicy.Name}}'`;
             const inspectResult = await sshService.executeCommand(server, inspectCommand, { allowFailure: true });
             if (inspectResult && inspectResult.stdout) {
-              containers[i].RestartPolicy = inspectResult.stdout.trim() || 'no';
+              const policyLines = inspectResult.stdout.trim().split('\n').filter(line => line.trim());
+              const policyMap = {};
+              for (const policyLine of policyLines) {
+                const [id, policy] = policyLine.split('|');
+                if (id && policy) {
+                  policyMap[id.substring(0, 12)] = policy.trim() || 'no';
+                }
+              }
+              containers.forEach(container => {
+                const shortId = container.ID.substring(0, 12);
+                if (policyMap[shortId]) container.RestartPolicy = policyMap[shortId];
+              });
             }
-          } catch (e) {
-            // Ignore individual failures
+          } catch (fallbackErr) {
+            logger.debug('Fallback restart policy fetch failed:', fallbackErr.message);
           }
         }
+      } catch (error) {
+        logger.debug('Failed to batch fetch container details:', error.message);
       }
     }
 
