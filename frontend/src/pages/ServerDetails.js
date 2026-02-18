@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { serversService } from '../services/servers.service';
 import { containersService } from '../services/containers.service';
 import { systemService } from '../services/system.service';
@@ -9,6 +9,7 @@ import GroupingModal from '../components/GroupingModal';
 
 const ServerDetails = () => {
   const { serverId } = useParams();
+  const navigate = useNavigate();
   const [server, setServer] = useState(null);
   const [containers, setContainers] = useState([]);
   const [hostInfo, setHostInfo] = useState(null);
@@ -581,6 +582,28 @@ const ServerDetails = () => {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 14M20 20v-5h-.582m-15.356 2a8.001 8.001 0 0015.356-2m0 0V9M20 4v5" />
               </svg>
               {refreshing ? 'Refreshing...' : 'Refresh'}
+            </button>
+            <button
+              onClick={async () => {
+                const serverName = hostInfo?.hostname && hostInfo.hostname !== 'Unknown'
+                  ? hostInfo.hostname
+                  : (server.host.includes('.') && !/^\d+\.\d+\.\d+\.\d+$/.test(server.host) ? server.host : server.name);
+                
+                if (window.confirm(`Are you sure you want to delete the server "${serverName}"? This action cannot be undone.`)) {
+                  try {
+                    await serversService.delete(serverId);
+                    navigate('/');
+                  } catch (error) {
+                    alert(error.response?.data?.error || 'Failed to delete server');
+                  }
+                }
+              }}
+              className="px-4 py-2 text-sm font-medium text-white bg-red-600 dark:bg-red-500 border border-red-600 dark:border-red-500 rounded-lg hover:bg-red-700 dark:hover:bg-red-600 transition-colors flex items-center gap-2"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+              Delete
             </button>
           </div>
         </div>
