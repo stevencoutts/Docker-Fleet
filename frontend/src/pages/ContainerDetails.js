@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { containersService } from '../services/containers.service';
 import { imagesService } from '../services/images.service';
 import LogsViewer from '../components/LogsViewer';
@@ -89,6 +89,7 @@ const formatDate = (dateValue, options = {}) => {
 
 const ContainerDetails = () => {
   const { serverId, containerId } = useParams();
+  const navigate = useNavigate();
   const [container, setContainer] = useState(null);
   const [stats, setStats] = useState(null);
   const [statsHistory, setStatsHistory] = useState([]);
@@ -104,6 +105,10 @@ const ContainerDetails = () => {
   const [restoreImageName, setRestoreImageName] = useState('');
   const [restoreContainerName, setRestoreContainerName] = useState('');
   const [deletingSnapshot, setDeletingSnapshot] = useState(null);
+  const [updateStatus, setUpdateStatus] = useState(null);
+  const [updateStatusLoading, setUpdateStatusLoading] = useState(false);
+  const [pullAndUpdateLoading, setPullAndUpdateLoading] = useState(false);
+  const [lastUpdateResult, setLastUpdateResult] = useState(null);
   const maxHistoryPoints = 30;
 
   // Helper function to generate snapshot name with timestamp
@@ -786,6 +791,167 @@ const ContainerDetails = () => {
                   </div>
                 </div>
               </div>
+
+              {/* Image update status */}
+              {container && (() => {
+                const labels = container.Config?.Labels || {};
+                const isPinned = !!(labels['com.dockerfleet.skip-update'] || labels['com.dockerfleet.dev']);
+                return (
+                  <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+                    <div className="flex items-center gap-2 mb-2">
+                      <svg className="w-5 h-5 text-primary-600 dark:text-primary-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 14M20 20v-5h-.582m-15.356 2a8.001 8.001 0 0015.356-2m0 0V9M20 4v5" />
+                      </svg>
+                      <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Image update</h3>
+                    </div>
+                    {isPinned ? (
+                      <p className="text-sm text-amber-700 dark:text-amber-300">
+                        Dev / Pinned – this container is excluded from update checks. Add label <span className="font-mono text-xs">com.dockerfleet.dev</span> or <span className="font-mono text-xs">com.dockerfleet.skip-update</span> to mark it.
+                      </p>
+                    ) : (
+                      <>
+                        {updateStatusLoading && (
+                          <p className="text-sm text-gray-500 dark:text-gray-400">Checking registry…</p>
+                        )}
+                        {!updateStatusLoading && updateStatus && (
+                          <div className="space-y-2">
+                            <p className="text-sm text-gray-700 dark:text-gray-300">
+                              {updateStatus.pinned && <span className="text-amber-600 dark:text-amber-400">Pinned – updates not suggested.</span>}
+                              {updateStatus.updateAvailable && !updateStatus.pinned && (
+                                <span className="text-green-600 dark:text-green-400 font-medium">Update available</span>
+                              )}
+                              {!updateStatus.updateAvailable && !updateStatus.pinned && !updateStatus.error && (
+                                <span className="text-gray-600 dark:text-gray-400">Up to date</span>
+                              )}
+                              {updateStatus.reason && <span className="text-gray-500 dark:text-gray-400"> – {updateStatus.reason}</span>}
+                              {updateStatus.error && <span className="text-red-600 dark:text-red-400"> – {updateStatus.error}</span>}
+                            </p>
+                            {!updateStatus.pinned && !updateStatus.error && (updateStatus.currentDigestShort || updateStatus.imageRef) && (
+                              <div className="text-xs font-mono text-gray-600 dark:text-gray-400 space-y-1 bg-gray-50 dark:bg-gray-900/50 rounded p-3">
+                                <div>
+                                  <span className="text-gray-500 dark:text-gray-500">Current: </span>
+                                  <span className="text-gray-800 dark:text-gray-200">{updateStatus.imageRef || image}</span>
+                                  {updateStatus.currentDigestShort && (
+                                    <span className="text-gray-500 dark:text-gray-500"> @ <span title={updateStatus.currentDigest}>{updateStatus.currentDigestShort}</span></span>
+                                  )}
+                                </div>
+                                {updateStatus.updateAvailable && updateStatus.availableDigestShort && (
+                                  <div>
+                                    <span className="text-green-600 dark:text-green-400">Available: </span>
+                                    <span className="text-gray-800 dark:text-gray-200">{updateStatus.imageRef || image}</span>
+                                    <span className="text-gray-500 dark:text-gray-500"> @ <span title={updateStatus.availableDigest}>{updateStatus.availableDigestShort}</span></span>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        {!updateStatusLoading && !updateStatus && (
+                          <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">Check if a newer image is available for this container.</p>
+                        )}
+                        {!isPinned && (
+                          <div className="flex flex-wrap items-center gap-2 mt-2">
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                setUpdateStatusLoading(true);
+                                setUpdateStatus(null);
+                                setLastUpdateResult(null);
+                                try {
+                                  const res = await containersService.getUpdateStatus(serverId, containerId);
+                                  setUpdateStatus(res.data?.updateStatus || res.data || {});
+                                } catch (err) {
+                                  setUpdateStatus({ error: err.response?.data?.error || err.message || 'Check failed' });
+                                } finally {
+                                  setUpdateStatusLoading(false);
+                                }
+                              }}
+                              disabled={updateStatusLoading || pullAndUpdateLoading}
+                              className="px-3 py-1.5 text-sm font-medium text-primary-700 dark:text-primary-300 bg-primary-50 dark:bg-primary-900/30 rounded-lg hover:bg-primary-100 dark:hover:bg-primary-900/50 disabled:opacity-50"
+                            >
+                              {updateStatusLoading ? 'Checking…' : 'Check for update'}
+                            </button>
+                            {updateStatus?.updateAvailable && (
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  setPullAndUpdateLoading(true);
+                                  setLastUpdateResult(null);
+                                  try {
+                                    const res = await containersService.pullAndUpdate(serverId, containerId);
+                                    const data = res.data || {};
+                                    setLastUpdateResult(data);
+                                    if (data.success) {
+                                      setUpdateStatus(null);
+                                      if (data.newContainerId) {
+                                        // Stay on page so user can see "Last update" steps, then use "View new container" to go
+                                      } else {
+                                        fetchContainerDetails();
+                                      }
+                                    } else {
+                                      setUpdateStatus(prev => ({ ...prev, error: data.error || 'Update failed' }));
+                                    }
+                                  } catch (err) {
+                                    setLastUpdateResult({ success: false, error: err.response?.data?.error || err.message || 'Update failed', steps: [] });
+                                    setUpdateStatus(prev => ({ ...prev, error: err.response?.data?.error || err.message || 'Update failed' }));
+                                  } finally {
+                                    setPullAndUpdateLoading(false);
+                                  }
+                                }}
+                                disabled={pullAndUpdateLoading || updateStatusLoading}
+                                className="px-3 py-1.5 text-sm font-medium text-green-700 dark:text-green-300 bg-green-50 dark:bg-green-900/30 rounded-lg hover:bg-green-100 dark:hover:bg-green-900/50 disabled:opacity-50"
+                              >
+                                {pullAndUpdateLoading ? 'Pulling & updating…' : 'Pull & update'}
+                              </button>
+                            )}
+                          </div>
+                        )}
+                        {!isPinned && lastUpdateResult && lastUpdateResult.steps && lastUpdateResult.steps.length > 0 && (
+                          <div className="mt-3 p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-600">
+                            <p className="text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide mb-2">
+                              {lastUpdateResult.success ? (
+                                <span className="text-green-600 dark:text-green-400">Update completed successfully</span>
+                              ) : (
+                                <span className="text-red-600 dark:text-red-400">Update failed</span>
+                              )}
+                            </p>
+                            <ul className="space-y-1.5 text-sm">
+                              {lastUpdateResult.steps.map((s, i) => (
+                                <li key={i} className="flex items-start gap-2">
+                                  <span className={`flex-shrink-0 ${s.success ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`} title={s.success ? 'OK' : 'Failed'}>
+                                    {s.success ? (
+                                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" /></svg>
+                                    ) : (
+                                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" /></svg>
+                                    )}
+                                  </span>
+                                  <span className="text-gray-700 dark:text-gray-300">{s.step}</span>
+                                  {s.detail && <span className="text-gray-500 dark:text-gray-400 truncate" title={s.detail}> — {s.detail}</span>}
+                                </li>
+                              ))}
+                            </ul>
+                            {lastUpdateResult.success && lastUpdateResult.message && (
+                              <p className="mt-2 text-sm text-green-700 dark:text-green-300 font-medium">{lastUpdateResult.message}</p>
+                            )}
+                            {lastUpdateResult.success && lastUpdateResult.newContainerId && (
+                              <button
+                                type="button"
+                                onClick={() => navigate(`/servers/${serverId}/containers/${lastUpdateResult.newContainerId}`, { replace: true })}
+                                className="mt-2 px-3 py-1.5 text-sm font-medium text-primary-700 dark:text-primary-300 bg-primary-50 dark:bg-primary-900/30 rounded-lg hover:bg-primary-100 dark:hover:bg-primary-900/50"
+                              >
+                                View new container
+                              </button>
+                            )}
+                            {!lastUpdateResult.success && lastUpdateResult.error && (
+                              <p className="mt-2 text-sm text-red-600 dark:text-red-400">{lastUpdateResult.error}</p>
+                            )}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* Ports Section */}
               {ports.length > 0 && (

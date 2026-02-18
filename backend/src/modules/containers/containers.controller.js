@@ -54,6 +54,55 @@ const getContainerDetails = async (req, res, next) => {
   }
 };
 
+const getContainerUpdateStatus = async (req, res, next) => {
+  try {
+    const { serverId, containerId } = req.params;
+
+    const server = await Server.findOne({
+      where: { id: serverId, userId: req.user.id },
+    });
+
+    if (!server) {
+      return res.status(404).json({ error: 'Server not found' });
+    }
+
+    const status = await dockerService.getContainerUpdateStatus(server, containerId);
+    res.json({ updateStatus: status });
+  } catch (error) {
+    next(error);
+  }
+};
+
+const pullAndRecreateContainer = async (req, res, next) => {
+  try {
+    const { serverId, containerId } = req.params;
+    const socketIO = require('../../config/socket').getIO();
+
+    const server = await Server.findOne({
+      where: { id: serverId, userId: req.user.id },
+    });
+
+    if (!server) {
+      return res.status(404).json({ error: 'Server not found' });
+    }
+
+    const result = await dockerService.pullAndRecreateContainer(server, containerId);
+
+    if (socketIO && result.success) {
+      socketIO.emit('container:status:changed', {
+        serverId,
+        containerId: result.newContainerId || containerId,
+        action: 'recreated',
+        userId: req.user.id,
+      });
+    }
+
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
 const getContainerLogs = async (req, res, next) => {
   try {
     const { serverId, containerId } = req.params;
@@ -408,6 +457,8 @@ const createSnapshot = async (req, res, next) => {
 module.exports = {
   getContainers,
   getContainerDetails,
+  getContainerUpdateStatus,
+  pullAndRecreateContainer,
   getContainerLogs,
   startContainer,
   stopContainer,

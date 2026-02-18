@@ -1,4 +1,5 @@
 const sshService = require('./ssh.service');
+const registryService = require('./registry.service');
 const logger = require('../config/logger');
 
 class DockerService {
@@ -65,7 +66,9 @@ class DockerService {
             const policy = (data.HostConfig && data.HostConfig.RestartPolicy && data.HostConfig.RestartPolicy.Name) ? data.HostConfig.RestartPolicy.Name : 'no';
             const mounts = Array.isArray(data.Mounts) ? data.Mounts : [];
             const networks = (data.NetworkSettings && data.NetworkSettings && data.NetworkSettings.Networks && typeof data.NetworkSettings.Networks === 'object') ? data.NetworkSettings.Networks : {};
-            detailsMap[shortId] = { RestartPolicy: policy, Mounts: mounts, Networks: networks };
+            const labels = data.Config?.Labels || {};
+            const skipUpdate = !!(labels['com.dockerfleet.skip-update'] || labels['com.dockerfleet.dev']);
+            detailsMap[shortId] = { RestartPolicy: policy, Mounts: mounts, Networks: networks, SkipUpdate: skipUpdate };
           }
 
           containers.forEach(container => {
@@ -75,6 +78,7 @@ class DockerService {
               container.RestartPolicy = details.RestartPolicy;
               container.Mounts = details.Mounts;
               container.Networks = details.Networks;
+              container.SkipUpdate = details.SkipUpdate;
             }
           });
         } else {
@@ -118,6 +122,195 @@ class DockerService {
       return details[0] || details;
     } catch (e) {
       throw new Error('Failed to parse container details');
+    }
+  }
+
+  /**
+   * Check if a container's image has an update available (remote digest differs from local).
+   * Containers with label com.dockerfleet.skip-update or com.dockerfleet.dev are treated as pinned (no update suggested).
+   * @returns {Promise<{ updateAvailable: boolean, pinned?: boolean, reason?: string, error?: string }>}
+   */
+  async getContainerUpdateStatus(server, containerId) {
+    const timeoutMs = 25000;
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('Update check timed out')), timeoutMs);
+    });
+
+    const run = async () => {
+      const details = await this.getContainerDetails(server, containerId);
+      const labels = details.Config?.Labels || {};
+      if (labels['com.dockerfleet.skip-update'] || labels['com.dockerfleet.dev']) {
+        return { updateAvailable: false, pinned: true, reason: 'Container marked as dev/pinned' };
+      }
+
+      const imageRef = details.Config?.Image || details.Image || '';
+      const imageId = details.Image || details.Config?.Image || '';
+      if (!imageRef || imageRef.startsWith('sha256:')) {
+        return { updateAvailable: false, reason: 'Local or digest-pinned image' };
+      }
+
+      const inspectCmd = `docker image inspect ${imageId} --format '{{json .RepoDigests}}'`;
+      const inspectResult = await sshService.executeCommand(server, inspectCmd, { allowFailure: true, timeout: 10000 });
+      if (!inspectResult.stdout || inspectResult.code !== 0) {
+        return { updateAvailable: false, reason: 'Local image has no registry digest' };
+      }
+
+      let repoDigests = [];
+      try {
+        repoDigests = JSON.parse(inspectResult.stdout.trim());
+      } catch (e) {
+        return { updateAvailable: false, reason: 'Could not parse image digests' };
+      }
+      if (!Array.isArray(repoDigests) || repoDigests.length === 0) {
+        return { updateAvailable: false, reason: 'Local build or untagged image' };
+      }
+
+      const localDigest = repoDigests[0].includes('@') ? repoDigests[0].split('@')[1] : repoDigests[0];
+      const result = await registryService.checkUpdateAvailable({ localDigest, imageRef });
+      const short = (d) => (d && d.replace(/^sha256:/i, '').substring(0, 12)) || '';
+      return {
+        updateAvailable: result.updateAvailable,
+        imageRef,
+        currentDigest: localDigest,
+        availableDigest: result.remoteDigest,
+        currentDigestShort: short(localDigest),
+        availableDigestShort: short(result.remoteDigest),
+        remoteDigest: result.remoteDigest,
+        error: result.error,
+      };
+    };
+
+    try {
+      return await Promise.race([run(), timeoutPromise]);
+    } catch (error) {
+      logger.debug('getContainerUpdateStatus failed:', error.message);
+      return { updateAvailable: false, error: error.message };
+    }
+  }
+
+  /**
+   * Pull the container's image and recreate the container so it uses the new image (same name and settings).
+   * @returns {Promise<{ success: boolean, message?: string, error?: string }>}
+   */
+  async pullAndRecreateContainer(server, containerId) {
+    const steps = [];
+    const addStep = (name, success, detail = null) => {
+      steps.push({ step: name, success: !!success, detail: detail || undefined });
+    };
+    try {
+      const details = await this.getContainerDetails(server, containerId);
+      const imageRef = details.Config?.Image || details.Image || '';
+      const name = (details.Name || '').replace(/^\//, '');
+      if (!imageRef || imageRef.startsWith('sha256:')) {
+        addStep('Validate container', false, 'Digest-pinned or local image');
+        return { success: false, error: 'Container uses a digest-pinned or local image; cannot update by tag', steps };
+      }
+      if (!name) {
+        addStep('Validate container', false, 'No container name');
+        return { success: false, error: 'Could not get container name', steps };
+      }
+      addStep('Validate container', true, `"${name}" using ${imageRef}`);
+
+      const pullResult = await this.pullImage(server, imageRef);
+      addStep('Pull image', pullResult.success, pullResult.success ? imageRef : (pullResult.message || 'Pull failed'));
+      if (!pullResult.success) {
+        return { success: false, error: pullResult.message || 'Image pull failed', steps };
+      }
+
+      const tempName = `${name}-new-${Date.now()}`;
+      const createBody = {
+        Image: imageRef,
+        Cmd: details.Config?.Cmd || null,
+        Entrypoint: details.Config?.Entrypoint || null,
+        Env: details.Config?.Env || null,
+        WorkingDir: details.Config?.WorkingDir || null,
+        Labels: details.Config?.Labels || null,
+        Hostname: details.Config?.Hostname || null,
+        HostConfig: {
+          Binds: details.HostConfig?.Binds || null,
+          PortBindings: details.HostConfig?.PortBindings || null,
+          RestartPolicy: details.HostConfig?.RestartPolicy || null,
+          NetworkMode: details.HostConfig?.NetworkMode || null,
+          Mounts: details.HostConfig?.Mounts || null,
+          Links: details.HostConfig?.Links || null,
+          ExtraHosts: details.HostConfig?.ExtraHosts || null,
+        },
+      };
+      const payload = JSON.stringify(createBody);
+      const b64 = Buffer.from(payload, 'utf8').toString('base64');
+
+      const createCmd = `echo ${b64} | base64 -d > /tmp/dockerfleet-create.json && curl -s -X POST --unix-socket /var/run/docker.sock -H "Content-Type: application/json" -d @/tmp/dockerfleet-create.json "http://localhost/v1.44/containers/create?name=${tempName}"`;
+      const createResult = await sshService.executeCommand(server, createCmd, { allowFailure: true, timeout: 15000 });
+      await sshService.executeCommand(server, 'rm -f /tmp/dockerfleet-create.json', { allowFailure: true });
+
+      let createResp = null;
+      try {
+        createResp = JSON.parse(createResult.stdout.trim());
+      } catch (e) {
+        createResp = {};
+      }
+      if (createResult.code !== 0 || !createResult.stdout.trim()) {
+        const errMsg = (createResult.stderr || createResult.stdout || '').trim() || 'Create failed';
+        try {
+          const errJson = JSON.parse(errMsg);
+          addStep('Create new container', false, errJson.message || errMsg);
+          return { success: false, error: errJson.message || errMsg, steps };
+        } catch (e) {
+          addStep('Create new container', false, errMsg);
+          return { success: false, error: errMsg, steps };
+        }
+      }
+      if (createResp.message && !createResp.Id && !createResp.id) {
+        addStep('Create new container', false, createResp.message);
+        return { success: false, error: createResp.message + ' (original container was not changed)', steps };
+      }
+
+      const newContainerId = createResp.Id || createResp.id;
+      if (!newContainerId || typeof newContainerId !== 'string') {
+        addStep('Create new container', false, 'No container ID in response');
+        return { success: false, error: 'Create did not return a container ID; original container was not changed', steps };
+      }
+      addStep('Create new container', true, `ID ${newContainerId.substring(0, 12)}`);
+
+      const verifyResult = await sshService.executeCommand(server, `docker inspect -f '{{.Id}}' ${newContainerId}`, { allowFailure: true, timeout: 5000 });
+      if (verifyResult.code !== 0 || !verifyResult.stdout.trim()) {
+        await sshService.executeCommand(server, `docker rm -f '${newContainerId}'`, { allowFailure: true });
+        addStep('Verify new container', false, 'Container not found after create');
+        return { success: false, error: 'New container could not be verified; original container was not changed', steps };
+      }
+      addStep('Verify new container', true, 'New container exists');
+
+      const stopResult = await this.stopContainer(server, containerId);
+      addStep('Stop old container', stopResult.success, stopResult.success ? containerId.substring(0, 12) : (stopResult.message || 'Stop failed'));
+      if (!stopResult.success) {
+        await sshService.executeCommand(server, `docker rm -f '${newContainerId}'`, { allowFailure: true });
+        return { success: false, error: 'Failed to stop existing container; new container was removed', steps };
+      }
+      const rmResult = await sshService.executeCommand(server, `docker rm ${containerId}`, { allowFailure: true });
+      addStep('Remove old container', rmResult.code === 0, rmResult.code === 0 ? 'Removed' : (rmResult.stderr || rmResult.stdout || 'Failed'));
+      if (rmResult.code !== 0) {
+        await sshService.executeCommand(server, `docker rm -f '${newContainerId}'`, { allowFailure: true });
+        return { success: false, error: 'Failed to remove existing container; new container was removed', steps };
+      }
+
+      const renameTarget = (name || '').replace(/'/g, "'\\''");
+      const renameResult = await sshService.executeCommand(server, `docker rename '${newContainerId}' '${renameTarget}'`, { allowFailure: true });
+      addStep('Rename new container', renameResult.code === 0, renameResult.code === 0 ? `"${name}"` : ((renameResult.stderr || renameResult.stdout || '').trim() || 'Failed'));
+      if (renameResult.code !== 0) {
+        const errDetail = (renameResult.stderr || renameResult.stdout || '').trim();
+        return { success: false, error: errDetail ? `Failed to rename new container: ${errDetail}. You may have a container with ID ${newContainerId.substring(0, 12)} that you can rename or remove manually.` : 'Failed to rename new container', steps };
+      }
+
+      const startResult = await this.startContainer(server, name);
+      addStep('Start new container', startResult.success, startResult.success ? 'Running' : (startResult.message || 'Start failed'));
+      if (!startResult.success) {
+        return { success: false, error: 'Container recreated but start failed: ' + (startResult.message || ''), newContainerId, steps };
+      }
+      return { success: true, message: `Updated successfully. Container "${name}" is now running the latest image.`, newContainerId, steps };
+    } catch (error) {
+      logger.debug('pullAndRecreateContainer failed:', error.message);
+      addStep('Update process', false, error.message);
+      return { success: false, error: error.message, steps };
     }
   }
 

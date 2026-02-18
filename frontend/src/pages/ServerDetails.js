@@ -309,6 +309,7 @@ const ServerDetails = () => {
     const ports = containerData.Ports || containerData['.Ports'] || containerData.ports || '';
     const restartPolicy = containerData.RestartPolicy || containerData.restartPolicy || 'no';
     const hasAutoRestart = restartPolicy !== 'no';
+    const skipUpdate = !!(containerData.SkipUpdate || containerData.skipUpdate);
 
     const handleToggleRestart = async (e) => {
       e.preventDefault();
@@ -390,6 +391,11 @@ const ServerDetails = () => {
           >
             {isRunning ? 'Running' : 'Stopped'}
           </span>
+          {skipUpdate && (
+            <span className="ml-1 px-2 py-1 text-xs font-medium rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-200" title="Dev/pinned – update check skipped">
+              Dev
+            </span>
+          )}
         </div>
 
         {ports && (
