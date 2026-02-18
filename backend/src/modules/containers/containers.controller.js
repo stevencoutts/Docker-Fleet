@@ -1,8 +1,21 @@
+const fs = require('fs');
+const path = require('path');
 const { Server } = require('../../models');
 const dockerService = require('../../services/docker.service');
 const { groupContainers } = require('../grouping/grouping.controller');
 const sshService = require('../../services/ssh.service');
 const logger = require('../../config/logger');
+
+const CONTAINER_UPDATES_LOG = path.join(process.cwd(), 'logs', 'container-updates.log');
+function appendContainerUpdateLog(entry) {
+  try {
+    const dir = path.dirname(CONTAINER_UPDATES_LOG);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.appendFileSync(CONTAINER_UPDATES_LOG, JSON.stringify(entry) + '\n', 'utf8');
+  } catch (e) {
+    logger.warn('Could not write container-updates.log', e.message);
+  }
+}
 
 const getContainers = async (req, res, next) => {
   try {
@@ -90,6 +103,20 @@ const pullAndRecreateContainer = async (req, res, next) => {
       if (socketIO) socketIO.emit('container:update:progress', { serverId, containerId, step, success, detail });
     };
     const result = await dockerService.pullAndRecreateContainer(server, containerId, { onStep });
+
+    if (result.success && result.containerName) {
+      appendContainerUpdateLog({
+        timestamp: new Date().toISOString(),
+        serverId,
+        previousContainerId: containerId,
+        newContainerId: result.newContainerId,
+        containerName: result.containerName,
+        previousImageRef: result.previousImageRef,
+        newImageRef: result.newImageRef,
+        previousVersion: result.previousVersion,
+        newVersion: result.newVersion,
+      });
+    }
 
     if (socketIO && result.success) {
       socketIO.emit('container:status:changed', {

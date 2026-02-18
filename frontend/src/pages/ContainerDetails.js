@@ -1004,6 +1004,15 @@ const ContainerDetails = () => {
                             {lastUpdateResult.success && lastUpdateResult.message && (
                               <p className="mt-2 text-sm text-green-700 dark:text-green-300 font-medium">{lastUpdateResult.message}</p>
                             )}
+                            {lastUpdateResult.success && (lastUpdateResult.previousVersion || lastUpdateResult.newVersion) && (
+                              <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
+                                {lastUpdateResult.previousVersion && lastUpdateResult.newVersion
+                                  ? `Version: ${lastUpdateResult.previousVersion} → ${lastUpdateResult.newVersion}`
+                                  : lastUpdateResult.newVersion
+                                    ? `Version: ${lastUpdateResult.newVersion}`
+                                    : `Previous version: ${lastUpdateResult.previousVersion}`}
+                              </p>
+                            )}
                             {lastUpdateResult.success && lastUpdateResult.newContainerId && String(lastUpdateResult.newContainerId) !== String(containerId) && (
                               <button
                                 type="button"

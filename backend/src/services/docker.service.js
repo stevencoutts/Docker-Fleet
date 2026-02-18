@@ -238,21 +238,21 @@ class DockerService {
           } else if (resolvedVersion && (currentTag === 'latest' || currentTag === 'dev' || /^dev[-_]/.test(currentTag))) {
             currentParsed = resolvedParsed || registryService.parseVersionFromString(resolvedVersion);
           }
-          out.newestTagFromRegistry = newest.tag;
           const versionLeapOk = !currentParsed || newest.version.major <= currentParsed.major + 1;
           const newestIsActuallyNewer = versionLeapOk && (!currentParsed || registryService.compareVersionParts(currentParsed, newest.version) < 0);
+          // Only expose "newest" tag and set updateAvailableByVersion when we'd actually suggest that tag
+          // (e.g. avoid showing "Update available" / "Registry tag: 8.1.2135" when latest is 3.1 and 8.x is an unrelated tag)
           if (newestIsActuallyNewer) {
+            out.newestTagFromRegistry = newest.tag;
             out.newestTag = newest.tag;
             out.newestTagDisplay = registryService.stripVersionTagPrefix(newest.tag) || newest.tag;
             out.newestVersion = `${newest.version.major}.${newest.version.minor}.${newest.version.patch}${newest.version.scheme === 'semver' && newest.version.ls ? '.' + newest.version.ls : ''}-r${newest.version.r}${newest.version.scheme !== 'semver' && newest.version.ls ? `-ls${newest.version.ls}` : ''}`;
+            out.updateAvailableByVersion = true;
+            // Show update when digest differs, or when newest is a different (newer) build. Only suppress when digest matches and versions are equal (e.g. 0.4 and 0.4.208 same image).
+            const sameVersion = currentParsed && registryService.compareVersionParts(currentParsed, newest.version) === 0;
+            if (result.updateAvailable || !sameVersion) out.updateAvailable = true;
           } else if (resolvedVersion) {
             out.resolvedNewerThanTagList = true;
-          }
-          if (currentParsed && registryService.compareVersionParts(currentParsed, newest.version) < 0) {
-            out.updateAvailableByVersion = true;
-          }
-          if (out.updateAvailableByVersion) {
-            out.updateAvailable = true;
           }
         }
       }
@@ -268,8 +268,28 @@ class DockerService {
   }
 
   /**
+   * Get version string from image labels (build_version, org.opencontainers.image.version, etc.) on the server.
+   * @returns {Promise<string|null>}
+   */
+  async getImageVersionFromLabels(server, imageId) {
+    if (!imageId) return null;
+    const labelsCmd = `docker image inspect ${imageId} --format '{{json .Config.Labels}}'`;
+    const result = await sshService.executeCommand(server, labelsCmd, { allowFailure: true, timeout: 5000 });
+    if (!result.stdout || result.code !== 0) return null;
+    try {
+      const labels = JSON.parse(result.stdout.trim());
+      if (!labels || typeof labels !== 'object') return null;
+      const raw = labels.build_version || labels['org.opencontainers.image.version'] || labels.VERSION || labels.version || null;
+      if (raw == null) return null;
+      return registryService.extractVersionFromLabel(String(raw)) || String(raw);
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /**
    * Pull the container's image and recreate the container so it uses the new image (same name and settings).
-   * @returns {Promise<{ success: boolean, message?: string, error?: string }>}
+   * @returns {Promise<{ success: boolean, message?: string, error?: string, containerName?, previousImageRef?, newImageRef?, previousVersion?, newVersion? }>}
    */
   async pullAndRecreateContainer(server, containerId, options = {}) {
     const steps = [];
@@ -280,7 +300,9 @@ class DockerService {
     try {
       const details = await this.getContainerDetails(server, containerId);
       const imageRef = details.Config?.Image || details.Image || '';
+      const imageId = details.Image || details.Config?.Image || '';
       const name = (details.Name || '').replace(/^\//, '');
+      const previousVersion = await this.getImageVersionFromLabels(server, imageId);
       if (!imageRef || imageRef.startsWith('sha256:')) {
         addStep('Validate container', false, 'Digest-pinned or local image');
         return { success: false, error: 'Container uses a digest-pinned or local image; cannot update by tag', steps };
@@ -404,7 +426,23 @@ class DockerService {
       if (!startResult.success) {
         return { success: false, error: 'Container recreated but start failed: ' + (startResult.message || ''), newContainerId, steps };
       }
-      return { success: true, message: `Updated successfully. Container "${name}" is now running the latest image.`, newContainerId, steps };
+      let newVersion = null;
+      try {
+        const newDetails = await this.getContainerDetails(server, newContainerId);
+        const newImageId = newDetails?.Image || newDetails?.Config?.Image;
+        if (newImageId) newVersion = await this.getImageVersionFromLabels(server, newImageId);
+      } catch (e) { /* ignore */ }
+      return {
+        success: true,
+        message: `Updated successfully. Container "${name}" is now running the latest image.`,
+        newContainerId,
+        steps,
+        containerName: name,
+        previousImageRef: imageRef,
+        newImageRef: imageRef,
+        previousVersion: previousVersion || undefined,
+        newVersion: newVersion || undefined,
+      };
     } catch (error) {
       logger.debug('pullAndRecreateContainer failed:', error.message);
       addStep('Update process', false, error.message);
