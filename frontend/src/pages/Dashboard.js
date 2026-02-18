@@ -588,12 +588,44 @@ const Dashboard = () => {
                       <div className="ml-5 w-0 flex-1">
                         <dl>
                           <dt className="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">
-                            {server.name}
+                            {(() => {
+                              // Show server name as fallback, but prefer FQDN if available
+                              const hostname = hostInfos[server.id]?.hostname;
+                              const serverHost = server.host;
+                              
+                              // If hostname is available and not 'Unknown', use it (should be FQDN from backend)
+                              if (hostname && hostname !== 'Unknown') {
+                                return hostname;
+                              }
+                              
+                              // If no hostname from hostInfo, check if server.host is an FQDN (contains dots and not an IP)
+                              if (serverHost.includes('.') && !/^\d+\.\d+\.\d+\.\d+$/.test(serverHost)) {
+                                return serverHost;
+                              }
+                              
+                              // Fallback to server name
+                              return server.name;
+                            })()}
                           </dt>
                           <dd className="text-lg font-medium text-gray-900 dark:text-gray-100">
-                            {hostInfos[server.id]?.hostname && hostInfos[server.id].hostname !== 'Unknown'
-                              ? `${hostInfos[server.id].hostname} (${server.host})`
-                              : server.host}
+                            {(() => {
+                              // Prefer FQDN hostname from hostInfo if available
+                              const hostname = hostInfos[server.id]?.hostname;
+                              const serverHost = server.host;
+                              
+                              // If hostname is available and not 'Unknown', use it (should be FQDN from backend)
+                              if (hostname && hostname !== 'Unknown') {
+                                return hostname;
+                              }
+                              
+                              // If no hostname from hostInfo, check if server.host is an FQDN (contains dots and not an IP)
+                              if (serverHost.includes('.') && !/^\d+\.\d+\.\d+\.\d+$/.test(serverHost)) {
+                                return serverHost;
+                              }
+                              
+                              // Default: show server.host (which might be IP or FQDN)
+                              return serverHost;
+                            })()}
                           </dd>
                         </dl>
                       </div>

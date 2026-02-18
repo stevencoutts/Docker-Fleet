@@ -37,6 +37,7 @@ function App() {
             >
               <Route index element={<Dashboard />} />
               <Route path="servers/new" element={<AddServer />} />
+              <Route path="servers/:serverId/edit" element={<AddServer />} />
               <Route path="servers/:serverId" element={<ServerDetails />} />
               <Route path="servers/:serverId/containers/:containerId" element={<ContainerDetails />} />
               <Route path="servers/:serverId/images" element={<Images />} />

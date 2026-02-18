@@ -10,7 +10,14 @@ const getAllServers = async (req, res, next) => {
       order: [['createdAt', 'DESC']],
     });
 
-    res.json({ servers });
+    // Never send encrypted private keys in the response for security
+    const serversData = servers.map(server => {
+      const serverData = server.toJSON();
+      delete serverData.privateKeyEncrypted;
+      return serverData;
+    });
+
+    res.json({ servers: serversData });
   } catch (error) {
     next(error);
   }
@@ -28,7 +35,11 @@ const getServerById = async (req, res, next) => {
       return res.status(404).json({ error: 'Server not found' });
     }
 
-    res.json({ server });
+    // Never send the encrypted private key in the response for security
+    const serverData = server.toJSON();
+    delete serverData.privateKeyEncrypted;
+    
+    res.json({ server: serverData });
   } catch (error) {
     next(error);
   }
@@ -81,7 +92,14 @@ const createServer = async (req, res, next) => {
       await sshService.connect(testServer);
       sshService.disconnect('test');
     } catch (error) {
-      logger.error('SSH connection test failed:', error);
+      // Never log private keys - only log error message without sensitive data
+      logger.error('SSH connection test failed:', {
+        message: error.message,
+        host: host,
+        port: port || 22,
+        username: username,
+        // Explicitly do NOT log privateKey
+      });
       return res.status(400).json({ 
         error: 'Failed to connect to server',
         details: error.message || 'Unable to establish SSH connection. Please verify your credentials and network connectivity.',
@@ -99,9 +117,18 @@ const createServer = async (req, res, next) => {
 
     logger.info(`Server ${server.id} created by user ${req.user.id}`);
 
-    res.status(201).json({ server });
+    // Never send the encrypted private key in the response for security
+    const serverData = server.toJSON();
+    delete serverData.privateKeyEncrypted;
+
+    res.status(201).json({ server: serverData });
   } catch (error) {
-    logger.error('Server creation error:', error);
+    // Never log private keys in error messages
+    logger.error('Server creation error:', {
+      message: error.message,
+      name: error.name,
+      // Explicitly do NOT log request body which contains privateKey
+    });
     if (error.name === 'SequelizeValidationError') {
       return res.status(400).json({ 
         error: 'Validation error',
@@ -139,6 +166,15 @@ const updateServer = async (req, res, next) => {
         await sshService.connect(testServer);
         sshService.disconnect('test');
       } catch (error) {
+        // Never log private keys - only log error message without sensitive data
+        logger.error('SSH connection test failed during update:', {
+          message: error.message,
+          serverId: id,
+          host: host || server.host,
+          port: port || server.port,
+          username: username || server.username,
+          // Explicitly do NOT log privateKey
+        });
         return res.status(400).json({ 
           error: 'Failed to connect to server',
           details: error.message,
@@ -154,7 +190,11 @@ const updateServer = async (req, res, next) => {
 
     await server.save();
 
-    res.json({ server });
+    // Never send the encrypted private key in the response for security
+    const serverData = server.toJSON();
+    delete serverData.privateKeyEncrypted;
+
+    res.json({ server: serverData });
   } catch (error) {
     next(error);
   }
@@ -213,13 +253,22 @@ const testConnection = async (req, res, next) => {
   }
 };
 
-// Validation rules
-const serverValidation = [
+// Validation rules for creating a server (all fields required)
+const createServerValidation = [
   body('name').notEmpty().withMessage('Name is required'),
   body('host').notEmpty().withMessage('Host is required'),
   body('port').optional().isInt({ min: 1, max: 65535 }),
   body('username').notEmpty().withMessage('Username is required'),
   body('privateKey').notEmpty().withMessage('Private key is required'),
+];
+
+// Validation rules for updating a server (private key is optional)
+const updateServerValidation = [
+  body('name').optional().notEmpty().withMessage('Name cannot be empty'),
+  body('host').optional().notEmpty().withMessage('Host cannot be empty'),
+  body('port').optional().isInt({ min: 1, max: 65535 }),
+  body('username').optional().notEmpty().withMessage('Username cannot be empty'),
+  body('privateKey').optional(), // Private key is optional when updating
 ];
 
 module.exports = {
@@ -229,5 +278,7 @@ module.exports = {
   updateServer,
   deleteServer,
   testConnection,
-  serverValidation,
+  serverValidation: createServerValidation, // Keep for backward compatibility
+  createServerValidation,
+  updateServerValidation,
 };

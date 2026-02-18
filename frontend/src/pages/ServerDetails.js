@@ -262,19 +262,59 @@ const ServerDetails = () => {
       <div className="mb-6">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">{server.name}</h1>
-            <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">{server.host}:{server.port}</p>
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+              {(() => {
+                // Prefer FQDN hostname from hostInfo if available
+                const hostname = hostInfo?.hostname;
+                const serverHost = server.host;
+                
+                // If hostname is available and not 'Unknown', use it (should be FQDN from backend)
+                if (hostname && hostname !== 'Unknown') {
+                  return hostname;
+                }
+                
+                // If no hostname from hostInfo, check if server.host is an FQDN (contains dots and not an IP)
+                if (serverHost.includes('.') && !/^\d+\.\d+\.\d+\.\d+$/.test(serverHost)) {
+                  return serverHost;
+                }
+                
+                // Fallback to server name
+                return server.name;
+              })()}
+            </h1>
+            <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
+              {(() => {
+                // Show IP address if server.host is an IP, otherwise show server.host
+                const serverHost = server.host;
+                if (/^\d+\.\d+\.\d+\.\d+$/.test(serverHost)) {
+                  return `${serverHost}:${server.port}`;
+                }
+                // If server.host is already an FQDN, show it with port
+                return `${serverHost}:${server.port}`;
+              })()}
+            </p>
           </div>
-          <button
-            onClick={() => fetchData(false)}
-            disabled={refreshing}
-            className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600 dark:bg-gray-700 disabled:opacity-50 flex items-center gap-2"
-          >
-            <svg className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 14M20 20v-5h-.582m-15.356 2a8.001 8.001 0 0015.356-2m0 0V9M20 4v5" />
-            </svg>
-            {refreshing ? 'Refreshing...' : 'Refresh'}
-          </button>
+          <div className="flex items-center gap-2">
+            <Link
+              to={`/servers/${serverId}/edit`}
+              className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors flex items-center gap-2"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+              </svg>
+              Edit
+            </Link>
+            <button
+              onClick={() => fetchData(false)}
+              disabled={refreshing}
+              className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600 dark:bg-gray-700 disabled:opacity-50 flex items-center gap-2"
+            >
+              <svg className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 14M20 20v-5h-.582m-15.356 2a8.001 8.001 0 0015.356-2m0 0V9M20 4v5" />
+              </svg>
+              {refreshing ? 'Refreshing...' : 'Refresh'}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -328,7 +368,21 @@ const ServerDetails = () => {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <div>
               <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Hostname</dt>
-              <dd className="mt-1 text-sm text-gray-900 dark:text-gray-100">{hostInfo.hostname || 'Unknown'}</dd>
+              <dd className="mt-1 text-sm text-gray-900 dark:text-gray-100">
+                {(() => {
+                  // Always show FQDN hostname if available
+                  const hostname = hostInfo?.hostname;
+                  if (hostname && hostname !== 'Unknown') {
+                    return hostname;
+                  }
+                  // Fallback to server.host if it's an FQDN
+                  const serverHost = server.host;
+                  if (serverHost.includes('.') && !/^\d+\.\d+\.\d+\.\d+$/.test(serverHost)) {
+                    return serverHost;
+                  }
+                  return hostname || 'Unknown';
+                })()}
+              </dd>
             </div>
             <div>
               <dt className="text-sm font-medium text-gray-500 dark:text-gray-400">Architecture</dt>

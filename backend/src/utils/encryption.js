@@ -2,6 +2,8 @@ const crypto = require('crypto');
 const config = require('../config/config');
 
 const algorithm = config.encryption.algorithm;
+// Note: Changing this salt would break decryption of existing encrypted data
+// If you need to change it, you would need to re-encrypt all existing private keys
 const key = crypto.scryptSync(config.encryption.key, 'salt', 32);
 
 function encrypt(text) {

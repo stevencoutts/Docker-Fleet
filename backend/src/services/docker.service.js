@@ -736,11 +736,25 @@ class DockerService {
     }
 
     try {
-      const hostnameResult = await sshService.executeCommand(server, 'hostname', { allowFailure: true });
-      results.hostname = (hostnameResult && hostnameResult.stdout) ? hostnameResult.stdout.trim() : 'Unknown';
+      // Try to get FQDN first, fallback to short hostname
+      const fqdnResult = await sshService.executeCommand(server, 'hostname -f', { allowFailure: true });
+      if (fqdnResult && fqdnResult.stdout && fqdnResult.stdout.trim()) {
+        results.hostname = fqdnResult.stdout.trim();
+      } else {
+        // Fallback to short hostname if FQDN not available
+        const hostnameResult = await sshService.executeCommand(server, 'hostname', { allowFailure: true });
+        results.hostname = (hostnameResult && hostnameResult.stdout) ? hostnameResult.stdout.trim() : 'Unknown';
+      }
     } catch (error) {
       logger.debug('Hostname command failed:', error.message);
-      results.hostname = 'Unknown';
+      // Try short hostname as fallback
+      try {
+        const hostnameResult = await sshService.executeCommand(server, 'hostname', { allowFailure: true });
+        results.hostname = (hostnameResult && hostnameResult.stdout) ? hostnameResult.stdout.trim() : 'Unknown';
+      } catch (fallbackError) {
+        logger.debug('Short hostname command also failed:', fallbackError.message);
+        results.hostname = 'Unknown';
+      }
     }
 
     // CPU info

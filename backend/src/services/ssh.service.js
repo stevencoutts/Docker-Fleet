@@ -34,7 +34,15 @@ class SSHService {
       });
 
       ssh.on('error', (err) => {
-        logger.error(`SSH connection error for ${server.id}:`, err);
+        // Never log private keys - only log error without sensitive data
+        logger.error(`SSH connection error for ${server.id}:`, {
+          message: err.message,
+          code: err.code,
+          host: server.host,
+          port: server.port,
+          username: server.username,
+          // Explicitly do NOT log privateKey
+        });
         this.connections.delete(connectionKey);
         reject(new Error(`SSH connection failed: ${err.message}`));
       });
