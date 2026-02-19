@@ -11,7 +11,7 @@ RUN addgroup -g 1001 -S nodejs && \
 COPY package*.json ./
 
 # Install dependencies (including dev for sequelize-cli migrations)
-RUN npm ci && \
+RUN npm install && \
     npm cache clean --force
 
 # Copy application code
