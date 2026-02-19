@@ -50,20 +50,17 @@ const login = async (req, res, next) => {
 
 const register = async (req, res, next) => {
   try {
-    const userCount = await User.count();
-    if (userCount > 0) {
-      return res.status(403).json({ error: 'Registration is disabled. Only the first user can be created during setup.' });
-    }
-
     const { email, password } = req.body;
 
     const existingUser = await User.findOne({ where: { email } });
-
+    
     if (existingUser) {
       return res.status(400).json({ error: 'User already exists' });
     }
 
-    const role = 'admin';
+    // Check if this is the first user - make them admin
+    const userCount = await User.count();
+    const role = userCount === 0 ? 'admin' : 'user';
 
     const user = await User.create({
       email,
@@ -86,6 +83,7 @@ const register = async (req, res, next) => {
         email: user.email,
         role: user.role,
       },
+      isFirstUser: userCount === 0,
     });
   } catch (error) {
     next(error);
