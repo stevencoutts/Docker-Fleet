@@ -85,11 +85,11 @@ A production-ready full-stack web application for managing Docker containers acr
    **For Docker Compose (Production):**
    - Create a `.env` file in the project root (same directory as `docker-compose.yml`)
    - Docker Compose reads environment variables from the root `.env` file
-   - Copy email and monitoring settings from `backend/env.example` to the root `.env`
+   - Copy .env.example to the root `.env`
    
    **For Local Development:**
    ```bash
-   cp backend/env.example backend/.env
+   cp .env.example .env
    ```
    
    Edit your `.env` file(s) and update the following:
