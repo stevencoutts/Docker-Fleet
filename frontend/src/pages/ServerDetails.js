@@ -290,13 +290,22 @@ const ServerDetails = () => {
     return { grouped, ungrouped };
   }, [filteredContainers, groupingRules, groupContainers]);
 
-  // Helper function to parse memory values (e.g., "3.3Gi", "15Gi")
+  // Helper function to parse memory values (e.g., "3.3Gi", "604Mi", "15Gi")
   const parseMemoryValue = (value) => {
     if (!value || value === 'Unknown') return 0;
-    const match = value.toString().match(/^([\d.]+)\s*([KMGT]?i?B?)$/i);
+    const match = value.toString().trim().match(/^([\d.]+)\s*([KMGT]?i?B?)$/i);
     if (!match) return 0;
     const num = parseFloat(match[1]);
-    const unit = match[2].toUpperCase();
+    let unit = match[2].toUpperCase();
+    // free -h outputs Gi/Mi/Ki (no trailing B); normalize so lookup works
+    if (unit === 'KI') unit = 'KIB';
+    else if (unit === 'MI') unit = 'MIB';
+    else if (unit === 'GI') unit = 'GIB';
+    else if (unit === 'TI') unit = 'TIB';
+    else if (unit === 'K') unit = 'KB';
+    else if (unit === 'M') unit = 'MB';
+    else if (unit === 'G') unit = 'GB';
+    else if (unit === 'T') unit = 'TB';
     const multipliers = { 'B': 1, 'KB': 1024, 'MB': 1024 ** 2, 'GB': 1024 ** 3, 'TB': 1024 ** 4, 'KIB': 1024, 'MIB': 1024 ** 2, 'GIB': 1024 ** 3, 'TIB': 1024 ** 4 };
     return num * (multipliers[unit] || 1);
   };
@@ -308,11 +317,12 @@ const ServerDetails = () => {
     return match ? parseFloat(match[1]) : 0;
   };
 
-  // Calculate memory usage percentage
+  // Calculate memory usage percentage (cap at 100% in case of unit quirks)
   const memoryUsage = hostInfo ? (() => {
     const total = parseMemoryValue(hostInfo.totalMemory);
     const used = parseMemoryValue(hostInfo.usedMemory);
-    return total > 0 ? (used / total) * 100 : 0;
+    if (total <= 0) return 0;
+    return Math.min(100, (used / total) * 100);
   })() : 0;
 
   // Get CPU usage percentage
