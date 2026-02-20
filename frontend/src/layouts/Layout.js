@@ -49,21 +49,21 @@ const Layout = () => {
       <nav className="bg-white dark:bg-gray-800 shadow-sm border-b border-gray-200 dark:border-gray-700 transition-colors duration-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex flex-nowrap items-center justify-between gap-4 py-3 min-h-[4rem] sm:py-4 sm:h-16">
-            <div className="flex items-center gap-4 lg:gap-6 min-w-0 flex-1">
+            <div className="flex items-center gap-4 lg:gap-8 min-w-0 flex-1">
               <div className="flex-shrink-0">
                 <Link to="/" className="text-xl font-bold text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors whitespace-nowrap">
                   DockerFleet Manager
                 </Link>
               </div>
-              <div className="hidden sm:flex items-end flex-1 min-w-0 overflow-x-auto overflow-y-hidden border-l border-gray-200 dark:border-gray-600 pl-4 lg:pl-6 gap-1">
+              <div className="hidden sm:flex items-center flex-1 min-w-0 overflow-x-auto overflow-y-hidden scrollbar-hide border-l border-gray-200 dark:border-gray-600 pl-4 lg:pl-6 pr-4 gap-2 sm:gap-4">
                 <Link to="/" className={navLinkClass('/')}>Dashboard</Link>
                 {adminNavigation.length > 0 && (
                   <>
-                    <span className="text-gray-300 dark:text-gray-600 mx-1 self-center" aria-hidden>|</span>
+                    <span className="text-gray-300 dark:text-gray-600 flex-shrink-0" aria-hidden>·</span>
                     {adminNavigation.map((item) => (
                       <Link key={item.name} to={item.path} className={navLinkClass(item.path)}>{item.name}</Link>
                     ))}
-                    <span className="text-gray-300 dark:text-gray-600 mx-1 self-center" aria-hidden>|</span>
+                    <span className="text-gray-300 dark:text-gray-600 flex-shrink-0" aria-hidden>·</span>
                   </>
                 )}
                 {personalNavigation.map((item) => (

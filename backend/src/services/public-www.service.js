@@ -494,8 +494,11 @@ async function listCertificates(serverId, userId) {
   return { certificates };
 }
 
+const EMPTY_NGINX_PLACEHOLDER = '# No proxy routes';
+
 /**
  * Read the current nginx proxy config from the server (content of dockerfleet-proxy.conf).
+ * When the file is empty or only the placeholder, also returns generatedConfig from current routes so the UI can show it.
  */
 async function getNginxConfig(serverId, userId) {
   const server = await Server.findByPk(serverId);
@@ -503,7 +506,16 @@ async function getNginxConfig(serverId, userId) {
 
   const r = await exec(server, `sudo cat ${NGINX_CONF_PATH} 2>/dev/null || true`, { allowFailure: true, timeout: 10000 });
   const config = (r.stdout || '').trim() || null;
-  return { path: NGINX_CONF_PATH, config };
+  const isPlaceholder = !config || config === EMPTY_NGINX_PLACEHOLDER || config.trim() === EMPTY_NGINX_PLACEHOLDER;
+
+  let generatedConfig = null;
+  if (isPlaceholder) {
+    const routes = await ServerProxyRoute.findAll({ where: { serverId }, order: [['domain', 'ASC']] });
+    const certDomains = await getCertDomains(server);
+    generatedConfig = buildNginxConfig(routes, certDomains);
+  }
+
+  return { path: NGINX_CONF_PATH, config, generatedConfig: generatedConfig || undefined };
 }
 
 module.exports = {

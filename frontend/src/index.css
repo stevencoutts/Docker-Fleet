@@ -33,3 +33,12 @@ code {
   line-height: 1.5;
   font-size: 0.875rem;
 }
+
+/* Hide scrollbar on nav while keeping overflow scroll (e.g. trackpad) */
+.scrollbar-hide {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}

@@ -43,7 +43,11 @@ const ServerDetails = () => {
   const [proxyRoutes, setProxyRoutes] = useState([]);
   const [proxyRoutesLoading, setProxyRoutesLoading] = useState(false);
   const [publicWwwLoading, setPublicWwwLoading] = useState(false);
+  const [publicWwwBusy, setPublicWwwBusy] = useState(null); // 'enable' | 'disable' | 'sync'
   const [enableSteps, setEnableSteps] = useState([]);
+  const [routeAdding, setRouteAdding] = useState(false);
+  const [routeBusy, setRouteBusy] = useState(null); // { routeId, action: 'remove' }
+  const [containerAction, setContainerAction] = useState({}); // { [containerId]: 'start'|'stop'|'restart'|'remove' }
   const [newRouteForm, setNewRouteForm] = useState({ domain: '', containerName: '', containerPort: '80' });
   const [dnsCertChallenge, setDnsCertChallenge] = useState(null);
   const [dnsCertLoading, setDnsCertLoading] = useState(false);
@@ -216,6 +220,9 @@ const ServerDetails = () => {
   };
 
   const handleContainerAction = async (action, containerId) => {
+    if (action === 'remove' && !window.confirm('Are you sure you want to remove this container?')) return;
+    if (containerAction[containerId]) return;
+    setContainerAction((prev) => ({ ...prev, [containerId]: action }));
     try {
       let response;
       switch (action) {
@@ -229,13 +236,10 @@ const ServerDetails = () => {
           response = await containersService.restart(serverId, containerId);
           break;
         case 'remove':
-          if (window.confirm('Are you sure you want to remove this container?')) {
-            response = await containersService.remove(serverId, containerId);
-          } else {
-            return;
-          }
+          response = await containersService.remove(serverId, containerId);
           break;
         default:
+          setContainerAction((prev) => { const n = { ...prev }; delete n[containerId]; return n; });
           return;
       }
 
@@ -246,6 +250,8 @@ const ServerDetails = () => {
       }
     } catch (error) {
       alert(error.response?.data?.error || 'Action failed');
+    } finally {
+      setContainerAction((prev) => { const n = { ...prev }; delete n[containerId]; return n; });
     }
   };
 
@@ -539,31 +545,35 @@ const ServerDetails = () => {
             {isRunning ? (
               <>
                 <button
+                  disabled={!!containerAction[containerId]}
                   onClick={() => handleContainerAction('stop', containerId)}
-                  className="px-3 py-1.5 text-xs font-medium text-yellow-800 dark:text-yellow-200 bg-yellow-50 dark:bg-yellow-900/30 rounded hover:bg-yellow-100 dark:hover:bg-yellow-900/50 transition-colors"
+                  className="px-3 py-1.5 text-xs font-medium text-yellow-800 dark:text-yellow-200 bg-yellow-50 dark:bg-yellow-900/30 rounded hover:bg-yellow-100 dark:hover:bg-yellow-900/50 transition-colors disabled:opacity-50"
                 >
-                  Stop
+                  {containerAction[containerId] === 'stop' ? 'Stopping…' : 'Stop'}
                 </button>
                 <button
+                  disabled={!!containerAction[containerId]}
                   onClick={() => handleContainerAction('restart', containerId)}
-                  className="px-3 py-1.5 text-xs font-medium text-blue-800 dark:text-blue-200 bg-blue-50 dark:bg-blue-900/30 rounded hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors"
+                  className="px-3 py-1.5 text-xs font-medium text-blue-800 dark:text-blue-200 bg-blue-50 dark:bg-blue-900/30 rounded hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors disabled:opacity-50"
                 >
-                  Restart
+                  {containerAction[containerId] === 'restart' ? 'Restarting…' : 'Restart'}
                 </button>
               </>
             ) : (
               <button
+                disabled={!!containerAction[containerId]}
                 onClick={() => handleContainerAction('start', containerId)}
-                className="px-3 py-1.5 text-xs font-medium text-green-800 dark:text-green-200 bg-green-50 dark:bg-green-900/30 rounded hover:bg-green-100 dark:hover:bg-green-900/50 transition-colors"
+                className="px-3 py-1.5 text-xs font-medium text-green-800 dark:text-green-200 bg-green-50 dark:bg-green-900/30 rounded hover:bg-green-100 dark:hover:bg-green-900/50 transition-colors disabled:opacity-50"
               >
-                Start
+                {containerAction[containerId] === 'start' ? 'Starting…' : 'Start'}
               </button>
             )}
             <button
+              disabled={!!containerAction[containerId]}
               onClick={() => handleContainerAction('remove', containerId)}
-              className="px-3 py-1.5 text-xs font-medium text-red-800 dark:text-red-200 bg-red-50 dark:bg-red-900/30 rounded hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors"
+              className="px-3 py-1.5 text-xs font-medium text-red-800 dark:text-red-200 bg-red-50 dark:bg-red-900/30 rounded hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors disabled:opacity-50"
             >
-              Remove
+              {containerAction[containerId] === 'remove' ? 'Removing…' : 'Remove'}
             </button>
           </div>
         </div>
@@ -976,6 +986,7 @@ const ServerDetails = () => {
             disabled={publicWwwLoading}
             onClick={async () => {
               setPublicWwwLoading(true);
+              setPublicWwwBusy('enable');
               setEnableSteps([]);
               try {
                 await publicWwwService.enableWithProgress(serverId, (data) => {
@@ -994,18 +1005,20 @@ const ServerDetails = () => {
                 alert(e.message || 'Enable failed');
               } finally {
                 setPublicWwwLoading(false);
+                setPublicWwwBusy(null);
                 setEnableSteps((prev) => (prev.length ? prev : []));
               }
             }}
             className="px-3 py-1.5 text-sm font-medium text-white bg-green-600 hover:bg-green-700 dark:bg-green-600 dark:hover:bg-green-500 rounded-lg disabled:opacity-50"
           >
-            {publicWwwLoading ? 'Applying…' : 'Enable Public WWW'}
+            {publicWwwBusy === 'enable' ? 'Applying…' : 'Enable Public WWW'}
           </button>
           <button
             type="button"
             disabled={publicWwwLoading}
             onClick={async () => {
               setPublicWwwLoading(true);
+              setPublicWwwBusy('disable');
               try {
                 await publicWwwService.disable(serverId);
                 await fetchData(false);
@@ -1013,17 +1026,19 @@ const ServerDetails = () => {
                 alert(e.response?.data?.details || e.response?.data?.error || e.message || 'Disable failed');
               } finally {
                 setPublicWwwLoading(false);
+                setPublicWwwBusy(null);
               }
             }}
             className="px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-200 bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500 rounded-lg disabled:opacity-50"
           >
-            Disable
+            {publicWwwBusy === 'disable' ? 'Disabling…' : 'Disable'}
           </button>
           <button
             type="button"
             disabled={publicWwwLoading || !server?.publicWwwEnabled}
             onClick={async () => {
               setPublicWwwLoading(true);
+              setPublicWwwBusy('sync');
               try {
                 await publicWwwService.sync(serverId);
                 await fetchCertificates();
@@ -1032,11 +1047,12 @@ const ServerDetails = () => {
                 alert(e.response?.data?.details || e.response?.data?.error || e.message || 'Sync failed');
               } finally {
                 setPublicWwwLoading(false);
+                setPublicWwwBusy(null);
               }
             }}
             className="px-3 py-1.5 text-sm font-medium text-primary-700 dark:text-primary-300 bg-primary-50 dark:bg-primary-900/30 hover:bg-primary-100 dark:hover:bg-primary-900/50 rounded-lg disabled:opacity-50"
           >
-            Sync config
+            {publicWwwBusy === 'sync' ? 'Syncing…' : 'Sync config'}
           </button>
           <button
             type="button"
@@ -1046,7 +1062,7 @@ const ServerDetails = () => {
               setNginxConfigView(null);
               try {
                 const res = await publicWwwService.getNginxConfig(serverId);
-                setNginxConfigView({ path: res.data.path, config: res.data.config });
+                setNginxConfigView({ path: res.data.path, config: res.data.config, generatedConfig: res.data.generatedConfig });
               } catch (e) {
                 setNginxConfigView({ path: '/etc/nginx/conf.d/dockerfleet-proxy.conf', config: null, error: e.response?.data?.error || e.message });
               } finally {
@@ -1055,7 +1071,14 @@ const ServerDetails = () => {
             }}
             className="px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg disabled:opacity-50"
           >
-            {nginxConfigLoading ? 'Loading…' : 'View nginx config'}
+            {nginxConfigLoading ? (
+              <span className="inline-flex items-center gap-1.5">
+                <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+                Loading…
+              </span>
+            ) : (
+              'View nginx config'
+            )}
           </button>
         </div>
         {nginxConfigView != null && (
@@ -1066,6 +1089,19 @@ const ServerDetails = () => {
             </div>
             {nginxConfigView.error ? (
               <p className="text-sm text-red-600 dark:text-red-400">{nginxConfigView.error}</p>
+            ) : nginxConfigView.generatedConfig ? (
+              <>
+                {nginxConfigView.config && nginxConfigView.config !== '# No proxy routes' ? (
+                  <pre className="text-xs font-mono text-gray-800 dark:text-gray-200 overflow-x-auto max-h-96 overflow-y-auto p-2 rounded bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 whitespace-pre-wrap break-all mb-3">
+                    {nginxConfigView.config}
+                  </pre>
+                ) : (
+                  <p className="text-sm text-amber-700 dark:text-amber-300 mb-2">File on server is empty or placeholder. Generated config below — click <strong>Sync config</strong> to apply.</p>
+                )}
+                <pre className="text-xs font-mono text-gray-800 dark:text-gray-200 overflow-x-auto max-h-96 overflow-y-auto p-2 rounded bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 whitespace-pre-wrap break-all">
+                  {nginxConfigView.generatedConfig}
+                </pre>
+              </>
             ) : nginxConfigView.config ? (
               <pre className="text-xs font-mono text-gray-800 dark:text-gray-200 overflow-x-auto max-h-96 overflow-y-auto p-2 rounded bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 whitespace-pre-wrap break-all">
                 {nginxConfigView.config}
@@ -1179,18 +1215,22 @@ const ServerDetails = () => {
                     )}
                     <button
                       type="button"
+                      disabled={routeBusy?.routeId === r.id}
                       onClick={async () => {
+                        setRouteBusy({ routeId: r.id, action: 'remove' });
                         try {
                           await publicWwwService.deleteProxyRoute(serverId, r.id);
                           await fetchProxyRoutes();
                           if (dnsCertForRouteId === r.id) setDnsCertForRouteId(null);
                         } catch (e) {
                           alert(e.response?.data?.error || 'Delete failed');
+                        } finally {
+                          setRouteBusy(null);
                         }
                       }}
-                      className="text-red-600 dark:text-red-400 hover:underline"
+                      className="text-red-600 dark:text-red-400 hover:underline disabled:opacity-50"
                     >
-                      Remove
+                      {routeBusy?.routeId === r.id ? 'Removing…' : 'Remove'}
                     </button>
                   </li>
                 ))}
@@ -1346,11 +1386,13 @@ const ServerDetails = () => {
                 />
                 <button
                   type="button"
+                  disabled={routeAdding}
                   onClick={async () => {
                     if (!newRouteForm.domain.trim() || !newRouteForm.containerName.trim()) {
                       alert('Domain and container name are required');
                       return;
                     }
+                    setRouteAdding(true);
                     try {
                       await publicWwwService.addProxyRoute(serverId, {
                         domain: newRouteForm.domain.trim(),
@@ -1361,11 +1403,13 @@ const ServerDetails = () => {
                       await fetchProxyRoutes();
                     } catch (e) {
                       alert(e.response?.data?.error || 'Add failed');
+                    } finally {
+                      setRouteAdding(false);
                     }
                   }}
-                  className="px-3 py-1.5 text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 dark:bg-primary-500 dark:hover:bg-primary-600 rounded-lg"
+                  className="px-3 py-1.5 text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 dark:bg-primary-500 dark:hover:bg-primary-600 rounded-lg disabled:opacity-50"
                 >
-                  Add route
+                  {routeAdding ? 'Adding…' : 'Add route'}
                 </button>
               </div>
             </>
