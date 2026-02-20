@@ -17,6 +17,7 @@ import Users from './pages/Users';
 import Profile from './pages/Profile';
 import MonitoringSettings from './pages/MonitoringSettings';
 import BulkBackupSchedules from './pages/BulkBackupSchedules';
+import BackupRestore from './pages/BackupRestore';
 
 function App() {
   return (
@@ -53,6 +54,7 @@ function App() {
               <Route path="profile" element={<Profile />} />
               <Route path="monitoring" element={<MonitoringSettings />} />
               <Route path="scheduled-backups" element={<BulkBackupSchedules />} />
+              <Route path="backup-restore" element={<BackupRestore />} />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

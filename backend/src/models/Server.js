@@ -76,6 +76,11 @@ module.exports = (sequelize) => {
         defaultValue: false,
         field: 'public_www_enabled',
       },
+      sshAllowedIps: {
+        type: DataTypes.TEXT,
+        allowNull: true,
+        field: 'ssh_allowed_ips',
+      },
       privateKeyEncrypted: {
         type: DataTypes.JSON,
         allowNull: false,

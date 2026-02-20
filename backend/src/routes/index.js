@@ -8,8 +8,10 @@ const usersRoutes = require('../modules/users/users.routes');
 const monitoringRoutes = require('../modules/monitoring/monitoring.routes');
 const groupingRoutes = require('../modules/grouping/grouping.routes');
 const backupSchedulesRoutes = require('../modules/backup-schedules/backup-schedules.routes');
+const backupRoutes = require('../modules/backup/backup.routes');
 
 router.use('/auth', authRoutes);
+router.use('/backup', backupRoutes);
 router.use('/backup-schedules', backupSchedulesRoutes);
 router.use('/servers', serversRoutes);
 router.use('/servers', containersRoutes);

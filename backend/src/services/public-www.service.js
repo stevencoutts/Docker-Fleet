@@ -169,13 +169,31 @@ async function configureFirewall(server, onProgress) {
       logger.warn('Public WWW: ufw deny port failed:', e.message);
     }
   }
-  const commands = [
-    `sudo ufw allow ${sshPort}/tcp comment 'SSH'`,
+  // SSH: allow all or restrict to IPs
+  const sshIpsRaw = (server.sshAllowedIps || '').trim();
+  const sshIps = sshIpsRaw ? sshIpsRaw.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean) : [];
+  if (sshIps.length > 0) {
+    await exec(server, `printf 'y\\n' | sudo ufw delete allow ${sshPort}/tcp 2>/dev/null || true`, { allowFailure: true, timeout: 10000, logLabel: 'firewall_delete_ssh' });
+    for (const ip of sshIps) {
+      try {
+        await exec(server, `sudo ufw allow from ${ip} to any port ${sshPort} proto tcp comment 'SSH'`, { allowFailure: true, timeout: 10000, logLabel: 'firewall_ufw_ssh_ip' });
+      } catch (e) {
+        logger.warn('Public WWW: ufw allow from IP failed:', { ip, message: e.message });
+      }
+    }
+  } else {
+    try {
+      await exec(server, `sudo ufw allow ${sshPort}/tcp comment 'SSH'`, { allowFailure: true, timeout: 60000, logLabel: 'firewall_ufw_rule' });
+    } catch (e) {
+      logger.warn('Public WWW: firewall command failed:', e.message);
+    }
+  }
+  const httpHttpsCommands = [
     'sudo ufw allow 80/tcp comment "HTTP"',
     'sudo ufw allow 443/tcp comment "HTTPS"',
     "printf 'y\\n' | sudo ufw enable",
   ];
-  for (const cmd of commands) {
+  for (const cmd of httpHttpsCommands) {
     try {
       await exec(server, cmd, { allowFailure: true, timeout: 60000, logLabel: 'firewall_ufw_rule' });
     } catch (e) {
@@ -492,6 +510,7 @@ module.exports = {
   enablePublicWww,
   disablePublicWww,
   syncProxy,
+  configureFirewall,
   requestDnsCert,
   continueDnsCert,
   listCertificates,

@@ -56,6 +56,8 @@ const ServerDetails = () => {
   const [certsLoading, setCertsLoading] = useState(false);
   const [nginxConfigView, setNginxConfigView] = useState(null);
   const [nginxConfigLoading, setNginxConfigLoading] = useState(false);
+  const [sshAllowedIps, setSshAllowedIps] = useState('');
+  const [sshAllowedIpsSaving, setSshAllowedIpsSaving] = useState(false);
 
   const stepLabel = (step) => {
     const labels = { hostname: 'Hostname', firewall: 'Firewall', install_nginx: 'Install nginx & certbot', nginx_config: 'Nginx config', certbot: 'Certificate(s)', done: 'Done' };
@@ -134,6 +136,10 @@ const ServerDetails = () => {
   useEffect(() => {
     setLetsEncryptEmail(user?.letsEncryptEmail ?? '');
   }, [user?.letsEncryptEmail]);
+
+  useEffect(() => {
+    setSshAllowedIps(server?.sshAllowedIps ?? '');
+  }, [server?.sshAllowedIps, server?.id]);
 
   // Host info: load from DB (cache); refetch on socket, visibility, or slow fallback
   useEffect(() => {
@@ -910,6 +916,41 @@ const ServerDetails = () => {
             {letsEncryptEmailSaving ? 'Saving…' : 'Save'}
           </button>
         </div>
+        <div className="flex flex-wrap items-start gap-2 mb-4">
+          <label className="text-sm text-gray-700 dark:text-gray-300 shrink-0 pt-1.5">
+            Restrict SSH (port 22) to IPs:
+          </label>
+          <div className="flex flex-wrap items-center gap-2 flex-1 min-w-0">
+            <input
+              type="text"
+              value={sshAllowedIps}
+              onChange={(e) => setSshAllowedIps(e.target.value)}
+              placeholder="e.g. 1.2.3.4, 2001:db8::1 (leave empty = allow all)"
+              className="rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 px-2 py-1.5 text-sm min-w-[240px] flex-1"
+            />
+            <button
+              type="button"
+              disabled={sshAllowedIpsSaving || !server?.id}
+              onClick={async () => {
+                setSshAllowedIpsSaving(true);
+                try {
+                  const res = await serversService.update(serverId, { sshAllowedIps: sshAllowedIps.trim() || '' });
+                  setServer((s) => (s ? { ...s, ...res.data.server } : s));
+                } catch (e) {
+                  alert(e.response?.data?.errors?.[0]?.msg || e.response?.data?.error || e.message || 'Save failed');
+                } finally {
+                  setSshAllowedIpsSaving(false);
+                }
+              }}
+              className="px-3 py-1.5 text-sm font-medium text-primary-700 dark:text-primary-300 bg-primary-50 dark:bg-primary-900/30 hover:bg-primary-100 dark:hover:bg-primary-900/50 rounded-lg disabled:opacity-50"
+            >
+              {sshAllowedIpsSaving ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </div>
+        <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
+          Restriction is applied when you Enable Public WWW or click Sync config. Leave empty to allow SSH from any IP.
+        </p>
         <div className="flex flex-wrap items-center gap-2 mb-4">
           <span className={`px-2 py-1 rounded text-sm font-medium ${server?.publicWwwEnabled ? 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200' : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'}`}>
             {server?.publicWwwEnabled ? 'Enabled' : 'Disabled'}

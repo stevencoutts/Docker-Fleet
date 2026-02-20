@@ -21,6 +21,7 @@ const Layout = () => {
 
   const personalNavigation = [
     { name: 'Scheduled backups', path: '/scheduled-backups' },
+    { name: 'Backup & Restore', path: '/backup-restore' },
     { name: 'Profile', path: '/profile' },
     { name: 'Monitoring', path: '/monitoring' },
   ];
