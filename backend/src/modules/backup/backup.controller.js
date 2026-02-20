@@ -205,7 +205,16 @@ const importData = async (req, res, next) => {
     }
 
     const proxyRoutes = Array.isArray(data.serverProxyRoutes) ? data.serverProxyRoutes : [];
-    for (const newServerId of oldIdToNewId.values()) {
+    // If exactly one current server and backup has routes, assign all backup route serverIds to that server (e.g. backup from "finland", current is "mule")
+    if (currentServers.length === 1 && proxyRoutes.length > 0) {
+      const singleId = currentServers[0].id;
+      const routeServerIds = [...new Set(proxyRoutes.map((r) => String(r.serverId)).filter(Boolean))];
+      for (const bid of routeServerIds) {
+        if (!oldIdToNewId.has(bid)) oldIdToNewId.set(bid, singleId);
+      }
+    }
+    const newServerIdsForRoutes = new Set(oldIdToNewId.values());
+    for (const newServerId of newServerIdsForRoutes) {
       await ServerProxyRoute.destroy({ where: { serverId: newServerId } });
     }
     for (const r of proxyRoutes) {
