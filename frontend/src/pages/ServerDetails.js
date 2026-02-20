@@ -955,6 +955,22 @@ const ServerDetails = () => {
           <span className={`px-2 py-1 rounded text-sm font-medium ${server?.publicWwwEnabled ? 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200' : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'}`}>
             {server?.publicWwwEnabled ? 'Enabled' : 'Disabled'}
           </span>
+          {!server?.publicWwwEnabled && (
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  const res = await serversService.update(serverId, { publicWwwEnabled: true });
+                  setServer((s) => (s ? { ...s, ...res.data.server } : s));
+                } catch (e) {
+                  alert(e.response?.data?.error || e.message || 'Failed to update');
+                }
+              }}
+              className="text-sm text-primary-600 dark:text-primary-400 hover:underline"
+            >
+              Host already has Public WWW? Mark as enabled
+            </button>
+          )}
           <button
             type="button"
             disabled={publicWwwLoading}

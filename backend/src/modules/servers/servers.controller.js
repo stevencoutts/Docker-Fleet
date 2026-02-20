@@ -148,7 +148,7 @@ const createServer = async (req, res, next) => {
 const updateServer = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { name, host, port, username, privateKey, sshAllowedIps } = req.body;
+    const { name, host, port, username, privateKey, sshAllowedIps, publicWwwEnabled } = req.body;
 
     const server = await Server.findOne({
       where: { id, userId: req.user.id },
@@ -195,6 +195,9 @@ const updateServer = async (req, res, next) => {
     if (privateKey) server.privateKeyEncrypted = privateKey;
     if (sshAllowedIps !== undefined) {
       server.sshAllowedIps = sshAllowedIps === '' || sshAllowedIps == null ? null : String(sshAllowedIps).trim() || null;
+    }
+    if (publicWwwEnabled !== undefined) {
+      server.publicWwwEnabled = !!publicWwwEnabled;
     }
 
     await server.save();
@@ -287,6 +290,7 @@ const updateServerValidation = [
   body('username').optional().notEmpty().withMessage('Username cannot be empty'),
   body('privateKey').optional(), // Private key is optional when updating
   body('sshAllowedIps').optional().isString().withMessage('SSH allowed IPs must be a string'),
+  body('publicWwwEnabled').optional().isBoolean().withMessage('publicWwwEnabled must be a boolean'),
 ];
 
 module.exports = {
