@@ -20,6 +20,8 @@ const {
   syncPublicWww,
   requestDnsCert,
   continueDnsCert,
+  listCertificates,
+  getNginxConfig,
 } = require('./public-www.controller');
 const { authenticate } = require('../../middleware/auth.middleware');
 const { validate } = require('../../middleware/validation.middleware');
@@ -34,6 +36,8 @@ router.delete('/:id/proxy-routes/:routeId', deleteProxyRoute);
 router.post('/:id/public-www/enable', enablePublicWww);
 router.post('/:id/public-www/disable', disablePublicWww);
 router.post('/:id/public-www/sync', syncPublicWww);
+router.get('/:id/public-www/certificates', listCertificates);
+router.get('/:id/public-www/nginx-config', getNginxConfig);
 router.post('/:id/public-www/request-dns-cert', requestDnsCert);
 router.post('/:id/public-www/continue-dns-cert', continueDnsCert);
 router.get('/:id', getServerById);

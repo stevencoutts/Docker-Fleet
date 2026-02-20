@@ -119,6 +119,7 @@ async function requestDnsCert(req, res, next) {
   } catch (error) {
     if (error.message === 'Server not found') return res.status(404).json({ error: error.message });
     if (error.message === 'domain is required') return res.status(400).json({ error: error.message });
+    if (error.message && error.message.includes('already exists and is not due for renewal')) return res.status(409).json({ error: error.message });
     next(error);
   }
 }
@@ -136,6 +137,28 @@ async function continueDnsCert(req, res, next) {
   }
 }
 
+async function listCertificates(req, res, next) {
+  try {
+    const { id: serverId } = req.params;
+    const result = await publicWwwService.listCertificates(serverId, req.user.id);
+    res.json(result);
+  } catch (error) {
+    if (error.message === 'Server not found') return res.status(404).json({ error: error.message });
+    next(error);
+  }
+}
+
+async function getNginxConfig(req, res, next) {
+  try {
+    const { id: serverId } = req.params;
+    const result = await publicWwwService.getNginxConfig(serverId, req.user.id);
+    res.json(result);
+  } catch (error) {
+    if (error.message === 'Server not found') return res.status(404).json({ error: error.message });
+    next(error);
+  }
+}
+
 module.exports = {
   listProxyRoutes,
   addProxyRoute,
@@ -145,4 +168,6 @@ module.exports = {
   syncPublicWww,
   requestDnsCert,
   continueDnsCert,
+  listCertificates,
+  getNginxConfig,
 };

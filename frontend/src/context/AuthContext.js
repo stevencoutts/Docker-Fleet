@@ -58,6 +58,7 @@ export const AuthProvider = ({ children }) => {
   const value = {
     user,
     setUser,
+    fetchUser,
     token,
     loading,
     login,

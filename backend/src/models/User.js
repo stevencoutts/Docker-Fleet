@@ -28,6 +28,12 @@ module.exports = (sequelize) => {
         defaultValue: 'user',
         allowNull: false,
       },
+      letsEncryptEmail: {
+        type: DataTypes.STRING,
+        allowNull: true,
+        field: 'lets_encrypt_email',
+        validate: { isEmail: true },
+      },
       createdAt: {
         type: DataTypes.DATE,
         allowNull: false,

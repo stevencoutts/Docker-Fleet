@@ -6,7 +6,9 @@ import { systemService } from '../services/system.service';
 import { publicWwwService } from '../services/publicWww.service';
 import groupingService from '../services/grouping.service';
 import { useSocket } from '../context/SocketContext';
+import { useAuth } from '../context/AuthContext';
 import { useRefetchOnVisible } from '../hooks/useRefetchOnVisible';
+import api from '../services/api';
 import LogsModal from '../components/LogsModal';
 import GroupingModal from '../components/GroupingModal';
 
@@ -14,6 +16,7 @@ const ServerDetails = () => {
   const { serverId } = useParams();
   const navigate = useNavigate();
   const socket = useSocket();
+  const { user, fetchUser } = useAuth();
   const [server, setServer] = useState(null);
   const [containers, setContainers] = useState([]);
   const [hostInfo, setHostInfo] = useState(null);
@@ -47,6 +50,12 @@ const ServerDetails = () => {
   const [dnsCertForRouteId, setDnsCertForRouteId] = useState(null);
   const [dnsCertDomain, setDnsCertDomain] = useState('');
   const [dnsCertWildcard, setDnsCertWildcard] = useState(false);
+  const [letsEncryptEmail, setLetsEncryptEmail] = useState('');
+  const [letsEncryptEmailSaving, setLetsEncryptEmailSaving] = useState(false);
+  const [certificates, setCertificates] = useState([]);
+  const [certsLoading, setCertsLoading] = useState(false);
+  const [nginxConfigView, setNginxConfigView] = useState(null);
+  const [nginxConfigLoading, setNginxConfigLoading] = useState(false);
 
   const stepLabel = (step) => {
     const labels = { hostname: 'Hostname', firewall: 'Firewall', install_nginx: 'Install nginx & certbot', nginx_config: 'Nginx config', certbot: 'Certificate(s)', done: 'Done' };
@@ -99,9 +108,32 @@ const ServerDetails = () => {
     }
   };
 
+  const fetchCertificates = async () => {
+    if (!serverId) return;
+    setCertsLoading(true);
+    try {
+      const res = await publicWwwService.getCertificates(serverId);
+      setCertificates(res.data.certificates || []);
+    } catch (e) {
+      setCertificates([]);
+    } finally {
+      setCertsLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (serverId) fetchProxyRoutes();
   }, [serverId]);
+
+  useEffect(() => {
+    if (serverId && server?.publicWwwEnabled) fetchCertificates();
+    else setCertificates([]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serverId, server?.publicWwwEnabled]);
+
+  useEffect(() => {
+    setLetsEncryptEmail(user?.letsEncryptEmail ?? '');
+  }, [user?.letsEncryptEmail]);
 
   // Host info: load from DB (cache); refetch on socket, visibility, or slow fallback
   useEffect(() => {
@@ -849,6 +881,36 @@ const ServerDetails = () => {
           Enable can take 2–5 minutes: it installs nginx and certbot on the host, configures the firewall, then requests Let&apos;s Encrypt certificates (your domain must point to this host&apos;s IP).
         </p>
         <div className="flex flex-wrap items-center gap-2 mb-4">
+          <label className="text-sm text-gray-700 dark:text-gray-300">
+            Let&apos;s Encrypt contact email:
+          </label>
+          <input
+            type="email"
+            value={letsEncryptEmail}
+            onChange={(e) => setLetsEncryptEmail(e.target.value)}
+            placeholder="admin@yourdomain.com"
+            className="rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 px-2 py-1.5 text-sm min-w-[200px]"
+          />
+          <button
+            type="button"
+            disabled={letsEncryptEmailSaving || !user?.id}
+            onClick={async () => {
+              setLetsEncryptEmailSaving(true);
+              try {
+                await api.put(`/api/v1/users/${user.id}`, { letsEncryptEmail: letsEncryptEmail.trim() || null });
+                await fetchUser();
+              } catch (e) {
+                alert(e.response?.data?.errors?.[0]?.msg || e.response?.data?.error || e.message || 'Save failed');
+              } finally {
+                setLetsEncryptEmailSaving(false);
+              }
+            }}
+            className="px-3 py-1.5 text-sm font-medium text-primary-700 dark:text-primary-300 bg-primary-50 dark:bg-primary-900/30 hover:bg-primary-100 dark:hover:bg-primary-900/50 rounded-lg disabled:opacity-50"
+          >
+            {letsEncryptEmailSaving ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 mb-4">
           <span className={`px-2 py-1 rounded text-sm font-medium ${server?.publicWwwEnabled ? 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200' : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'}`}>
             {server?.publicWwwEnabled ? 'Enabled' : 'Disabled'}
           </span>
@@ -870,6 +932,7 @@ const ServerDetails = () => {
                 });
                 await fetchData(false);
                 await fetchProxyRoutes();
+                await fetchCertificates();
               } catch (e) {
                 alert(e.message || 'Enable failed');
               } finally {
@@ -906,6 +969,7 @@ const ServerDetails = () => {
               setPublicWwwLoading(true);
               try {
                 await publicWwwService.sync(serverId);
+                await fetchCertificates();
                 alert('Proxy config synced.');
               } catch (e) {
                 alert(e.response?.data?.details || e.response?.data?.error || e.message || 'Sync failed');
@@ -917,7 +981,89 @@ const ServerDetails = () => {
           >
             Sync config
           </button>
+          <button
+            type="button"
+            disabled={publicWwwLoading || !server?.publicWwwEnabled}
+            onClick={async () => {
+              setNginxConfigLoading(true);
+              setNginxConfigView(null);
+              try {
+                const res = await publicWwwService.getNginxConfig(serverId);
+                setNginxConfigView({ path: res.data.path, config: res.data.config });
+              } catch (e) {
+                setNginxConfigView({ path: '/etc/nginx/conf.d/dockerfleet-proxy.conf', config: null, error: e.response?.data?.error || e.message });
+              } finally {
+                setNginxConfigLoading(false);
+              }
+            }}
+            className="px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg disabled:opacity-50"
+          >
+            {nginxConfigLoading ? 'Loading…' : 'View nginx config'}
+          </button>
         </div>
+        {nginxConfigView != null && (
+          <div className="mb-4 p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-700">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-medium text-gray-500 dark:text-gray-400">Nginx config on server: {nginxConfigView.path}</p>
+              <button type="button" onClick={() => setNginxConfigView(null)} className="text-xs text-gray-500 hover:underline">Hide</button>
+            </div>
+            {nginxConfigView.error ? (
+              <p className="text-sm text-red-600 dark:text-red-400">{nginxConfigView.error}</p>
+            ) : nginxConfigView.config ? (
+              <pre className="text-xs font-mono text-gray-800 dark:text-gray-200 overflow-x-auto max-h-96 overflow-y-auto p-2 rounded bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 whitespace-pre-wrap break-all">
+                {nginxConfigView.config}
+              </pre>
+            ) : (
+              <p className="text-sm text-gray-500">File empty or not present (Public WWW may be disabled or not yet enabled).</p>
+            )}
+          </div>
+        )}
+        {server?.publicWwwEnabled && (
+          <div className="mb-4">
+            <div className="flex items-center gap-2 mb-2">
+              <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">Installed certificates</h3>
+              <button
+                type="button"
+                disabled={certsLoading}
+                onClick={() => fetchCertificates()}
+                className="text-xs text-primary-600 dark:text-primary-400 hover:underline disabled:opacity-50"
+              >
+                {certsLoading ? 'Loading…' : 'Refresh'}
+              </button>
+            </div>
+            {certsLoading && certificates.length === 0 ? (
+              <p className="text-sm text-gray-500">Loading…</p>
+            ) : certificates.length === 0 ? (
+              <p className="text-sm text-gray-500">No Let&apos;s Encrypt certificates on this server yet.</p>
+            ) : (
+              <div className="overflow-x-auto rounded border border-gray-200 dark:border-gray-600">
+                <table className="min-w-full text-sm">
+                  <thead className="bg-gray-50 dark:bg-gray-900/50">
+                    <tr>
+                      <th className="px-3 py-2 text-left font-medium text-gray-700 dark:text-gray-300">Name</th>
+                      <th className="px-3 py-2 text-left font-medium text-gray-700 dark:text-gray-300">Domains</th>
+                      <th className="px-3 py-2 text-left font-medium text-gray-700 dark:text-gray-300">Expiry</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200 dark:divide-gray-600">
+                    {certificates.map((c) => (
+                      <tr key={c.name} className="text-gray-900 dark:text-gray-100">
+                        <td className="px-3 py-2 font-mono">{c.name}</td>
+                        <td className="px-3 py-2 font-mono text-gray-700 dark:text-gray-300">{Array.isArray(c.domains) ? c.domains.join(', ') : ''}</td>
+                        <td className="px-3 py-2 text-gray-600 dark:text-gray-400">
+                          {c.expiryDate != null ? c.expiryDate : ''}
+                          {c.validDays != null && (
+                            <span className="ml-1 text-green-600 dark:text-green-400">({c.validDays} days)</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
         {publicWwwLoading && enableSteps.length > 0 && (
           <div className="mb-4 p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-700">
             <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">Progress</p>
@@ -997,7 +1143,9 @@ const ServerDetails = () => {
                 <div className="mb-4 p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-700">
                   <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Get certificate (DNS validation)</h4>
                   <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
-                    Add the TXT record at your DNS provider, then continue. You can use this for wildcards (e.g. *.example.com).
+                    {!dnsCertChallenge
+                      ? 'Click Request challenge to get the TXT record name and value below, then add that record at your DNS provider and click Continue. Supports wildcards (e.g. *.example.com).'
+                      : 'Add the TXT record at your DNS provider, then click Continue.'}
                   </p>
                   {!dnsCertChallenge ? (
                     <div className="flex flex-wrap items-center gap-2">
@@ -1017,34 +1165,48 @@ const ServerDetails = () => {
                         />
                         Include wildcard (*.domain)
                       </label>
-                      <button
-                        type="button"
-                        disabled={dnsCertLoading || !dnsCertDomain.trim()}
-                        onClick={async () => {
-                          setDnsCertLoading(true);
-                          try {
-                            const res = await publicWwwService.requestDnsCert(serverId, {
-                              domain: dnsCertDomain.trim(),
-                              wildcard: dnsCertWildcard,
-                            });
-                            setDnsCertChallenge(res.data);
-                          } catch (e) {
-                            alert(e.response?.data?.error || e.response?.data?.details || e.message || 'Request failed');
-                          } finally {
-                            setDnsCertLoading(false);
-                          }
-                        }}
-                        className="px-3 py-1.5 text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 rounded-lg disabled:opacity-50"
-                      >
-                        {dnsCertLoading ? 'Requesting…' : 'Request challenge'}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => { setDnsCertForRouteId(null); setDnsCertChallenge(null); }}
-                        className="px-2 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:underline"
-                      >
-                        Cancel
-                      </button>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          disabled={dnsCertLoading || !dnsCertDomain.trim()}
+                          onClick={async () => {
+                            setDnsCertLoading(true);
+                            try {
+                              const res = await publicWwwService.requestDnsCert(serverId, {
+                                domain: dnsCertDomain.trim(),
+                                wildcard: dnsCertWildcard,
+                              });
+                              setDnsCertChallenge(res.data);
+                            } catch (e) {
+                              alert(e.response?.data?.error || e.response?.data?.details || e.message || 'Request failed');
+                            } finally {
+                              setDnsCertLoading(false);
+                            }
+                          }}
+                          className="px-3 py-1.5 text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 rounded-lg disabled:opacity-50 inline-flex items-center gap-2"
+                        >
+                          {dnsCertLoading && (
+                            <svg className="animate-spin h-4 w-4 text-white" fill="none" viewBox="0 0 24 24" aria-hidden>
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                            </svg>
+                          )}
+                          {dnsCertLoading ? 'Requesting…' : 'Request challenge'}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={dnsCertLoading}
+                          onClick={() => { setDnsCertForRouteId(null); setDnsCertChallenge(null); }}
+                          className="px-2 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:underline disabled:opacity-50"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                      {dnsCertLoading && (
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                          Starting certbot on server and waiting for challenge (usually 30–60 seconds). If it doesn’t appear, on the server run: <code className="bg-black/5 dark:bg-white/10 px-1 rounded">sudo /tmp/certbot-dns-runner.sh</code>
+                        </p>
+                      )}
                     </div>
                   ) : (
                     <div className="space-y-2">
@@ -1073,18 +1235,30 @@ const ServerDetails = () => {
                               setDnsCertLoading(false);
                             }
                           }}
-                          className="px-3 py-1.5 text-sm font-medium text-white bg-green-600 hover:bg-green-700 rounded-lg disabled:opacity-50"
+                          className="px-3 py-1.5 text-sm font-medium text-white bg-green-600 hover:bg-green-700 rounded-lg disabled:opacity-50 inline-flex items-center gap-2"
                         >
-                          {dnsCertLoading ? 'Waiting…' : "I've added the record – Continue"}
+                          {dnsCertLoading && (
+                            <svg className="animate-spin h-4 w-4 text-white" fill="none" viewBox="0 0 24 24" aria-hidden>
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                            </svg>
+                          )}
+                          {dnsCertLoading ? 'Verifying & installing…' : "I've added the record – Continue"}
                         </button>
                         <button
                           type="button"
+                          disabled={dnsCertLoading}
                           onClick={() => setDnsCertChallenge(null)}
-                          className="px-2 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:underline"
+                          className="px-2 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:underline disabled:opacity-50"
                         >
                           Back
                         </button>
                       </div>
+                      {dnsCertLoading && (
+                        <p className="text-xs text-gray-500 dark:text-gray-400">
+                          Verifying DNS and issuing certificate (may take up to 2 minutes)…
+                        </p>
+                      )}
                     </div>
                   )}
                 </div>

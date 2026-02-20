@@ -2,13 +2,15 @@
  * Public WWW: on a host with a public IP, enable firewall (80/443 only), nginx reverse proxy, and Let's Encrypt.
  * Nginx proxies domains to containers by port.
  */
-const { Server, ServerProxyRoute } = require('../models');
+const { Server, ServerProxyRoute, User } = require('../models');
 const sshService = require('./ssh.service');
 const logger = require('../config/logger');
 
 const NGINX_CONF_PATH = '/etc/nginx/conf.d/dockerfleet-proxy.conf';
 const CERTBOT_DNS_HOOK_PATH = '/tmp/certbot-dns-hook.sh';
+const CERTBOT_DNS_RUNNER_PATH = '/tmp/certbot-dns-runner.sh';
 const CERTBOT_DNS_CONTINUE_FILE = '/tmp/certbot-dns-continue';
+const CERTBOT_DNS_LOG_PATH = '/tmp/certbot-dns.log';
 const LETSENCRYPT_EMAIL = process.env.LETSENCRYPT_EMAIL || process.env.DOCKERFLEET_LETSENCRYPT_EMAIL || 'admin@example.com';
 /** Optional: increase timeouts for slow hosts (e.g. PUBLIC_WWW_APT_TIMEOUT_MS=600000 for 10 min). */
 const PUBLIC_WWW_APT_TIMEOUT_MS = parseInt(process.env.PUBLIC_WWW_APT_TIMEOUT_MS, 10) || 300000;
@@ -221,13 +223,15 @@ async function enablePublicWww(serverId, userId, options = {}) {
   const server = await Server.findByPk(serverId);
   if (!server || server.userId !== userId) throw new Error('Server not found');
   const routes = await ServerProxyRoute.findAll({ where: { serverId } });
+  const user = await User.findByPk(userId);
+  const certbotEmail = (user && user.letsEncryptEmail) ? user.letsEncryptEmail : LETSENCRYPT_EMAIL;
 
   try {
     await ensureHostnameResolves(server, onProgress);
     await configureFirewall(server, onProgress);
     await ensureNginxAndCertbot(server, onProgress);
     await writeNginxConfigAndReload(server, routes, onProgress);
-    if (routes.length > 0) await runCertbot(server, routes, LETSENCRYPT_EMAIL, onProgress);
+    if (routes.length > 0) await runCertbot(server, routes, certbotEmail, onProgress);
 
     await server.update({ publicWwwEnabled: true });
     if (onProgress) onProgress('done', 'Public WWW enabled', 'ok');
@@ -290,20 +294,55 @@ async function requestDnsCert(serverId, userId, options = {}) {
   if (!domain) throw new Error('domain is required');
   const wildcard = Boolean(options.wildcard);
   const baseDomain = domain.replace(/^\*\./, '');
+  const hostLabel = server.host || server.name || serverId;
 
+  logger.info('Public WWW: requestDnsCert started', { domain, wildcard, host: hostLabel });
+
+  const user = await User.findByPk(userId);
+  const certbotEmailRaw = (user && user.letsEncryptEmail) ? user.letsEncryptEmail : LETSENCRYPT_EMAIL;
+  const certbotEmail = (certbotEmailRaw || '').replace(/'/g, "'\\''");
+  logger.info('Public WWW: certbot email', { source: user?.letsEncryptEmail ? 'user' : 'env', email: certbotEmailRaw ? `${certbotEmailRaw.slice(0, 3)}***@${(certbotEmailRaw.split('@')[1] || '')}` : 'none' });
+
+  await ensureHostnameResolves(server);
   await ensureNginxAndCertbot(server);
+  logger.info('Public WWW: deploying DNS hook and runner', { host: hostLabel });
   await deployDnsHook(server);
 
   const certbotDomains = wildcard ? `-d ${baseDomain} -d '*.${baseDomain}'` : `-d ${domain}`;
-  const certbotCmd = `sudo certbot certonly --manual --preferred-challenges dns ${certbotDomains} --manual-auth-hook ${CERTBOT_DNS_HOOK_PATH} --agree-tos --email ${LETSENCRYPT_EMAIL} --non-interactive 2>&1`;
-  await exec(server, `nohup sh -c '${certbotCmd}' > /tmp/certbot-dns.log 2>&1 &`, { allowFailure: true });
+  const certbotArgs = `certonly --manual --preferred-challenges dns ${certbotDomains} --manual-auth-hook ${CERTBOT_DNS_HOOK_PATH} --agree-tos --email ${certbotEmail} --non-interactive`;
+  const runnerScript = `#!/bin/sh
+LOG="${CERTBOT_DNS_LOG_PATH}"
+echo "Certbot DNS started at $(date)" > "$LOG"
+exec certbot ${certbotArgs} >> "$LOG" 2>&1
+`;
+  const runnerB64 = Buffer.from(runnerScript, 'utf8').toString('base64');
+  await exec(server, `echo '${runnerB64}' | base64 -d | sudo tee ${CERTBOT_DNS_RUNNER_PATH} > /dev/null && sudo chmod +x ${CERTBOT_DNS_RUNNER_PATH}`, { allowFailure: false, logLabel: 'dns_runner_deploy' });
+  logger.info('Public WWW: starting certbot in background', { host: hostLabel });
+  await exec(server, `bash -c 'nohup sudo ${CERTBOT_DNS_RUNNER_PATH} </dev/null >/dev/null 2>&1 &'`, { allowFailure: true });
+  await new Promise((r) => setTimeout(r, 4000));
+  const mtimeCheck = await exec(server, `now=$(date +%s); mtime=$(stat -c %Y ${CERTBOT_DNS_LOG_PATH} 2>/dev/null || echo 0); [ $((now - mtime)) -le 60 ] && echo recent || echo stale`, { allowFailure: true });
+  const logRecent = (mtimeCheck.stdout || '').trim() === 'recent';
+  if (logRecent) {
+    const headLog = await exec(server, `head -1 ${CERTBOT_DNS_LOG_PATH} 2>/dev/null`, { allowFailure: true });
+    logger.info('Public WWW: runner started, log updated', { host: hostLabel, firstLine: (headLog.stdout || '').trim().slice(0, 60) });
+  } else {
+    logger.warn('Public WWW: runner did not start (log file not updated in 60s). Check: sudo /tmp/certbot-dns-runner.sh', { host: hostLabel });
+  }
+  logger.info('Public WWW: polling for challenge (up to 60s)', { host: hostLabel });
 
   const deadline = Date.now() + 60000;
+  const startPoll = Date.now();
   let recordName = '';
   let recordValue = '';
   let challengeDomain = domain;
+  let lastLogAt = 0;
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 2000));
+    const elapsed = Math.round((Date.now() - startPoll) / 1000);
+    if (elapsed >= lastLogAt + 10) {
+      lastLogAt = elapsed;
+      logger.info('Public WWW: waiting for challenge', { host: hostLabel, elapsedSec: elapsed });
+    }
     const nameResult = await exec(server, 'cat /tmp/certbot-dns-name.txt 2>/dev/null', { allowFailure: true });
     const valueResult = await exec(server, 'cat /tmp/certbot-dns-value.txt 2>/dev/null', { allowFailure: true });
     const domainResult = await exec(server, 'cat /tmp/certbot-dns-domain.txt 2>/dev/null', { allowFailure: true });
@@ -311,11 +350,23 @@ async function requestDnsCert(serverId, userId, options = {}) {
     recordValue = (valueResult.stdout || '').trim();
     challengeDomain = (domainResult.stdout || '').trim() || domain;
     if (recordName && recordValue) {
+      logger.info('Public WWW: challenge received', { host: hostLabel, recordName });
       return { recordName, recordValue, domain: challengeDomain, baseDomain };
     }
   }
-  const logResult = await exec(server, 'tail -50 /tmp/certbot-dns.log 2>/dev/null', { allowFailure: true });
-  throw new Error('Certbot did not produce challenge in time. ' + (logResult.stdout || 'Check server /tmp/certbot-dns.log'));
+  const logResult = await exec(server, `cat ${CERTBOT_DNS_LOG_PATH} 2>/dev/null`, { allowFailure: true });
+  const logSnippet = (logResult.stdout || '').trim().slice(-1200);
+  if (logSnippet && /not yet due for renewal|Certificate not yet due for renewal/i.test(logSnippet)) {
+    throw new Error(
+      `Certificate for ${baseDomain} already exists and is not due for renewal. No action needed. ` +
+      'To see installed certificates, use the Installed certificates list in Public WWW.'
+    );
+  }
+  const onHost = ` On server ${hostLabel}: cat ${CERTBOT_DNS_LOG_PATH}`;
+  const logHint = logSnippet
+    ? ` Last log: ${logSnippet}${onHost}`
+    : ` Log file empty or missing — certbot may have failed to start (e.g. sudo/hook).${onHost}`;
+  throw new Error('Certbot did not produce challenge in time.' + logHint);
 }
 
 /**
@@ -347,12 +398,61 @@ async function continueDnsCert(serverId, userId, options = {}) {
   throw new Error('Certificate did not appear in time. ' + (logResult.stdout || 'Check server /tmp/certbot-dns.log'));
 }
 
+/**
+ * List Let's Encrypt certificates on the server (certbot certificates). Returns name, domains, expiry, validDays.
+ */
+async function listCertificates(serverId, userId) {
+  const server = await Server.findByPk(serverId);
+  if (!server || server.userId !== userId) throw new Error('Server not found');
+
+  const r = await exec(server, 'sudo certbot certificates 2>/dev/null || true', { allowFailure: true, timeout: 30000 });
+  const out = (r.stdout || '').trim();
+  const certs = [];
+  let current = null;
+  for (const line of out.split(/\n/)) {
+    const nameMatch = line.match(/^\s*Certificate Name:\s*(.+)$/);
+    if (nameMatch) {
+      if (current) certs.push(current);
+      current = { name: nameMatch[1].trim(), domains: [], expiryDate: null, validDays: null };
+      continue;
+    }
+    if (current) {
+      const domainsMatch = line.match(/^\s*Domains:\s*(.+)$/);
+      if (domainsMatch) {
+        current.domains = domainsMatch[1].trim().split(/\s+/).filter(Boolean);
+        continue;
+      }
+      const expiryMatch = line.match(/^\s*Expiry Date:\s*(.+?)(?:\s+\(VALID:\s*(\d+)\s+days\))?\s*$/);
+      if (expiryMatch) {
+        current.expiryDate = expiryMatch[1].trim();
+        current.validDays = expiryMatch[2] != null ? parseInt(expiryMatch[2], 10) : null;
+      }
+    }
+  }
+  if (current) certs.push(current);
+  return { certificates: certs };
+}
+
+/**
+ * Read the current nginx proxy config from the server (content of dockerfleet-proxy.conf).
+ */
+async function getNginxConfig(serverId, userId) {
+  const server = await Server.findByPk(serverId);
+  if (!server || server.userId !== userId) throw new Error('Server not found');
+
+  const r = await exec(server, `sudo cat ${NGINX_CONF_PATH} 2>/dev/null || true`, { allowFailure: true, timeout: 10000 });
+  const config = (r.stdout || '').trim() || null;
+  return { path: NGINX_CONF_PATH, config };
+}
+
 module.exports = {
   enablePublicWww,
   disablePublicWww,
   syncProxy,
   requestDnsCert,
   continueDnsCert,
+  listCertificates,
+  getNginxConfig,
   buildNginxConfig,
   getCertDomains,
 };

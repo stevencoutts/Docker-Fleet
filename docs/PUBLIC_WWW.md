@@ -43,6 +43,18 @@ If Enable times out (e.g. on slow or constrained hosts):
 - **Sync:** Rewrites nginx config from current routes, reloads nginx, runs certbot for any new domains.
 - **Disable:** Removes the generated nginx config and reloads nginx; sets `publicWwwEnabled` to false. UFW is **not** reverted (ports 80/443 may still be open).
 
+## DNS certificate (Get cert (DNS))
+
+To get a certificate via DNS-01 (e.g. for wildcards or when HTTP isn’t reachable): add a proxy route, open **Get cert (DNS)**, enter the domain (and optionally “Include wildcard”), then click **Request challenge**. Add the TXT record at your DNS provider and click **I’ve added the record – Continue**.
+
+**If the challenge never appears** (e.g. backend logs say “runner did not start”): the runner may not start in the background over SSH on some hosts. As a fallback, on the **server** run once:
+
+```bash
+sudo /tmp/certbot-dns-runner.sh
+```
+
+Leave it running. When the TXT record name and value appear in the UI (or in `/tmp/certbot-dns-name.txt` and `/tmp/certbot-dns-value.txt` on the server), add the record at your DNS provider. Then either: create the continue file so certbot proceeds (`sudo touch /tmp/certbot-dns-continue`), or click **Continue** in the UI (which does the same). The runner will then finish and the certificate will be installed.
+
 ## Proxy routes
 
 Each route maps a **domain** to a **container name** and **port** on the same host. Nginx listens on 80/443 and `proxy_pass`es to `http://127.0.0.1:<containerPort>`. The container must be listening on that port (e.g. bind to `0.0.0.0:8080`).

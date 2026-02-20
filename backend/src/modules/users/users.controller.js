@@ -6,7 +6,7 @@ const logger = require('../../config/logger');
 const getAllUsers = async (req, res, next) => {
   try {
     const users = await User.findAll({
-      attributes: ['id', 'email', 'role', 'createdAt', 'updatedAt'],
+      attributes: ['id', 'email', 'role', 'letsEncryptEmail', 'createdAt', 'updatedAt'],
       order: [['createdAt', 'DESC']],
     });
 
@@ -29,7 +29,7 @@ const getUserById = async (req, res, next) => {
     }
 
     const user = await User.findByPk(id, {
-      attributes: ['id', 'email', 'role', 'createdAt', 'updatedAt'],
+      attributes: ['id', 'email', 'role', 'letsEncryptEmail', 'createdAt', 'updatedAt'],
     });
 
     if (!user) {
@@ -52,7 +52,7 @@ const updateUser = async (req, res, next) => {
     }
 
     const { id } = req.params;
-    const { email, role } = req.body;
+    const { email, role, letsEncryptEmail } = req.body;
     const requestingUser = req.user;
 
     const user = await User.findByPk(id);
@@ -89,6 +89,7 @@ const updateUser = async (req, res, next) => {
     // Update user
     if (email) user.email = email;
     if (role && requestingUser.role === 'admin') user.role = role;
+    if (letsEncryptEmail !== undefined) user.letsEncryptEmail = letsEncryptEmail === '' ? null : letsEncryptEmail;
 
     await user.save();
 
@@ -99,6 +100,7 @@ const updateUser = async (req, res, next) => {
         id: user.id,
         email: user.email,
         role: user.role,
+        letsEncryptEmail: user.letsEncryptEmail,
         createdAt: user.createdAt,
         updatedAt: user.updatedAt,
       },
@@ -183,6 +185,7 @@ const deleteUser = async (req, res, next) => {
 const userValidation = [
   body('email').optional().isEmail().withMessage('Invalid email address'),
   body('role').optional().isIn(['admin', 'user']).withMessage('Role must be admin or user'),
+  body('letsEncryptEmail').optional().custom((val) => !val || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val)).withMessage('Let\'s Encrypt email must be valid'),
 ];
 
 const passwordValidation = [
