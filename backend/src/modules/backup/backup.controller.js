@@ -204,13 +204,20 @@ const importData = async (req, res, next) => {
       );
     }
 
-    const proxyRoutes = Array.isArray(data.serverProxyRoutes) ? data.serverProxyRoutes : [];
-    // If exactly one current server and backup has routes, assign all backup route serverIds to that server (e.g. backup from "finland", current is "mule")
-    if (currentServers.length === 1 && proxyRoutes.length > 0) {
-      const singleId = currentServers[0].id;
+    const proxyRoutes = Array.isArray(data.serverProxyRoutes)
+      ? data.serverProxyRoutes
+      : Array.isArray(data.proxyRoutes)
+        ? data.proxyRoutes
+        : [];
+    // When backup has routes but no server matched (or only one current server), assign all backup route serverIds to a current server so routes aren't lost
+    if (currentServers.length >= 1 && proxyRoutes.length > 0) {
+      const targetId = currentServers[0].id;
       const routeServerIds = [...new Set(proxyRoutes.map((r) => String(r.serverId)).filter(Boolean))];
-      for (const bid of routeServerIds) {
-        if (!oldIdToNewId.has(bid)) oldIdToNewId.set(bid, singleId);
+      const anyUnmapped = routeServerIds.some((bid) => !oldIdToNewId.has(bid));
+      if (currentServers.length === 1 || (anyUnmapped && oldIdToNewId.size === 0)) {
+        for (const bid of routeServerIds) {
+          if (!oldIdToNewId.has(bid)) oldIdToNewId.set(bid, targetId);
+        }
       }
     }
     const newServerIdsForRoutes = new Set(oldIdToNewId.values());
