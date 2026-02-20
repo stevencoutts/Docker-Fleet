@@ -4,6 +4,7 @@ import { containersService } from '../services/containers.service';
 import { serversService } from '../services/servers.service';
 import { useSocket } from '../context/SocketContext';
 import { useRefetchOnVisible } from '../hooks/useRefetchOnVisible';
+import { removeContainerFromUpdateOverview } from '../utils/updateOverviewCache';
 import { imagesService } from '../services/images.service';
 import { backupSchedulesService } from '../services/backupSchedules.service';
 import LogsViewer from '../components/LogsViewer';
@@ -1292,6 +1293,7 @@ const ContainerDetails = () => {
                                     setLastUpdateResult(data);
                                     if (data.success) {
                                       setUpdateStatus(null);
+                                      removeContainerFromUpdateOverview(serverId, containerId);
                                       if (data.newContainerId) {
                                         navigate(`/servers/${serverId}/containers/${data.newContainerId}`, { replace: true, state: { updateResult: data } });
                                       } else {

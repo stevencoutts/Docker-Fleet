@@ -5,6 +5,14 @@ import { containersService } from '../services/containers.service';
 import { systemService } from '../services/system.service';
 import { useSocket } from '../context/SocketContext';
 import { useRefetchOnVisible } from '../hooks/useRefetchOnVisible';
+import { getUpdateOverviewFromStorage, removeContainerFromUpdateOverview, UPDATE_OVERVIEW_STORAGE_KEY } from '../utils/updateOverviewCache';
+
+const defaultUpdateOverview = {
+  ranOnce: false,
+  containers: [],
+  totalChecked: 0,
+  errors: [],
+};
 
 const Dashboard = () => {
   const [servers, setServers] = useState([]);
@@ -15,25 +23,7 @@ const Dashboard = () => {
   const [restarting, setRestarting] = useState(false);
   const [enablingAutoRestart, setEnablingAutoRestart] = useState(false);
   const [checkingUpdates, setCheckingUpdates] = useState(false);
-  const UPDATE_OVERVIEW_STORAGE_KEY = 'dockerfleet.imageUpdateOverview';
-  const loadSavedUpdateOverview = () => {
-    try {
-      const raw = localStorage.getItem(UPDATE_OVERVIEW_STORAGE_KEY);
-      if (!raw) return null;
-      const saved = JSON.parse(raw);
-      if (saved && typeof saved.ranOnce === 'boolean' && Array.isArray(saved.containers)) {
-        return {
-          ranOnce: saved.ranOnce,
-          containers: saved.containers || [],
-          totalChecked: saved.totalChecked ?? 0,
-          errors: Array.isArray(saved.errors) ? saved.errors : [],
-          lastCheckedAt: saved.lastCheckedAt || null,
-        };
-      }
-    } catch (e) { /* ignore */ }
-    return null;
-  };
-  const [updateOverview, setUpdateOverview] = useState(() => loadSavedUpdateOverview() || {
+  const [updateOverview, setUpdateOverview] = useState(() => getUpdateOverviewFromStorage() || defaultUpdateOverview);
     ranOnce: false,
     containers: [],
     totalChecked: 0,
@@ -100,9 +90,11 @@ const Dashboard = () => {
     };
   }, [socket]);
 
-  // Refetch when user returns to tab so data is always latest when viewed
+  // Refetch when user returns to tab so data is always latest when viewed; re-sync update overview from cache (e.g. after update from ContainerDetails)
   useRefetchOnVisible(() => {
     if (!isRefreshingRef.current) fetchData(false);
+    const fromStorage = getUpdateOverviewFromStorage();
+    if (fromStorage) setUpdateOverview(fromStorage);
   });
 
   const fetchData = async (showLoading = false) => {
@@ -496,7 +488,23 @@ const Dashboard = () => {
       const res = await containersService.pullAndUpdate(item.serverId, item.containerId);
       const data = res.data || {};
       if (data.success && data.newContainerId) {
+        removeContainerFromUpdateOverview(item.serverId, item.containerId);
+        setUpdateOverview((prev) => ({
+          ...prev,
+          containers: prev.containers.filter(
+            (c) => !(String(c.serverId) === String(item.serverId) && String(c.containerId) === String(item.containerId))
+          ),
+        }));
         navigate(`/servers/${item.serverId}/containers/${data.newContainerId}`, { replace: true, state: { updateResult: data } });
+      } else if (data.success) {
+        removeContainerFromUpdateOverview(item.serverId, item.containerId);
+        setUpdateOverview((prev) => ({
+          ...prev,
+          containers: prev.containers.filter(
+            (c) => !(String(c.serverId) === String(item.serverId) && String(c.containerId) === String(item.containerId))
+          ),
+        }));
+        runUpdateCheck();
       } else {
         runUpdateCheck();
       }
