@@ -24,11 +24,6 @@ const Dashboard = () => {
   const [enablingAutoRestart, setEnablingAutoRestart] = useState(false);
   const [checkingUpdates, setCheckingUpdates] = useState(false);
   const [updateOverview, setUpdateOverview] = useState(() => getUpdateOverviewFromStorage() || defaultUpdateOverview);
-    ranOnce: false,
-    containers: [],
-    totalChecked: 0,
-    errors: [],
-  });
   const [updatingFromOverview, setUpdatingFromOverview] = useState(null); // { serverId, containerId }
   const [containersVersion, setContainersVersion] = useState(0); // Version counter to trigger recalculation only when stable data updates
   const socket = useSocket();
