@@ -160,6 +160,13 @@ class BackupSchedulerService {
 
       for (const job of due) {
         try {
+          // Mark job as run immediately so the next tick (1 min) doesn't pick it up again
+          const nextRunAt = computeNextRunAt({
+            ...job.toJSON(),
+            lastRunAt: now,
+          });
+          await job.update({ lastRunAt: now, nextRunAt });
+
           const retention = Math.max(1, parseInt(job.retention, 10) || 5);
           for (const entry of job.entries || []) {
             const server = entry.server;
@@ -173,12 +180,6 @@ class BackupSchedulerService {
         } catch (err) {
           logger.error(`Backup job ${job.id} error:`, err.message);
         }
-
-        const nextRunAt = computeNextRunAt({
-          ...job.toJSON(),
-          lastRunAt: now,
-        });
-        await job.update({ lastRunAt: now, nextRunAt });
       }
     } catch (err) {
       logger.error('Backup scheduler tick error:', err.message);
