@@ -3,6 +3,7 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import { serversService } from '../services/servers.service';
 import { containersService } from '../services/containers.service';
 import { systemService } from '../services/system.service';
+import { publicWwwService } from '../services/publicWww.service';
 import groupingService from '../services/grouping.service';
 import { useSocket } from '../context/SocketContext';
 import { useRefetchOnVisible } from '../hooks/useRefetchOnVisible';
@@ -36,6 +37,21 @@ const ServerDetails = () => {
   const [deployPullFirst, setDeployPullFirst] = useState(true);
   const [deployLoading, setDeployLoading] = useState(false);
   const [deployError, setDeployError] = useState('');
+  const [proxyRoutes, setProxyRoutes] = useState([]);
+  const [proxyRoutesLoading, setProxyRoutesLoading] = useState(false);
+  const [publicWwwLoading, setPublicWwwLoading] = useState(false);
+  const [enableSteps, setEnableSteps] = useState([]);
+  const [newRouteForm, setNewRouteForm] = useState({ domain: '', containerName: '', containerPort: '80' });
+  const [dnsCertChallenge, setDnsCertChallenge] = useState(null);
+  const [dnsCertLoading, setDnsCertLoading] = useState(false);
+  const [dnsCertForRouteId, setDnsCertForRouteId] = useState(null);
+  const [dnsCertDomain, setDnsCertDomain] = useState('');
+  const [dnsCertWildcard, setDnsCertWildcard] = useState(false);
+
+  const stepLabel = (step) => {
+    const labels = { hostname: 'Hostname', firewall: 'Firewall', install_nginx: 'Install nginx & certbot', nginx_config: 'Nginx config', certbot: 'Certificate(s)', done: 'Done' };
+    return labels[step] || step;
+  };
 
   useEffect(() => {
     fetchData();
@@ -69,6 +85,23 @@ const ServerDetails = () => {
 
   // Refetch when user returns to tab so data is latest when viewed
   useRefetchOnVisible(() => fetchData(false));
+
+  const fetchProxyRoutes = async () => {
+    if (!serverId) return;
+    setProxyRoutesLoading(true);
+    try {
+      const res = await publicWwwService.getProxyRoutes(serverId);
+      setProxyRoutes(res.data.routes || []);
+    } catch (e) {
+      setProxyRoutes([]);
+    } finally {
+      setProxyRoutesLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (serverId) fetchProxyRoutes();
+  }, [serverId]);
 
   // Host info: load from DB (cache); refetch on socket, visibility, or slow fallback
   useEffect(() => {
@@ -805,6 +838,309 @@ const ServerDetails = () => {
           </div>
         </div>
       )}
+
+      {/* Public WWW: nginx proxy + Let's Encrypt, firewall 80/443 */}
+      <div className="mb-6 bg-white dark:bg-gray-800 shadow dark:shadow-gray-700 rounded-lg p-6">
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2">Public WWW</h2>
+        <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">
+          Expose this host only on ports 80 and 443 with nginx reverse proxy and Let&apos;s Encrypt. Add proxy routes (domain → container:port), then Enable.
+        </p>
+        <p className="text-xs text-amber-700 dark:text-amber-300 mb-4">
+          Enable can take 2–5 minutes: it installs nginx and certbot on the host, configures the firewall, then requests Let&apos;s Encrypt certificates (your domain must point to this host&apos;s IP).
+        </p>
+        <div className="flex flex-wrap items-center gap-2 mb-4">
+          <span className={`px-2 py-1 rounded text-sm font-medium ${server?.publicWwwEnabled ? 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200' : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'}`}>
+            {server?.publicWwwEnabled ? 'Enabled' : 'Disabled'}
+          </span>
+          <button
+            type="button"
+            disabled={publicWwwLoading}
+            onClick={async () => {
+              setPublicWwwLoading(true);
+              setEnableSteps([]);
+              try {
+                await publicWwwService.enableWithProgress(serverId, (data) => {
+                  setEnableSteps((prev) => {
+                    const idx = prev.map((s) => s.step).lastIndexOf(data.step);
+                    const next = [...prev];
+                    if (idx >= 0) next[idx] = { ...next[idx], message: data.message, status: data.status };
+                    else next.push({ step: data.step, message: data.message, status: data.status });
+                    return next;
+                  });
+                });
+                await fetchData(false);
+                await fetchProxyRoutes();
+              } catch (e) {
+                alert(e.message || 'Enable failed');
+              } finally {
+                setPublicWwwLoading(false);
+                setEnableSteps((prev) => (prev.length ? prev : []));
+              }
+            }}
+            className="px-3 py-1.5 text-sm font-medium text-white bg-green-600 hover:bg-green-700 dark:bg-green-600 dark:hover:bg-green-500 rounded-lg disabled:opacity-50"
+          >
+            {publicWwwLoading ? 'Applying…' : 'Enable Public WWW'}
+          </button>
+          <button
+            type="button"
+            disabled={publicWwwLoading}
+            onClick={async () => {
+              setPublicWwwLoading(true);
+              try {
+                await publicWwwService.disable(serverId);
+                await fetchData(false);
+              } catch (e) {
+                alert(e.response?.data?.details || e.response?.data?.error || e.message || 'Disable failed');
+              } finally {
+                setPublicWwwLoading(false);
+              }
+            }}
+            className="px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-200 bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500 rounded-lg disabled:opacity-50"
+          >
+            Disable
+          </button>
+          <button
+            type="button"
+            disabled={publicWwwLoading || !server?.publicWwwEnabled}
+            onClick={async () => {
+              setPublicWwwLoading(true);
+              try {
+                await publicWwwService.sync(serverId);
+                alert('Proxy config synced.');
+              } catch (e) {
+                alert(e.response?.data?.details || e.response?.data?.error || e.message || 'Sync failed');
+              } finally {
+                setPublicWwwLoading(false);
+              }
+            }}
+            className="px-3 py-1.5 text-sm font-medium text-primary-700 dark:text-primary-300 bg-primary-50 dark:bg-primary-900/30 hover:bg-primary-100 dark:hover:bg-primary-900/50 rounded-lg disabled:opacity-50"
+          >
+            Sync config
+          </button>
+        </div>
+        {publicWwwLoading && enableSteps.length > 0 && (
+          <div className="mb-4 p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-700">
+            <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">Progress</p>
+            <ul className="space-y-1.5 text-sm">
+              {enableSteps.map((s, i) => (
+                <li key={`${s.step}-${i}`} className="flex items-center gap-2">
+                  {s.status === 'running' && (
+                    <svg className="animate-spin h-4 w-4 text-primary-600 flex-shrink-0" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                  )}
+                  {s.status === 'ok' && (
+                    <svg className="h-4 w-4 text-green-600 dark:text-green-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                    </svg>
+                  )}
+                  {s.status === 'fail' && (
+                    <svg className="h-4 w-4 text-red-600 dark:text-red-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                    </svg>
+                  )}
+                  <span className="font-medium text-gray-700 dark:text-gray-300">{stepLabel(s.step)}</span>
+                  <span className="text-gray-600 dark:text-gray-400">{s.message}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
+          <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Proxy routes (domain → container:port)</h3>
+          {proxyRoutesLoading ? (
+            <p className="text-sm text-gray-500">Loading…</p>
+          ) : (
+            <>
+              <ul className="space-y-2 mb-4">
+                {proxyRoutes.map((r) => (
+                  <li key={r.id} className="flex flex-wrap items-center gap-2 text-sm">
+                    <span className="font-mono text-gray-900 dark:text-gray-100">{r.domain}</span>
+                    <span className="text-gray-500">→</span>
+                    <span className="font-mono text-gray-700 dark:text-gray-300">{r.containerName}:{r.containerPort}</span>
+                    {server?.publicWwwEnabled && (
+                      <button
+                        type="button"
+                        disabled={dnsCertLoading}
+                        onClick={() => {
+                          setDnsCertForRouteId(r.id);
+                          setDnsCertDomain(r.domain.replace(/^\*\./, ''));
+                          setDnsCertWildcard(false);
+                          setDnsCertChallenge(null);
+                        }}
+                        className="text-primary-600 dark:text-primary-400 hover:underline"
+                      >
+                        Get cert (DNS)
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          await publicWwwService.deleteProxyRoute(serverId, r.id);
+                          await fetchProxyRoutes();
+                          if (dnsCertForRouteId === r.id) setDnsCertForRouteId(null);
+                        } catch (e) {
+                          alert(e.response?.data?.error || 'Delete failed');
+                        }
+                      }}
+                      className="text-red-600 dark:text-red-400 hover:underline"
+                    >
+                      Remove
+                    </button>
+                  </li>
+                ))}
+                {proxyRoutes.length === 0 && <li className="text-gray-500">No routes. Add one below.</li>}
+              </ul>
+              {dnsCertForRouteId != null && server?.publicWwwEnabled && (
+                <div className="mb-4 p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-700">
+                  <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Get certificate (DNS validation)</h4>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                    Add the TXT record at your DNS provider, then continue. You can use this for wildcards (e.g. *.example.com).
+                  </p>
+                  {!dnsCertChallenge ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <input
+                        type="text"
+                        value={dnsCertDomain}
+                        onChange={(e) => setDnsCertDomain(e.target.value)}
+                        placeholder="example.com"
+                        className="rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 px-2 py-1.5 text-sm min-w-[180px]"
+                      />
+                      <label className="flex items-center gap-1.5 text-sm text-gray-700 dark:text-gray-300">
+                        <input
+                          type="checkbox"
+                          checked={dnsCertWildcard}
+                          onChange={(e) => setDnsCertWildcard(e.target.checked)}
+                          className="rounded"
+                        />
+                        Include wildcard (*.domain)
+                      </label>
+                      <button
+                        type="button"
+                        disabled={dnsCertLoading || !dnsCertDomain.trim()}
+                        onClick={async () => {
+                          setDnsCertLoading(true);
+                          try {
+                            const res = await publicWwwService.requestDnsCert(serverId, {
+                              domain: dnsCertDomain.trim(),
+                              wildcard: dnsCertWildcard,
+                            });
+                            setDnsCertChallenge(res.data);
+                          } catch (e) {
+                            alert(e.response?.data?.error || e.response?.data?.details || e.message || 'Request failed');
+                          } finally {
+                            setDnsCertLoading(false);
+                          }
+                        }}
+                        className="px-3 py-1.5 text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 rounded-lg disabled:opacity-50"
+                      >
+                        {dnsCertLoading ? 'Requesting…' : 'Request challenge'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setDnsCertForRouteId(null); setDnsCertChallenge(null); }}
+                        className="px-2 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:underline"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <p className="text-xs text-gray-600 dark:text-gray-400">Add this TXT record at your DNS provider:</p>
+                      <div className="text-sm font-mono bg-white dark:bg-gray-800 rounded p-2 border border-gray-200 dark:border-gray-600">
+                        <div><span className="text-gray-500">Name:</span> {dnsCertChallenge.recordName}</div>
+                        <div className="mt-1"><span className="text-gray-500">Value:</span> {dnsCertChallenge.recordValue}</div>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          disabled={dnsCertLoading}
+                          onClick={async () => {
+                            setDnsCertLoading(true);
+                            try {
+                              await publicWwwService.continueDnsCert(serverId, {
+                                domain: dnsCertChallenge.baseDomain || dnsCertChallenge.domain,
+                              });
+                              setDnsCertForRouteId(null);
+                              setDnsCertChallenge(null);
+                              await fetchProxyRoutes();
+                              alert('Certificate installed and nginx reloaded.');
+                            } catch (e) {
+                              alert(e.response?.data?.error || e.response?.data?.details || e.message || 'Continue failed');
+                            } finally {
+                              setDnsCertLoading(false);
+                            }
+                          }}
+                          className="px-3 py-1.5 text-sm font-medium text-white bg-green-600 hover:bg-green-700 rounded-lg disabled:opacity-50"
+                        >
+                          {dnsCertLoading ? 'Waiting…' : "I've added the record – Continue"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDnsCertChallenge(null)}
+                          className="px-2 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:underline"
+                        >
+                          Back
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+              <div className="flex flex-wrap items-end gap-2">
+                <input
+                  type="text"
+                  placeholder="Domain (e.g. app.example.com)"
+                  value={newRouteForm.domain}
+                  onChange={(e) => setNewRouteForm((f) => ({ ...f, domain: e.target.value }))}
+                  className="rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 px-2 py-1.5 text-sm min-w-[160px]"
+                />
+                <input
+                  type="text"
+                  placeholder="Container name"
+                  value={newRouteForm.containerName}
+                  onChange={(e) => setNewRouteForm((f) => ({ ...f, containerName: e.target.value }))}
+                  className="rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 px-2 py-1.5 text-sm min-w-[120px]"
+                />
+                <input
+                  type="number"
+                  min={1}
+                  max={65535}
+                  placeholder="Port"
+                  value={newRouteForm.containerPort}
+                  onChange={(e) => setNewRouteForm((f) => ({ ...f, containerPort: e.target.value }))}
+                  className="rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 px-2 py-1.5 text-sm w-20"
+                />
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (!newRouteForm.domain.trim() || !newRouteForm.containerName.trim()) {
+                      alert('Domain and container name are required');
+                      return;
+                    }
+                    try {
+                      await publicWwwService.addProxyRoute(serverId, {
+                        domain: newRouteForm.domain.trim(),
+                        containerName: newRouteForm.containerName.trim(),
+                        containerPort: parseInt(newRouteForm.containerPort, 10) || 80,
+                      });
+                      setNewRouteForm({ domain: '', containerName: '', containerPort: '80' });
+                      await fetchProxyRoutes();
+                    } catch (e) {
+                      alert(e.response?.data?.error || 'Add failed');
+                    }
+                  }}
+                  className="px-3 py-1.5 text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 dark:bg-primary-500 dark:hover:bg-primary-600 rounded-lg"
+                >
+                  Add route
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 mb-6">

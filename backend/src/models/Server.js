@@ -70,6 +70,12 @@ module.exports = (sequelize) => {
         type: DataTypes.STRING,
         allowNull: false,
       },
+      publicWwwEnabled: {
+        type: DataTypes.BOOLEAN,
+        allowNull: false,
+        defaultValue: false,
+        field: 'public_www_enabled',
+      },
       privateKeyEncrypted: {
         type: DataTypes.JSON,
         allowNull: false,

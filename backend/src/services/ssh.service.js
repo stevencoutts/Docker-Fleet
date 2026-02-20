@@ -82,19 +82,27 @@ class SSHService {
           return;
         }
 
-        // Set up timeout
+        let stdout = '';
+        let stderr = '';
+
+        // Set up timeout (log for debugging when it fires)
         timeoutId = setTimeout(() => {
           if (!streamClosed) {
             streamClosed = true;
             stream.close();
-            const timeoutError = new Error(`Command timed out after ${timeout}ms. Interactive commands like 'more', 'less', 'vi', 'nano' are not supported. Use 'cat' instead of 'more' or 'less'.`);
+            const cmdPreview = typeof command === 'string' ? command.substring(0, 300) : String(command).substring(0, 300);
+            logger.warn('SSH command timed out', {
+              host: server.host,
+              timeoutMs: timeout,
+              commandPreview: cmdPreview,
+              stdoutTail: stdout.slice(-800),
+              stderrTail: stderr.slice(-800),
+            });
+            const timeoutError = new Error(`Command timed out after ${timeout}ms. If this was a long-running step (e.g. apt install), try again; otherwise avoid interactive commands like 'more', 'less', 'vi', 'nano'.`);
             timeoutError.code = 'TIMEOUT';
             reject(timeoutError);
           }
         }, timeout);
-
-        let stdout = '';
-        let stderr = '';
 
         stream.on('close', (code, signal) => {
           if (timeoutId) {

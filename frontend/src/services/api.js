@@ -1,7 +1,7 @@
 import axios from 'axios';
 
-// Auto-detect API URL: use environment variable, or detect from current host
-const getApiUrl = () => {
+// Auto-detect API URL: use environment variable, or detect from current host (exported for fetch/streaming)
+export const getApiUrl = () => {
   // If explicitly set in environment, use it
   if (process.env.REACT_APP_API_URL) {
     return process.env.REACT_APP_API_URL;

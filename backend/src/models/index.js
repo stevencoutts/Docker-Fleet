@@ -5,6 +5,10 @@ const logger = require('../config/logger');
 const env = process.env.NODE_ENV || 'development';
 const dbConfig = config[env];
 
+if (process.env.DB_NAME && process.env.DB_USER && process.env.DB_NAME === process.env.DB_USER) {
+  logger.warn('DB_NAME equals DB_USER. DB_NAME should be the database name (e.g. dockerfleet), not the username. Set DB_NAME=dockerfleet in .env and restart.');
+}
+
 const sequelize = new Sequelize(
   dbConfig.database,
   dbConfig.username,
@@ -34,6 +38,7 @@ db.BackupJob = require('./BackupJob')(sequelize, Sequelize);
 db.BackupJobEntry = require('./BackupJobEntry')(sequelize, Sequelize);
 db.ServerContainerCache = require('./ServerContainerCache')(sequelize, Sequelize);
 db.ServerHostInfoCache = require('./ServerHostInfoCache')(sequelize, Sequelize);
+db.ServerProxyRoute = require('./ServerProxyRoute')(sequelize, Sequelize);
 
 // Associations
 db.Server.belongsTo(db.User, { foreignKey: 'userId', as: 'user' });
@@ -56,6 +61,8 @@ db.Server.hasMany(db.ServerContainerCache, { foreignKey: 'serverId', as: 'contai
 db.ServerContainerCache.belongsTo(db.Server, { foreignKey: 'serverId', as: 'server' });
 db.Server.hasOne(db.ServerHostInfoCache, { foreignKey: 'serverId', as: 'hostInfoCache' });
 db.ServerHostInfoCache.belongsTo(db.Server, { foreignKey: 'serverId', as: 'server' });
+db.Server.hasMany(db.ServerProxyRoute, { foreignKey: 'serverId', as: 'proxyRoutes' });
+db.ServerProxyRoute.belongsTo(db.Server, { foreignKey: 'serverId', as: 'server' });
 
 db.sequelize = sequelize;
 db.Sequelize = Sequelize;
