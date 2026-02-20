@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { imagesService } from '../services/images.service';
+import { useRefetchOnVisible } from '../hooks/useRefetchOnVisible';
 
 const Images = () => {
   const { serverId } = useParams();
@@ -8,10 +9,6 @@ const Images = () => {
   const [loading, setLoading] = useState(true);
   const [pullImageName, setPullImageName] = useState('');
   const [pulling, setPulling] = useState(false);
-
-  useEffect(() => {
-    fetchImages();
-  }, [serverId]);
 
   const fetchImages = async () => {
     try {
@@ -23,6 +20,12 @@ const Images = () => {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    fetchImages();
+  }, [serverId]);
+
+  useRefetchOnVisible(fetchImages);
 
   const handlePullImage = async (e) => {
     e.preventDefault();

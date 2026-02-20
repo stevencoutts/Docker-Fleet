@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { serversService } from '../services/servers.service';
 import { containersService } from '../services/containers.service';
 import { backupSchedulesService } from '../services/backupSchedules.service';
+import { useRefetchOnVisible } from '../hooks/useRefetchOnVisible';
 
 function getContainerName(c) {
   // Backend listContainers returns Names as a string (from docker ps --format). Don't use Names[0] or you get first character only.
@@ -155,6 +156,8 @@ const BulkBackupSchedules = () => {
   useEffect(() => {
     fetchJobs();
   }, [fetchJobs]);
+
+  useRefetchOnVisible(fetchJobs);
 
   const handleDeleteJob = async (job) => {
     if (!window.confirm(`Delete this backup job? It will stop scheduled backups for ${(job.entries || []).length} container(s). Snapshots already created are not removed.`)) return;

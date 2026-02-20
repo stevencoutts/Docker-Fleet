@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { monitoringService } from '../services/monitoring.service';
+import { useRefetchOnVisible } from '../hooks/useRefetchOnVisible';
 
 const MonitoringSettings = () => {
   const [loading, setLoading] = useState(true);
@@ -15,10 +16,6 @@ const MonitoringSettings = () => {
     minDownTimeBeforeAlertMs: 0,
   });
 
-  useEffect(() => {
-    fetchSettings();
-  }, []);
-
   const fetchSettings = async () => {
     try {
       setLoading(true);
@@ -33,6 +30,12 @@ const MonitoringSettings = () => {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    fetchSettings();
+  }, []);
+
+  useRefetchOnVisible(fetchSettings);
 
   const handleChange = (field, value) => {
     setSettings((prev) => ({

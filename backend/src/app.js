@@ -11,6 +11,7 @@ const routes = require('./routes');
 const setupSocketIO = require('./websocket/socket.handler');
 const monitoringService = require('./services/monitoring.service');
 const backupSchedulerService = require('./services/backup-scheduler.service');
+const pollingService = require('./services/polling.service');
 const db = require('./models');
 const socketConfig = require('./config/socket');
 
@@ -307,6 +308,7 @@ server.listen(PORT, () => {
       await monitoringService.start();
     }
     backupSchedulerService.start();
+    pollingService.start();
   }, 5000);
 });
 

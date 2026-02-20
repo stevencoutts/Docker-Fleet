@@ -32,6 +32,8 @@ db.ContainerGroupingRule = require('./ContainerGroupingRule')(sequelize, Sequeli
 db.BackupSchedule = require('./BackupSchedule')(sequelize, Sequelize);
 db.BackupJob = require('./BackupJob')(sequelize, Sequelize);
 db.BackupJobEntry = require('./BackupJobEntry')(sequelize, Sequelize);
+db.ServerContainerCache = require('./ServerContainerCache')(sequelize, Sequelize);
+db.ServerHostInfoCache = require('./ServerHostInfoCache')(sequelize, Sequelize);
 
 // Associations
 db.Server.belongsTo(db.User, { foreignKey: 'userId', as: 'user' });
@@ -50,6 +52,10 @@ db.BackupJobEntry.belongsTo(db.BackupJob, { foreignKey: 'backupJobId', as: 'job'
 db.BackupJobEntry.belongsTo(db.Server, { foreignKey: 'serverId', as: 'server' });
 db.BackupJob.hasMany(db.BackupJobEntry, { foreignKey: 'backupJobId', as: 'entries' });
 db.Server.hasMany(db.BackupJobEntry, { foreignKey: 'serverId', as: 'backupJobEntries' });
+db.Server.hasMany(db.ServerContainerCache, { foreignKey: 'serverId', as: 'containerCache' });
+db.ServerContainerCache.belongsTo(db.Server, { foreignKey: 'serverId', as: 'server' });
+db.Server.hasOne(db.ServerHostInfoCache, { foreignKey: 'serverId', as: 'hostInfoCache' });
+db.ServerHostInfoCache.belongsTo(db.Server, { foreignKey: 'serverId', as: 'server' });
 
 db.sequelize = sequelize;
 db.Sequelize = Sequelize;

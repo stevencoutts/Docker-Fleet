@@ -4,12 +4,15 @@ import { serversService } from '../services/servers.service';
 import { containersService } from '../services/containers.service';
 import { systemService } from '../services/system.service';
 import groupingService from '../services/grouping.service';
+import { useSocket } from '../context/SocketContext';
+import { useRefetchOnVisible } from '../hooks/useRefetchOnVisible';
 import LogsModal from '../components/LogsModal';
 import GroupingModal from '../components/GroupingModal';
 
 const ServerDetails = () => {
   const { serverId } = useParams();
   const navigate = useNavigate();
+  const socket = useSocket();
   const [server, setServer] = useState(null);
   const [containers, setContainers] = useState([]);
   const [hostInfo, setHostInfo] = useState(null);
@@ -40,6 +43,20 @@ const ServerDetails = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serverId, showAll]);
 
+  // Refetch containers when background poller updates this server (from DB)
+  useEffect(() => {
+    if (!socket || !serverId) return;
+    const onUpdate = (payload) => {
+      if (payload?.serverId === serverId) fetchData(false);
+    };
+    socket.on('server:containers:updated', onUpdate);
+    socket.on('container:status:changed', onUpdate);
+    return () => {
+      socket.off('server:containers:updated', onUpdate);
+      socket.off('container:status:changed', onUpdate);
+    };
+  }, [serverId, socket]);
+
   // Fetch grouping rules
   const fetchGroupingRules = async () => {
     try {
@@ -50,37 +67,45 @@ const ServerDetails = () => {
     }
   };
 
-  // Separate effect for live host info updates
+  // Refetch when user returns to tab so data is latest when viewed
+  useRefetchOnVisible(() => fetchData(false));
+
+  // Host info: load from DB (cache); refetch on socket, visibility, or slow fallback
   useEffect(() => {
     if (!serverId) return;
 
-    // Fetch host info immediately
     const fetchHostInfo = async () => {
       try {
-        const hostInfoResponse = await systemService.getHostInfo(serverId).catch((error) => {
-          console.error('Failed to fetch host info:', error);
-          return { data: { hostInfo: null } };
-        });
-        if (hostInfoResponse.data.hostInfo) {
-          setHostInfo(hostInfoResponse.data.hostInfo);
-        }
-      } catch (error) {
-        console.error('Error fetching host info:', error);
-      }
+        const res = await systemService.getHostInfo(serverId).catch(() => ({ data: { hostInfo: null } }));
+        if (res.data?.hostInfo) setHostInfo(res.data.hostInfo);
+      } catch (e) {}
     };
 
-    // Initial fetch
     fetchHostInfo();
+    const fallbackMs = 60 * 1000;
+    const interval = setInterval(fetchHostInfo, fallbackMs);
 
-    // Set up polling interval for live updates (every 3 seconds)
-    const hostInfoInterval = setInterval(() => {
-      fetchHostInfo();
-    }, 3000);
-
-    return () => {
-      clearInterval(hostInfoInterval);
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') fetchHostInfo();
     };
-  }, [serverId]);
+    document.addEventListener('visibilitychange', onVisible);
+
+    if (socket) {
+      const onHost = (payload) => {
+        if (payload?.serverId === serverId) fetchHostInfo();
+      };
+      socket.on('server:hostinfo:updated', onHost);
+      return () => {
+        socket.off('server:hostinfo:updated', onHost);
+        clearInterval(interval);
+        document.removeEventListener('visibilitychange', onVisible);
+      };
+    }
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [serverId, socket]);
 
   const fetchData = async (showLoading = true) => {
     try {

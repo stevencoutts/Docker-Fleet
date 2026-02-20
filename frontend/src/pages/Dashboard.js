@@ -4,6 +4,7 @@ import { serversService } from '../services/servers.service';
 import { containersService } from '../services/containers.service';
 import { systemService } from '../services/system.service';
 import { useSocket } from '../context/SocketContext';
+import { useRefetchOnVisible } from '../hooks/useRefetchOnVisible';
 
 const Dashboard = () => {
   const [servers, setServers] = useState([]);
@@ -55,48 +56,54 @@ const Dashboard = () => {
 
   useEffect(() => {
     fetchData(true);
-    
-    // Auto-refresh every 5 seconds to detect container state changes (increased from 3s to reduce flicker)
+
+    // Background poller writes to DB; we refetch on socket events (no heavy polling from frontend)
+    const REFRESH_FALLBACK_MS = 60 * 1000; // 60s fallback if socket misses
     const refreshInterval = setInterval(() => {
-      // Only refresh if not already refreshing
-      if (!isRefreshingRef.current) {
-        fetchData(false);
-      }
-    }, 5000);
-    
-    // Listen for container status changes via WebSocket
+      if (!isRefreshingRef.current) fetchData(false);
+    }, REFRESH_FALLBACK_MS);
+
     if (socket) {
-      const handleContainerStatusChange = () => {
-        // Debounce rapid status changes - refresh immediately but only once per batch
-        if (refreshTimeoutRef.current) {
-          clearTimeout(refreshTimeoutRef.current);
-        }
+      const onContainersUpdated = (payload) => {
+        if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
         refreshTimeoutRef.current = setTimeout(() => {
-          // Only refresh if not already refreshing
-          if (!isRefreshingRef.current) {
-            fetchData(false);
-          }
-        }, 500); // Increased debounce time
+          if (!isRefreshingRef.current) fetchData(false);
+        }, 300);
+      };
+      const onHostInfoUpdated = (payload) => {
+        const serverId = payload?.serverId;
+        if (!serverId) return;
+        systemService.getHostInfo(serverId)
+          .then((res) => {
+            if (res.data?.hostInfo) {
+              setHostInfos((prev) => ({ ...prev, [serverId]: res.data.hostInfo }));
+            }
+          })
+          .catch(() => {});
       };
 
-      // Listen for container status change events
-      socket.on('container:status:changed', handleContainerStatusChange);
+      socket.on('server:containers:updated', onContainersUpdated);
+      socket.on('server:hostinfo:updated', onHostInfoUpdated);
+      socket.on('container:status:changed', onContainersUpdated);
 
       return () => {
-        socket.off('container:status:changed', handleContainerStatusChange);
-        if (refreshTimeoutRef.current) {
-          clearTimeout(refreshTimeoutRef.current);
-        }
+        socket.off('server:containers:updated', onContainersUpdated);
+        socket.off('server:hostinfo:updated', onHostInfoUpdated);
+        socket.off('container:status:changed', onContainersUpdated);
+        if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
       };
     }
-    
+
     return () => {
       clearInterval(refreshInterval);
-      if (refreshTimeoutRef.current) {
-        clearTimeout(refreshTimeoutRef.current);
-      }
+      if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
     };
   }, [socket]);
+
+  // Refetch when user returns to tab so data is always latest when viewed
+  useRefetchOnVisible(() => {
+    if (!isRefreshingRef.current) fetchData(false);
+  });
 
   const fetchData = async (showLoading = false) => {
     try {

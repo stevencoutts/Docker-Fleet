@@ -3,6 +3,7 @@ import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
 import { containersService } from '../services/containers.service';
 import { serversService } from '../services/servers.service';
 import { useSocket } from '../context/SocketContext';
+import { useRefetchOnVisible } from '../hooks/useRefetchOnVisible';
 import { imagesService } from '../services/images.service';
 import { backupSchedulesService } from '../services/backupSchedules.service';
 import LogsViewer from '../components/LogsViewer';
@@ -222,6 +223,13 @@ const ContainerDetails = () => {
       fetchBackupSchedules();
     }
   }, [activeTab, serverId, containerNameForBackups]);
+
+  // Refetch when user returns to tab so data is latest when viewed
+  useRefetchOnVisible(() => {
+    fetchContainerDetails();
+    fetchSnapshots();
+    if (activeTab === 'backups' && containerNameForBackups) fetchBackupSchedules();
+  });
 
   const openBackupScheduleModal = () => {
     setBackupScheduleForm({

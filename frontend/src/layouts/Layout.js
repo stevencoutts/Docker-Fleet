@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
@@ -8,25 +8,40 @@ const Layout = () => {
   const { user, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const location = useLocation();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  // Admin-only navigation items
+  // Close mobile menu on route change
+  useEffect(() => {
+    setMobileMenuOpen(false);
+  }, [location.pathname]);
+
   const adminNavigation = user?.role === 'admin' ? [
     { name: 'Users', path: '/admin/users' },
   ] : [];
 
-        // Personal navigation items (for all users)
-        const personalNavigation = [
-          { name: 'Scheduled backups', path: '/scheduled-backups' },
-          { name: 'Profile', path: '/profile' },
-          { name: 'Monitoring', path: '/monitoring' },
-        ];
+  const personalNavigation = [
+    { name: 'Scheduled backups', path: '/scheduled-backups' },
+    { name: 'Profile', path: '/profile' },
+    { name: 'Monitoring', path: '/monitoring' },
+  ];
+
+  const allNavItems = [
+    { name: 'Dashboard', path: '/' },
+    ...adminNavigation,
+    ...personalNavigation,
+  ];
 
   const isActive = (path) => {
-    if (path === '/') {
-      return location.pathname === '/';
-    }
+    if (path === '/') return location.pathname === '/';
     return location.pathname.startsWith(path);
   };
+
+  const navLinkClass = (path) =>
+    `block px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap ${
+      isActive(path)
+        ? 'bg-primary-50 dark:bg-primary-900/20 text-primary-700 dark:text-primary-300'
+        : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700'
+    }`;
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col transition-colors duration-200">
@@ -40,40 +55,38 @@ const Layout = () => {
                 </Link>
               </div>
               <div className="hidden sm:flex items-center gap-1 border-l border-gray-200 dark:border-gray-600 pl-6">
+                <Link to="/" className={navLinkClass('/')}>Dashboard</Link>
                 {adminNavigation.length > 0 && (
                   <>
                     {adminNavigation.map((item) => (
-                      <Link
-                        key={item.name}
-                        to={item.path}
-                        className={`inline-flex items-center px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap ${
-                          isActive(item.path)
-                            ? 'bg-primary-50 dark:bg-primary-900/20 text-primary-700 dark:text-primary-300'
-                            : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700'
-                        }`}
-                      >
-                        {item.name}
-                      </Link>
+                      <Link key={item.name} to={item.path} className={navLinkClass(item.path)}>{item.name}</Link>
                     ))}
                     <span className="text-gray-300 dark:text-gray-600 mx-1" aria-hidden>|</span>
                   </>
                 )}
                 {personalNavigation.map((item) => (
-                  <Link
-                    key={item.name}
-                    to={item.path}
-                    className={`inline-flex items-center px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap ${
-                      isActive(item.path)
-                        ? 'bg-primary-50 dark:bg-primary-900/20 text-primary-700 dark:text-primary-300'
-                        : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700'
-                    }`}
-                  >
-                    {item.name}
-                  </Link>
+                  <Link key={item.name} to={item.path} className={navLinkClass(item.path)}>{item.name}</Link>
                 ))}
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2 sm:gap-4 flex-shrink-0">
+              <button
+                type="button"
+                onClick={() => setMobileMenuOpen((o) => !o)}
+                className="sm:hidden p-2 rounded-lg text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                aria-label={mobileMenuOpen ? 'Close menu' : 'Open menu'}
+                aria-expanded={mobileMenuOpen}
+              >
+                {mobileMenuOpen ? (
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                ) : (
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                  </svg>
+                )}
+              </button>
               <button
                 onClick={toggleTheme}
                 className="p-2 rounded-lg text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
@@ -89,7 +102,7 @@ const Layout = () => {
                   </svg>
                 )}
               </button>
-              <span className="text-sm text-gray-600 dark:text-gray-400 truncate max-w-[10rem] sm:max-w-[12rem]" title={user?.email}>
+              <span className="text-sm text-gray-600 dark:text-gray-400 truncate max-w-[8rem] sm:max-w-[12rem]" title={user?.email}>
                 {user?.email}
               </span>
               <button
@@ -100,10 +113,27 @@ const Layout = () => {
               </button>
             </div>
           </div>
+          {/* Mobile menu */}
+          {mobileMenuOpen && (
+            <div className="sm:hidden border-t border-gray-200 dark:border-gray-700 py-2">
+              <div className="flex flex-col gap-0.5">
+                {allNavItems.map((item) => (
+                  <Link
+                    key={item.path}
+                    to={item.path}
+                    className={navLinkClass(item.path)}
+                    onClick={() => setMobileMenuOpen(false)}
+                  >
+                    {item.name}
+                  </Link>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </nav>
 
-      <main className="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8 flex-1 w-full">
+      <main className="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8 flex-1 w-full min-w-0 overflow-x-hidden">
         <Outlet />
       </main>
 

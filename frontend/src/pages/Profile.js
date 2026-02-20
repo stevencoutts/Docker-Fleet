@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { usersService } from '../services/users.service';
+import { useRefetchOnVisible } from '../hooks/useRefetchOnVisible';
 
 const Profile = () => {
   const { user: currentUser, setUser } = useAuth();
@@ -12,10 +13,6 @@ const Profile = () => {
   const [passwordForm, setPasswordForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
   const [showPasswordForm, setShowPasswordForm] = useState(false);
   const [success, setSuccess] = useState(null);
-
-  useEffect(() => {
-    fetchUser();
-  }, []);
 
   const fetchUser = async () => {
     try {
@@ -30,6 +27,12 @@ const Profile = () => {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    fetchUser();
+  }, []);
+
+  useRefetchOnVisible(fetchUser);
 
   const handleEdit = () => {
     setEditMode(true);

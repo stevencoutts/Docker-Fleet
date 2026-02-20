@@ -1,7 +1,8 @@
 const fs = require('fs');
 const path = require('path');
-const { Server } = require('../../models');
+const { Server, ServerContainerCache } = require('../../models');
 const dockerService = require('../../services/docker.service');
+const pollingService = require('../../services/polling.service');
 const { groupContainers } = require('../grouping/grouping.controller');
 const sshService = require('../../services/ssh.service');
 const logger = require('../../config/logger');
@@ -30,19 +31,27 @@ const getContainers = async (req, res, next) => {
       return res.status(404).json({ error: 'Server not found' });
     }
 
-    const containers = await dockerService.listContainers(server, all === 'true');
-    
-    // If grouping is requested, group the containers
+    // Read from DB cache only (background poller keeps it updated)
+    const rows = await ServerContainerCache.findAll({
+      where: { serverId },
+      order: [['containerId', 'ASC']],
+      raw: true,
+    });
+    const containers = (rows || []).map((r) => r.payload);
+    // all=true means include stopped; cache stores all from "docker ps -a". If all=false, filter to running only
+    const statusFilter = all === 'true' ? () => true : (c) => (c.Status || '').toLowerCase().startsWith('up');
+    const filtered = containers.filter(statusFilter);
+
     if (grouped === 'true') {
-      const { grouped: groupedContainers, ungrouped } = await groupContainers(req.user.id, containers);
-      return res.json({ 
-        containers,
+      const { grouped: groupedContainers, ungrouped } = await groupContainers(req.user.id, filtered);
+      return res.json({
+        containers: filtered,
         grouped: groupedContainers,
         ungrouped,
       });
     }
-    
-    res.json({ containers });
+
+    res.json({ containers: filtered });
   } catch (error) {
     next(error);
   }
@@ -219,8 +228,9 @@ const startContainer = async (req, res, next) => {
         action: 'started',
         userId: req.user.id,
       });
+      pollingService.syncServerNow(serverId).catch((e) => logger.warn('Polling refresh after start:', e.message));
     }
-    
+
     res.json(result);
   } catch (error) {
     next(error);
@@ -250,8 +260,9 @@ const stopContainer = async (req, res, next) => {
         action: 'stopped',
         userId: req.user.id,
       });
+      pollingService.syncServerNow(serverId).catch((e) => logger.warn('Polling refresh after stop:', e.message));
     }
-    
+
     res.json(result);
   } catch (error) {
     next(error);
@@ -272,7 +283,7 @@ const restartContainer = async (req, res, next) => {
     }
 
     const result = await dockerService.restartContainer(server, containerId);
-    
+
     // Emit WebSocket event to notify all clients of status change
     if (socketIO && result.success !== false) {
       socketIO.emit('container:status:changed', {
@@ -281,8 +292,9 @@ const restartContainer = async (req, res, next) => {
         action: 'restarted',
         userId: req.user.id,
       });
+      pollingService.syncServerNow(serverId).catch((e) => logger.warn('Polling refresh after restart:', e.message));
     }
-    
+
     res.json(result);
   } catch (error) {
     next(error);
@@ -303,6 +315,9 @@ const removeContainer = async (req, res, next) => {
     }
 
     const result = await dockerService.removeContainer(server, containerId, force === 'true');
+    if (result.success !== false) {
+      pollingService.syncServerNow(serverId).catch((e) => logger.warn('Polling refresh after remove:', e.message));
+    }
     res.json(result);
   } catch (error) {
     next(error);

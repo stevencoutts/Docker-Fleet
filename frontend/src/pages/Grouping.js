@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import groupingService from '../services/grouping.service';
+import { useRefetchOnVisible } from '../hooks/useRefetchOnVisible';
 
 const Grouping = () => {
   const [rules, setRules] = useState([]);
@@ -14,10 +15,6 @@ const Grouping = () => {
   });
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    fetchRules();
-  }, []);
-
   const fetchRules = async () => {
     try {
       setLoading(true);
@@ -30,6 +27,12 @@ const Grouping = () => {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    fetchRules();
+  }, []);
+
+  useRefetchOnVisible(fetchRules);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
