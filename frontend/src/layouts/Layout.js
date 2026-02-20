@@ -38,31 +38,32 @@ const Layout = () => {
   };
 
   const navLinkClass = (path) =>
-    `block px-3 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap ${
+    `block px-3 py-2 rounded-t-md text-sm font-medium transition-colors whitespace-nowrap border-b-2 -mb-px ${
       isActive(path)
-        ? 'bg-primary-50 dark:bg-primary-900/20 text-primary-700 dark:text-primary-300'
-        : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700'
+        ? 'border-primary-600 dark:border-primary-400 text-primary-700 dark:text-primary-300 bg-primary-50/50 dark:bg-primary-900/10'
+        : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700'
     }`;
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col transition-colors duration-200">
       <nav className="bg-white dark:bg-gray-800 shadow-sm border-b border-gray-200 dark:border-gray-700 transition-colors duration-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex flex-wrap items-stretch justify-between gap-x-6 gap-y-3 py-3 min-h-[4rem] sm:py-4 sm:min-h-0 sm:h-16 sm:flex-nowrap">
-            <div className="flex flex-wrap items-center gap-x-6 gap-y-2 min-w-0">
+          <div className="flex flex-nowrap items-center justify-between gap-4 py-3 min-h-[4rem] sm:py-4 sm:h-16">
+            <div className="flex items-center gap-4 lg:gap-6 min-w-0 flex-1">
               <div className="flex-shrink-0">
                 <Link to="/" className="text-xl font-bold text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors whitespace-nowrap">
                   DockerFleet Manager
                 </Link>
               </div>
-              <div className="hidden sm:flex items-center gap-1 border-l border-gray-200 dark:border-gray-600 pl-6">
+              <div className="hidden sm:flex items-end flex-1 min-w-0 overflow-x-auto overflow-y-hidden border-l border-gray-200 dark:border-gray-600 pl-4 lg:pl-6 gap-1">
                 <Link to="/" className={navLinkClass('/')}>Dashboard</Link>
                 {adminNavigation.length > 0 && (
                   <>
+                    <span className="text-gray-300 dark:text-gray-600 mx-1 self-center" aria-hidden>|</span>
                     {adminNavigation.map((item) => (
                       <Link key={item.name} to={item.path} className={navLinkClass(item.path)}>{item.name}</Link>
                     ))}
-                    <span className="text-gray-300 dark:text-gray-600 mx-1" aria-hidden>|</span>
+                    <span className="text-gray-300 dark:text-gray-600 mx-1 self-center" aria-hidden>|</span>
                   </>
                 )}
                 {personalNavigation.map((item) => (
@@ -70,7 +71,7 @@ const Layout = () => {
                 ))}
               </div>
             </div>
-            <div className="flex flex-wrap items-center gap-2 sm:gap-4 flex-shrink-0">
+            <div className="flex flex-nowrap items-center gap-2 sm:gap-4 flex-shrink-0">
               <button
                 type="button"
                 onClick={() => setMobileMenuOpen((o) => !o)}

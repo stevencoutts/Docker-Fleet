@@ -178,17 +178,22 @@ const importData = async (req, res, next) => {
       attributes: ['id', 'name', 'host'],
     });
     const serverKey = (s) => `${(s.name || '').trim()}\n${(s.host || '').trim()}`;
+    const serverName = (s) => (s.name || '').trim().toLowerCase();
     const oldIdToNewId = new Map();
     for (const backupS of backupServers) {
       const key = serverKey(backupS);
-      const match = currentServers.find((c) => serverKey(c) === key);
-      if (match) oldIdToNewId.set(backupS.id, match.id);
+      let match = currentServers.find((c) => serverKey(c) === key);
+      if (!match) {
+        const nameOnly = currentServers.filter((c) => serverName(c) === serverName(backupS));
+        if (nameOnly.length === 1) match = nameOnly[0];
+      }
+      if (match) oldIdToNewId.set(String(backupS.id), match.id);
     }
 
     let restored = { serversMatched: oldIdToNewId.size, serversInBackup: backupServers.length };
 
     for (const backupS of backupServers) {
-      const newId = oldIdToNewId.get(backupS.id);
+      const newId = oldIdToNewId.get(String(backupS.id));
       if (!newId) continue;
       await Server.update(
         {
@@ -204,7 +209,7 @@ const importData = async (req, res, next) => {
       await ServerProxyRoute.destroy({ where: { serverId: newServerId } });
     }
     for (const r of proxyRoutes) {
-      const newServerId = oldIdToNewId.get(r.serverId);
+      const newServerId = oldIdToNewId.get(String(r.serverId));
       if (!newServerId) continue;
       await ServerProxyRoute.create({
         serverId: newServerId,
@@ -213,7 +218,7 @@ const importData = async (req, res, next) => {
         containerPort: r.containerPort,
       });
     }
-    restored.proxyRoutes = proxyRoutes.filter((r) => oldIdToNewId.has(r.serverId)).length;
+    restored.proxyRoutes = proxyRoutes.filter((r) => oldIdToNewId.has(String(r.serverId))).length;
 
     if (data.monitoringSettings && typeof data.monitoringSettings === 'object') {
       const ms = data.monitoringSettings;
