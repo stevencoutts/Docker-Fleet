@@ -111,12 +111,13 @@ async function ensureHostnameResolves(server, onProgress) {
 }
 
 /**
- * Configure firewall: allow SSH (server.port), 80, 443; default deny incoming.
- * If ufw is not installed, try to install it first (Debian/Ubuntu).
+ * Configure firewall: only SSH (server.port), 80, 443 open; default deny incoming so Docker and other ports are blocked from the public internet.
+ * Removes any existing allow rules for other ports (e.g. Docker-mapped ports) before applying.
  */
 async function configureFirewall(server, onProgress) {
   const sshPort = server.port || 22;
-  if (onProgress) onProgress('firewall', 'Configuring firewall (allow SSH, 80, 443)...', 'running');
+  const allowedPorts = new Set([sshPort, 80, 443]);
+  if (onProgress) onProgress('firewall', 'Configuring firewall (only SSH, 80, 443; other ports blocked)...', 'running');
   const ufwCheck = await exec(server, 'sudo ufw status 2>&1', { allowFailure: true });
   const ufwMissing = ufwCheck.code !== 0 || (ufwCheck.stderr + ufwCheck.stdout).includes('not found');
   if (ufwMissing) {
@@ -134,12 +135,44 @@ async function configureFirewall(server, onProgress) {
       return;
     }
   }
+  // Set defaults first so we don't leave a window with everything open
+  await exec(server, 'sudo ufw default deny incoming', { allowFailure: true, timeout: 60000, logLabel: 'firewall_default_deny' });
+  await exec(server, 'sudo ufw default allow outgoing', { allowFailure: true, timeout: 60000, logLabel: 'firewall_default_out' });
+  // Remove any allow rules for ports other than SSH, 80, 443 (e.g. Docker 8083, 8084)
+  const numbered = await exec(server, 'sudo ufw status numbered 2>/dev/null || true', { allowFailure: true, timeout: 10000 });
+  const out = (numbered.stdout || '').trim();
+  const toDelete = [];
+  for (const line of out.split(/\n/)) {
+    const m = line.match(/\[\s*(\d+)\]\s+(\d+)\/tcp/);
+    if (m) {
+      const ruleNum = parseInt(m[1], 10);
+      const port = parseInt(m[2], 10);
+      if (!allowedPorts.has(port)) toDelete.push(ruleNum);
+    }
+  }
+  toDelete.sort((a, b) => b - a); // delete from highest index first
+  for (const num of toDelete) {
+    try {
+      await exec(server, `printf 'y\\n' | sudo ufw delete ${num}`, { allowFailure: true, timeout: 10000, logLabel: 'firewall_delete_rule' });
+    } catch (e) {
+      logger.warn('Public WWW: ufw delete rule failed:', e.message);
+    }
+  }
+  // Explicit deny for common container/app ports so they're blocked even when Docker adds iptables rules (Docker can otherwise open ports before UFW is evaluated)
+  const denyPorts = [];
+  for (let p = 8080; p <= 8095; p++) denyPorts.push(p);
+  [3000, 5000].forEach((p) => denyPorts.push(p));
+  for (const port of denyPorts) {
+    try {
+      await exec(server, `sudo ufw deny ${port}/tcp`, { allowFailure: true, timeout: 10000, logLabel: 'firewall_deny_port' });
+    } catch (e) {
+      logger.warn('Public WWW: ufw deny port failed:', e.message);
+    }
+  }
   const commands = [
     `sudo ufw allow ${sshPort}/tcp comment 'SSH'`,
     'sudo ufw allow 80/tcp comment "HTTP"',
     'sudo ufw allow 443/tcp comment "HTTPS"',
-    'sudo ufw default deny incoming',
-    'sudo ufw default allow outgoing',
     "printf 'y\\n' | sudo ufw enable",
   ];
   for (const cmd of commands) {
@@ -149,7 +182,7 @@ async function configureFirewall(server, onProgress) {
       logger.warn('Public WWW: firewall command failed:', e.message);
     }
   }
-  if (onProgress) onProgress('firewall', 'Firewall configured', 'ok');
+  if (onProgress) onProgress('firewall', 'Firewall configured (only 22, 80, 443 open; Docker ports blocked)', 'ok');
 }
 
 /**
@@ -172,11 +205,16 @@ async function ensureNginxAndCertbot(server, onProgress) {
 
 /**
  * List domain names that have a cert in /etc/letsencrypt/live/ (excludes README).
+ * Tries ls without sudo first (works when SSH user is root), then sudo ls if empty (for non-root with sudo).
  */
 async function getCertDomains(server) {
-  const r = await exec(server, 'ls -1 /etc/letsencrypt/live/ 2>/dev/null || true', { allowFailure: true });
-  const out = (r.stdout || '').trim();
-  const names = out ? out.split(/\n/).filter((n) => n && n !== 'README') : [];
+  let r = await exec(server, 'ls -1 /etc/letsencrypt/live/ 2>&1 || true', { allowFailure: true });
+  let out = ((r.stdout || '') + '\n' + (r.stderr || '')).trim();
+  if (!out) {
+    r = await exec(server, 'sudo ls -1 /etc/letsencrypt/live/ 2>&1 || true', { allowFailure: true });
+    out = ((r.stdout || '') + '\n' + (r.stderr || '')).trim();
+  }
+  const names = out ? out.split(/\n/).map((n) => n.trim()).filter((n) => n && n !== 'README') : [];
   return new Set(names);
 }
 
@@ -395,42 +433,47 @@ async function continueDnsCert(serverId, userId, options = {}) {
     }
   }
   const logResult = await exec(server, 'tail -80 /tmp/certbot-dns.log 2>/dev/null', { allowFailure: true });
-  throw new Error('Certificate did not appear in time. ' + (logResult.stdout || 'Check server /tmp/certbot-dns.log'));
+  const logSnippet = (logResult.stdout || '').trim();
+  if (logSnippet && (/Certbot failed to authenticate|NXDOMAIN|DNS problem:/i.test(logSnippet) || /check that a DNS record exists/i.test(logSnippet))) {
+    throw new Error(
+      `DNS validation failed for ${baseDomain}: the TXT record for _acme-challenge.${baseDomain} was not found or not yet propagated. ` +
+      'Add the record at your DNS provider, wait a few minutes for propagation, then click "Request challenge" again to get a new value (if needed) and "Continue" once the record is live.'
+    );
+  }
+  throw new Error('Certificate did not appear in time. ' + (logSnippet || 'Check server /tmp/certbot-dns.log'));
 }
 
 /**
- * List Let's Encrypt certificates on the server (certbot certificates). Returns name, domains, expiry, validDays.
+ * List Let's Encrypt certificates on the server: list /etc/letsencrypt/live/ (ls, then sudo ls if needed), read expiry per cert with openssl.
  */
 async function listCertificates(serverId, userId) {
   const server = await Server.findByPk(serverId);
   if (!server || server.userId !== userId) throw new Error('Server not found');
 
-  const r = await exec(server, 'sudo certbot certificates 2>/dev/null || true', { allowFailure: true, timeout: 30000 });
-  const out = (r.stdout || '').trim();
-  const certs = [];
-  let current = null;
-  for (const line of out.split(/\n/)) {
-    const nameMatch = line.match(/^\s*Certificate Name:\s*(.+)$/);
-    if (nameMatch) {
-      if (current) certs.push(current);
-      current = { name: nameMatch[1].trim(), domains: [], expiryDate: null, validDays: null };
-      continue;
-    }
-    if (current) {
-      const domainsMatch = line.match(/^\s*Domains:\s*(.+)$/);
-      if (domainsMatch) {
-        current.domains = domainsMatch[1].trim().split(/\s+/).filter(Boolean);
-        continue;
-      }
-      const expiryMatch = line.match(/^\s*Expiry Date:\s*(.+?)(?:\s+\(VALID:\s*(\d+)\s+days\))?\s*$/);
-      if (expiryMatch) {
-        current.expiryDate = expiryMatch[1].trim();
-        current.validDays = expiryMatch[2] != null ? parseInt(expiryMatch[2], 10) : null;
+  const names = await getCertDomains(server);
+  const list = [...names].filter((n) => n && n !== 'README').sort();
+  const certificates = [];
+
+  for (const name of list) {
+    const cert = { name, domains: [name], expiryDate: null, validDays: null };
+    const path = `/etc/letsencrypt/live/${name}`;
+    for (const certFile of ['fullchain.pem', 'cert.pem']) {
+      const r = await exec(server, `openssl x509 -enddate -noout -in '${path}/${certFile}' 2>&1 || sudo openssl x509 -enddate -noout -in '${path}/${certFile}' 2>&1 || true`, { allowFailure: true, timeout: 5000 });
+      const out = ((r.stdout || '') + '\n' + (r.stderr || '')).trim();
+      const m = out.match(/notAfter=(.+)/);
+      if (m) {
+        cert.expiryDate = m[1].trim();
+        try {
+          const d = new Date(cert.expiryDate);
+          if (!Number.isNaN(d.getTime())) cert.validDays = Math.max(0, Math.ceil((d - Date.now()) / (24 * 60 * 60 * 1000)));
+        } catch (e) { /* ignore */ }
+        break;
       }
     }
+    certificates.push(cert);
   }
-  if (current) certs.push(current);
-  return { certificates: certs };
+
+  return { certificates };
 }
 
 /**

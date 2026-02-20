@@ -501,6 +501,24 @@ class DockerService {
         binds = null;
       }
 
+      let portBindings = details.HostConfig?.PortBindings || null;
+      const portMappings = options.portMappings;
+      if (portMappings && Array.isArray(portMappings) && portMappings.length > 0) {
+        const bindings = {};
+        for (const p of portMappings) {
+          const hostPort = p.hostPort != null ? String(p.hostPort).trim() : '';
+          if (!hostPort) continue;
+          const key = `${p.containerPort || ''}/${p.protocol || 'tcp'}`;
+          if (!key || key === '/tcp') continue;
+          if (!bindings[key]) bindings[key] = [];
+          bindings[key].push({
+            HostIp: p.hostIp != null ? String(p.hostIp).trim() || '0.0.0.0' : '0.0.0.0',
+            HostPort: hostPort,
+          });
+        }
+        portBindings = Object.keys(bindings).length > 0 ? bindings : null;
+      }
+
       const createBody = {
         Image: imageRef,
         Cmd: details.Config?.Cmd || null,
@@ -511,7 +529,7 @@ class DockerService {
         Hostname: details.Config?.Hostname || null,
         HostConfig: {
           Binds: binds,
-          PortBindings: details.HostConfig?.PortBindings || null,
+          PortBindings: portBindings,
           RestartPolicy: details.HostConfig?.RestartPolicy || null,
           NetworkMode: details.HostConfig?.NetworkMode || null,
           Mounts: details.HostConfig?.Mounts || null,

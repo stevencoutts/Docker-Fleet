@@ -2,7 +2,7 @@
 
 On a host with a public IP you can enable **Public WWW** so that:
 
-- The host is only reachable on **ports 80 and 443** (and SSH). Firewall (UFW) is configured to allow SSH, 80, 443 and deny other incoming.
+- The host is only reachable on **ports 80 and 443** (and SSH). Firewall (UFW) allows only SSH, 80, 443; default deny incoming so **Docker-mapped ports (e.g. 8083, 8084) are blocked** from the public internet. Any existing allow rules for other ports are removed when you Enable.
 - **Nginx** runs as a reverse proxy and forwards each configured domain to a container port (e.g. `app.example.com` → `localhost:8080`).
 - **Let's Encrypt** is used to obtain TLS certificates for each domain (HTTP → HTTPS redirect).
 
@@ -13,6 +13,22 @@ On a host with a public IP you can enable **Public WWW** so that:
 - DNS: each domain must point to the host’s public IP before enabling or syncing (Let’s Encrypt will validate the domain).
 
 **Nginx in containers vs host:** If you see nginx in `ps` with `daemon off`, that is nginx **inside a container**. Public WWW installs **system nginx on the host** as the reverse proxy. Ports 80/443 must be free on the host; stop any container binding directly to 80/443 if you want host nginx to use them.
+
+### Docker ports still open from the internet?
+
+UFW is set to allow only 22, 80, 443 and to explicitly deny common container ports (e.g. 8080–8095, 3000, 5000). Even so, **Docker adds its own iptables rules** when you publish ports; on many systems those rules are evaluated before UFW, so ports like 8083 or 8084 can still appear open to the internet (e.g. `nmap` shows them).
+
+**Reliable fix:** in your app’s **docker-compose**, bind published ports to **127.0.0.1** only so they are not listening on the public interface. Nginx on the host can still proxy to `127.0.0.1:PORT`.
+
+```yaml
+ports:
+  - "127.0.0.1:8083:80"    # only localhost; nginx can proxy to this
+  - "127.0.0.1:8084:8083"
+```
+
+Avoid `"8083:80"` (which binds to `0.0.0.0:8083` and can be reached from the internet despite UFW on some setups). After changing to `127.0.0.1:...`, redeploy the stack and run **Sync config** so nginx keeps proxying to the same ports.
+
+If you see **port 53** (or others) open, that is from another service (e.g. Pi-hole). To expose only 22, 80, 443, either bind that service to 127.0.0.1 or add a UFW deny for that port and re-enable Public WWW.
 
 ## Configuration
 
@@ -39,7 +55,7 @@ If Enable times out (e.g. on slow or constrained hosts):
 
 ## Behaviour
 
-- **Enable:** Ensures the host’s hostname resolves (adds it to `/etc/hosts` if needed), configures UFW (allow 22, 80, 443; default deny), installs nginx and certbot if needed, writes nginx config from current proxy routes, reloads nginx, runs certbot for each domain, sets `publicWwwEnabled` on the server.
+- **Enable:** Ensures the host’s hostname resolves (adds it to `/etc/hosts` if needed), configures UFW so only 22, 80, 443 are allowed (removes any other allow rules so Docker ports stay blocked), installs nginx and certbot if needed, writes nginx config from current proxy routes, reloads nginx, runs certbot for each domain, sets `publicWwwEnabled` on the server.
 - **Sync:** Rewrites nginx config from current routes, reloads nginx, runs certbot for any new domains.
 - **Disable:** Removes the generated nginx config and reloads nginx; sets `publicWwwEnabled` to false. UFW is **not** reverted (ports 80/443 may still be open).
 
