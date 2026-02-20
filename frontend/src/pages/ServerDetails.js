@@ -568,6 +568,13 @@ const ServerDetails = () => {
     <div className="px-4 py-6 sm:px-0">
       {/* Header */}
       <div className="mb-6">
+        {server.lastSyncError && (
+          <div className="mb-4 p-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800">
+            <p className="text-sm font-medium text-red-800 dark:text-red-200">Data sync error</p>
+            <p className="text-sm text-red-700 dark:text-red-300 mt-1" title={server.lastSyncError}>{server.lastSyncError}</p>
+            <p className="text-xs text-red-600 dark:text-red-400 mt-1">Check SSH access, Docker, and firewall. Refresh will retry.</p>
+          </div>
+        )}
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">

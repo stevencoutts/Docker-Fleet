@@ -996,6 +996,12 @@ const Dashboard = () => {
                       </div>
                     </div>
                   </div>
+                  {server.lastSyncError && (
+                    <div className="mt-2 p-2 rounded bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800">
+                      <p className="text-xs font-medium text-red-800 dark:text-red-200">Sync error</p>
+                      <p className="text-xs text-red-700 dark:text-red-300 truncate" title={server.lastSyncError}>{server.lastSyncError}</p>
+                    </div>
+                  )}
                   <div className="mt-4 space-y-2">
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-gray-500 dark:text-gray-400">Containers</span>

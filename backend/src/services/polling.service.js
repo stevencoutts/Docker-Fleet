@@ -4,11 +4,15 @@
  */
 const { Server, ServerContainerCache, ServerHostInfoCache } = require('../models');
 const dockerService = require('./docker.service');
+const sshService = require('./ssh.service');
 const { getIO } = require('../config/socket');
 const logger = require('../config/logger');
 
 const DEFAULT_INTERVAL_MS = 30 * 1000; // 30 seconds
 const CONCURRENCY = 1; // Sync one server at a time to limit SSH load
+
+// Last sync error per server (for UI diagnostics). Cleared on success.
+const lastSyncErrorByServerId = new Map();
 
 function getIntervalMs() {
   const env = process.env.POLLING_INTERVAL_MS || process.env.DOCKERFLEET_POLLING_INTERVAL_MS;
@@ -17,6 +21,14 @@ function getIntervalMs() {
     if (n >= 5000) return n;
   }
   return DEFAULT_INTERVAL_MS;
+}
+
+function setSyncError(serverId, message) {
+  lastSyncErrorByServerId.set(serverId, message);
+}
+
+function clearSyncError(serverId) {
+  lastSyncErrorByServerId.delete(serverId);
 }
 
 async function syncServer(server) {
@@ -37,6 +49,7 @@ async function syncServer(server) {
       await ServerContainerCache.bulkCreate(rows);
     }
     logger.debug(`Polling: synced ${containers.length} containers for server ${serverId}`);
+    clearSyncError(serverId);
 
     // Host info
     try {
@@ -57,7 +70,13 @@ async function syncServer(server) {
       io.emit('server:hostinfo:updated', { serverId });
     }
   } catch (err) {
-    logger.error(`Polling: sync failed for server ${serverId}:`, err.message);
+    const msg = err.message || String(err);
+    logger.error(`Polling: sync failed for server ${serverId}:`, msg);
+    setSyncError(serverId, msg);
+    // Disconnect SSH so next tick tries a fresh connection (helps after host reboot/update)
+    try {
+      sshService.disconnect(serverId);
+    } catch (e) { /* ignore */ }
   }
 }
 
@@ -99,12 +118,11 @@ class PollingService {
     }
     this.isRunning = true;
     try {
-      const servers = await Server.findAll({ attributes: ['id', 'name', 'host', 'userId'] });
-      const toSync = servers;
-      for (const server of toSync) {
+      // Load full server (need port, username, privateKeyEncrypted for SSH)
+      const servers = await Server.findAll();
+      for (const server of servers) {
         await syncServer(server);
       }
-      // Drain refresh queue: if any server was requested for refresh, we already sync all above.
       this.refreshQueue.clear();
     } catch (err) {
       logger.error('Polling tick error:', err.message);
@@ -117,9 +135,16 @@ class PollingService {
    * Run a one-off sync for a single server (e.g. after user action). Non-blocking.
    */
   async syncServerNow(serverId) {
-    const server = await Server.findByPk(serverId, { attributes: ['id', 'name', 'host', 'userId'] });
+    const server = await Server.findByPk(serverId);
     if (!server) return;
     await syncServer(server);
+  }
+
+  /**
+   * Get last sync error for a server (for UI diagnostics). Returns null if none.
+   */
+  getLastSyncError(serverId) {
+    return lastSyncErrorByServerId.get(serverId) ?? null;
   }
 }
 

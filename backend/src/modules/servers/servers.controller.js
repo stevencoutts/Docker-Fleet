@@ -1,6 +1,7 @@
 const { body } = require('express-validator');
 const { Server } = require('../../models');
 const sshService = require('../../services/ssh.service');
+const pollingService = require('../../services/polling.service');
 const logger = require('../../config/logger');
 
 const getAllServers = async (req, res, next) => {
@@ -14,6 +15,8 @@ const getAllServers = async (req, res, next) => {
     const serversData = servers.map(server => {
       const serverData = server.toJSON();
       delete serverData.privateKeyEncrypted;
+      const lastSyncError = pollingService.getLastSyncError(server.id);
+      if (lastSyncError) serverData.lastSyncError = lastSyncError;
       return serverData;
     });
 
@@ -38,7 +41,9 @@ const getServerById = async (req, res, next) => {
     // Never send the encrypted private key in the response for security
     const serverData = server.toJSON();
     delete serverData.privateKeyEncrypted;
-    
+    const lastSyncError = pollingService.getLastSyncError(id);
+    if (lastSyncError) serverData.lastSyncError = lastSyncError;
+
     res.json({ server: serverData });
   } catch (error) {
     next(error);
