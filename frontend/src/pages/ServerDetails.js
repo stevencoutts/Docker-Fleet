@@ -1215,6 +1215,43 @@ const ServerDetails = () => {
             </ul>
           </div>
         )}
+        {/* Installed custom nginx configs: view/edit per-domain configs */}
+        {!proxyRoutesLoading && proxyRoutes.some((r) => r.customNginxBlock) && (
+          <div className="rounded-xl border border-amber-200 dark:border-amber-800/60 bg-amber-50/30 dark:bg-amber-900/10 p-5">
+            <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3 flex items-center gap-2">
+              <span className="h-px w-4 bg-amber-500 rounded-full" />
+              Installed custom nginx configs
+            </h3>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">View or edit per-domain custom server blocks. Click Edit to open the editor in the proxy routes list below.</p>
+            <ul className="space-y-3">
+              {proxyRoutes.filter((r) => r.customNginxBlock).map((r) => (
+                <li key={r.id} className="rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800/60 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                    <span className="font-mono font-medium text-gray-900 dark:text-gray-100">{r.domain}</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRouteCustomNginxEditing(r.id);
+                        setRouteCustomNginxText(r.customNginxBlock ?? '');
+                        setTimeout(() => {
+                          const el = document.getElementById(`route-${r.id}`);
+                          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        }, 100);
+                      }}
+                      className="text-sm font-medium text-primary-600 dark:text-primary-400 hover:underline"
+                    >
+                      Edit
+                    </button>
+                  </div>
+                  <pre className="text-xs font-mono text-gray-700 dark:text-gray-300 overflow-x-auto max-h-32 overflow-y-auto p-2 rounded bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-600 whitespace-pre-wrap break-all">
+                    {(r.customNginxBlock || '').trim()}
+                  </pre>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
         <div className="border-t border-gray-200 dark:border-gray-700 pt-5">
           <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3 flex items-center gap-2">
             <span className="h-px w-4 bg-primary-500 rounded-full" />
@@ -1226,7 +1263,7 @@ const ServerDetails = () => {
             <>
               <ul className="space-y-2 mb-4">
                 {proxyRoutes.map((r) => (
-                  <li key={r.id} className="space-y-1">
+                  <li key={r.id} id={`route-${r.id}`} className="space-y-1">
                     <div className="flex flex-wrap items-center gap-2 text-sm py-2 px-3 rounded-lg bg-gray-50 dark:bg-gray-800/50 border border-gray-200/80 dark:border-gray-600/80">
                       <span className="font-mono font-medium text-gray-900 dark:text-gray-100">{r.domain}</span>
                       <span className="text-gray-400 dark:text-gray-500">→</span>
