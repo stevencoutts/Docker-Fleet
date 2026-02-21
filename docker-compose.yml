@@ -9,7 +9,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5433:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-dockerfleet_user}"]
       interval: 10s
@@ -55,7 +55,7 @@ services:
       MONITORING_CHECK_INTERVAL_MS: ${MONITORING_CHECK_INTERVAL_MS:-60000}
       MONITORING_ALERT_COOLDOWN_MS: ${MONITORING_ALERT_COOLDOWN_MS:-300000}
     ports:
-      - "5020:5000"
+      - "127.0.0.1:5020:5000"
     volumes:
       - ./backend/logs:/app/logs
     depends_on:
@@ -72,7 +72,7 @@ services:
       dockerfile: Dockerfile
     container_name: dockerfleet-frontend
     ports:
-      - "3020:80"
+      - "127.0.0.1:3020:80"
     depends_on:
       - backend
     networks:
