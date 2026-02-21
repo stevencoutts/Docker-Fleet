@@ -975,18 +975,25 @@ const Dashboard = () => {
                       <div className="ml-5 flex-1 min-w-0 overflow-hidden">
                         <dl className="min-w-0">
                           <dt className="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">
-                            {/* Always show the friendly name the user entered (e.g. plex.couttsnet.com) */}
                             {server.name || server.host}
                           </dt>
                           <dd className="text-lg font-medium text-gray-900 dark:text-gray-100 flex items-center gap-2 min-w-0">
-                            {/* Show name and IP; flex-1 min-w-0 so this span takes space and truncates only when needed */}
+                            {/* Big: host (connection IP/hostname); small: public IP/host (manual, detected, or name) */}
                             <span className="flex-1 min-w-0 truncate">
-                              {server.name || server.host}
-                              {server.host && (
+                              {server.host || server.name}
+                              {(server.publicHost && (
                                 <span className="text-xs text-gray-500 dark:text-gray-400 ml-1">
-                                  ({server.host})
+                                  ({server.publicHost})
                                 </span>
-                              )}
+                              )) || (hostInfos[server.id]?.publicIp && (
+                                <span className="text-xs text-gray-500 dark:text-gray-400 ml-1">
+                                  ({hostInfos[server.id].publicIp})
+                                </span>
+                              )) || (server.name && server.host && String(server.name).trim() !== String(server.host).trim() && (
+                                <span className="text-xs text-gray-500 dark:text-gray-400 ml-1">
+                                  ({server.name})
+                                </span>
+                              ))}
                             </span>
                             {server.publicWwwEnabled && (
                               <span className="shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-primary-100 dark:bg-primary-900/40 text-primary-800 dark:text-primary-200" title="Public WWW (nginx + Let's Encrypt) enabled">

@@ -36,7 +36,7 @@ const exportData = async (req, res, next) => {
 
     const servers = await Server.findAll({
       where: { userId },
-      attributes: ['id', 'name', 'host', 'port', 'username', 'publicWwwEnabled', 'sshAllowedIps', 'customNginxConfig'],
+      attributes: ['id', 'name', 'host', 'port', 'username', 'publicWwwEnabled', 'sshAllowedIps', 'customNginxConfig', 'publicHost'],
     });
 
     const serverIds = servers.map((s) => s.id);
@@ -95,6 +95,7 @@ const exportData = async (req, res, next) => {
         publicWwwEnabled: s.publicWwwEnabled,
         sshAllowedIps: s.sshAllowedIps ?? null,
         customNginxConfig: s.customNginxConfig ?? null,
+        publicHost: s.publicHost ?? null,
       })),
       serverProxyRoutes: proxyRoutes.map((r) => ({
         serverId: r.serverId,
@@ -203,6 +204,7 @@ const importData = async (req, res, next) => {
           publicWwwEnabled: !!backupS.publicWwwEnabled,
           sshAllowedIps: backupS.sshAllowedIps ?? null,
           customNginxConfig: backupS.customNginxConfig ?? null,
+          publicHost: backupS.publicHost ?? null,
         },
         { where: { id: newId, userId } }
       );

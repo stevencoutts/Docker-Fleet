@@ -86,6 +86,11 @@ module.exports = (sequelize) => {
         allowNull: true,
         field: 'custom_nginx_config',
       },
+      publicHost: {
+        type: DataTypes.STRING(255),
+        allowNull: true,
+        field: 'public_host',
+      },
       privateKeyEncrypted: {
         type: DataTypes.JSON,
         allowNull: false,

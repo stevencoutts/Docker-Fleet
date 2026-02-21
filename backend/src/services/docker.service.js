@@ -1293,6 +1293,21 @@ class DockerService {
       }
     }
 
+    // Public IP (outbound) for display when server is behind NAT / private IP
+    try {
+      const publicIpResult = await sshService.executeCommand(
+        server,
+        'curl -s --max-time 5 -4 ifconfig.me 2>/dev/null || curl -s --max-time 5 -4 icanhazip.com 2>/dev/null || true',
+        { allowFailure: true, timeout: 8000 }
+      );
+      if (publicIpResult && publicIpResult.stdout && publicIpResult.stdout.trim()) {
+        const ip = publicIpResult.stdout.trim();
+        if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ip)) results.publicIp = ip;
+      }
+    } catch (err) {
+      logger.debug('Public IP detection failed:', err.message);
+    }
+
     // CPU info
     try {
       const cpuCoresResult = await sshService.executeCommand(server, 'nproc', { allowFailure: true });

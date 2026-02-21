@@ -12,6 +12,7 @@ const AddServer = () => {
     port: '22',
     username: '',
     privateKey: '',
+    publicHost: '',
   });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -31,6 +32,7 @@ const AddServer = () => {
             port: server.port?.toString() || '22',
             username: server.username || '',
             privateKey: '', // Don't pre-fill private key for security
+            publicHost: server.publicHost || '',
           });
         })
         .catch(error => {
@@ -82,6 +84,7 @@ const AddServer = () => {
           host: formData.host,
           port: formData.port,
           username: formData.username,
+          publicHost: formData.publicHost?.trim() || '',
         };
         // Only include privateKey if it was changed
         if (formData.privateKey.trim()) {
@@ -157,6 +160,24 @@ const AddServer = () => {
             />
             <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
               You can use either an IP address (e.g., 192.168.1.100) or a DNS name (e.g., server.example.com, kore.couttsnet.com)
+            </p>
+          </div>
+
+          <div>
+            <label htmlFor="publicHost" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+              Public IP / host (optional)
+            </label>
+            <input
+              type="text"
+              id="publicHost"
+              name="publicHost"
+              value={formData.publicHost}
+              onChange={handleChange}
+              className="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+              placeholder="e.g. 100.67.238.27 or vps.example.com"
+            />
+            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              Shown on the dashboard in brackets as the public address this server is reached from (e.g. when Host is a private IP)
             </p>
           </div>
 

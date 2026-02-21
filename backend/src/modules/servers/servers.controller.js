@@ -53,7 +53,7 @@ const getServerById = async (req, res, next) => {
 
 const createServer = async (req, res, next) => {
   try {
-    const { name, host, port, username, privateKey } = req.body;
+    const { name, host, port, username, privateKey, publicHost } = req.body;
 
     // Validate required fields
     if (!name || !host || !username || !privateKey) {
@@ -119,6 +119,7 @@ const createServer = async (req, res, next) => {
       port: port || 22,
       username,
       privateKeyEncrypted: privateKey,
+      publicHost: publicHost && String(publicHost).trim() ? String(publicHost).trim() : null,
     });
 
     logger.info(`Server ${server.id} created by user ${req.user.id}`);
@@ -148,7 +149,7 @@ const createServer = async (req, res, next) => {
 const updateServer = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { name, host, port, username, privateKey, sshAllowedIps, publicWwwEnabled } = req.body;
+    const { name, host, port, username, privateKey, sshAllowedIps, publicWwwEnabled, publicHost } = req.body;
 
     const server = await Server.findOne({
       where: { id, userId: req.user.id },
@@ -198,6 +199,9 @@ const updateServer = async (req, res, next) => {
     }
     if (publicWwwEnabled !== undefined) {
       server.publicWwwEnabled = !!publicWwwEnabled;
+    }
+    if (publicHost !== undefined) {
+      server.publicHost = publicHost === '' || publicHost == null ? null : String(publicHost).trim() || null;
     }
 
     await server.save();
@@ -291,6 +295,7 @@ const updateServerValidation = [
   body('privateKey').optional(), // Private key is optional when updating
   body('sshAllowedIps').optional().isString().withMessage('SSH allowed IPs must be a string'),
   body('publicWwwEnabled').optional().isBoolean().withMessage('publicWwwEnabled must be a boolean'),
+  body('publicHost').optional().isString().withMessage('publicHost must be a string'),
 ];
 
 module.exports = {
