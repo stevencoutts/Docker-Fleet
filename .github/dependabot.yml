@@ -1,0 +1,16 @@
+# https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+    ignore:
+      # Transitive via bfj (react-scripts). No patched version; safe to dismiss alert with "No fix available".
+      - dependency-name: "jsonpath"
+
+  - package-ecosystem: "npm"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
