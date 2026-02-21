@@ -47,8 +47,11 @@ const ServerDetails = () => {
   const [enableSteps, setEnableSteps] = useState([]);
   const [routeAdding, setRouteAdding] = useState(false);
   const [routeBusy, setRouteBusy] = useState(null); // { routeId, action: 'remove' }
+  const [routeCustomNginxEditing, setRouteCustomNginxEditing] = useState(null); // routeId when editing per-route custom nginx
+  const [routeCustomNginxText, setRouteCustomNginxText] = useState('');
+  const [routeCustomNginxSaving, setRouteCustomNginxSaving] = useState(false);
   const [containerAction, setContainerAction] = useState({}); // { [containerId]: 'start'|'stop'|'restart'|'remove' }
-  const [newRouteForm, setNewRouteForm] = useState({ domain: '', containerName: '', containerPort: '80' });
+  const [newRouteForm, setNewRouteForm] = useState({ domain: '', containerName: '', containerPort: '80', customNginxBlock: '' });
   const [dnsCertChallenge, setDnsCertChallenge] = useState(null);
   const [dnsCertLoading, setDnsCertLoading] = useState(false);
   const [dnsCertForRouteId, setDnsCertForRouteId] = useState(null);
@@ -1236,44 +1239,100 @@ const ServerDetails = () => {
             <>
               <ul className="space-y-2 mb-4">
                 {proxyRoutes.map((r) => (
-                  <li key={r.id} className="flex flex-wrap items-center gap-2 text-sm">
-                    <span className="font-mono text-gray-900 dark:text-gray-100">{r.domain}</span>
-                    <span className="text-gray-500">→</span>
-                    <span className="font-mono text-gray-700 dark:text-gray-300">{r.containerName}:{r.containerPort}</span>
-                    {server?.publicWwwEnabled && (
+                  <li key={r.id} className="space-y-1">
+                    <div className="flex flex-wrap items-center gap-2 text-sm">
+                      <span className="font-mono text-gray-900 dark:text-gray-100">{r.domain}</span>
+                      <span className="text-gray-500">→</span>
+                      <span className="font-mono text-gray-700 dark:text-gray-300">{r.containerName}:{r.containerPort}</span>
+                      {r.customNginxBlock && <span className="text-xs text-amber-600 dark:text-amber-400" title="Custom nginx set">(custom nginx)</span>}
                       <button
                         type="button"
-                        disabled={dnsCertLoading}
+                        disabled={routeBusy?.routeId === r.id || routeCustomNginxSaving}
                         onClick={() => {
-                          setDnsCertForRouteId(r.id);
-                          setDnsCertDomain(r.domain.replace(/^\*\./, ''));
-                          setDnsCertWildcard(false);
-                          setDnsCertChallenge(null);
+                          setRouteCustomNginxEditing(r.id);
+                          setRouteCustomNginxText(r.customNginxBlock ?? '');
                         }}
-                        className="text-primary-600 dark:text-primary-400 hover:underline"
+                        className="text-primary-600 dark:text-primary-400 hover:underline disabled:opacity-50"
                       >
-                        Get cert (DNS)
+                        Custom nginx
                       </button>
+                      {server?.publicWwwEnabled && (
+                        <button
+                          type="button"
+                          disabled={dnsCertLoading}
+                          onClick={() => {
+                            setDnsCertForRouteId(r.id);
+                            setDnsCertDomain(r.domain.replace(/^\*\./, ''));
+                            setDnsCertWildcard(false);
+                            setDnsCertChallenge(null);
+                          }}
+                          className="text-primary-600 dark:text-primary-400 hover:underline"
+                        >
+                          Get cert (DNS)
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        disabled={routeBusy?.routeId === r.id}
+                        onClick={async () => {
+                          setRouteBusy({ routeId: r.id, action: 'remove' });
+                          try {
+                            await publicWwwService.deleteProxyRoute(serverId, r.id);
+                            await fetchProxyRoutes();
+                            if (dnsCertForRouteId === r.id) setDnsCertForRouteId(null);
+                            if (routeCustomNginxEditing === r.id) setRouteCustomNginxEditing(null);
+                          } catch (e) {
+                            alert(e.response?.data?.error || 'Delete failed');
+                          } finally {
+                            setRouteBusy(null);
+                          }
+                        }}
+                        className="text-red-600 dark:text-red-400 hover:underline disabled:opacity-50"
+                      >
+                        {routeBusy?.routeId === r.id ? 'Removing…' : 'Remove'}
+                      </button>
+                    </div>
+                    {routeCustomNginxEditing === r.id && (
+                      <div className="ml-0 pl-0 mt-2 p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-700">
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">Custom nginx for {r.domain}. Leave empty to use generated server block. Paste full server block(s).</p>
+                        <textarea
+                          value={routeCustomNginxText}
+                          onChange={(e) => setRouteCustomNginxText(e.target.value)}
+                          placeholder={`server {\n    listen 80;\n    server_name ${r.domain};\n    location / { proxy_pass http://127.0.0.1:${r.containerPort}; ... }\n}`}
+                          rows={6}
+                          className="w-full text-sm font-mono text-gray-800 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg p-2"
+                        />
+                        <div className="flex gap-2 mt-2">
+                          <button
+                            type="button"
+                            disabled={routeCustomNginxSaving}
+                            onClick={async () => {
+                              setRouteCustomNginxSaving(true);
+                              try {
+                                await publicWwwService.updateProxyRoute(serverId, r.id, { customNginxBlock: routeCustomNginxText });
+                                await fetchProxyRoutes();
+                                setRouteCustomNginxEditing(null);
+                              } catch (e) {
+                                alert(e.response?.data?.error || e.message || 'Save failed');
+                              } finally {
+                                setRouteCustomNginxSaving(false);
+                              }
+                            }}
+                            className="px-3 py-1.5 text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 rounded-lg disabled:opacity-50"
+                          >
+                            {routeCustomNginxSaving ? 'Saving…' : 'Save'}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={routeCustomNginxSaving}
+                            onClick={() => { setRouteCustomNginxEditing(null); setRouteCustomNginxText(''); }}
+                            className="px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-lg"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
                     )}
-                    <button
-                      type="button"
-                      disabled={routeBusy?.routeId === r.id}
-                      onClick={async () => {
-                        setRouteBusy({ routeId: r.id, action: 'remove' });
-                        try {
-                          await publicWwwService.deleteProxyRoute(serverId, r.id);
-                          await fetchProxyRoutes();
-                          if (dnsCertForRouteId === r.id) setDnsCertForRouteId(null);
-                        } catch (e) {
-                          alert(e.response?.data?.error || 'Delete failed');
-                        } finally {
-                          setRouteBusy(null);
-                        }
-                      }}
-                      className="text-red-600 dark:text-red-400 hover:underline disabled:opacity-50"
-                    >
-                      {routeBusy?.routeId === r.id ? 'Removing…' : 'Remove'}
-                    </button>
                   </li>
                 ))}
                 {proxyRoutes.length === 0 && <li className="text-gray-500">No routes. Add one below.</li>}
@@ -1402,31 +1461,32 @@ const ServerDetails = () => {
                   )}
                 </div>
               )}
-              <div className="flex flex-wrap items-end gap-2">
-                <input
-                  type="text"
-                  placeholder="Domain (e.g. app.example.com)"
-                  value={newRouteForm.domain}
-                  onChange={(e) => setNewRouteForm((f) => ({ ...f, domain: e.target.value }))}
-                  className="rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 px-2 py-1.5 text-sm min-w-[160px]"
-                />
-                <input
-                  type="text"
-                  placeholder="Container name"
-                  value={newRouteForm.containerName}
-                  onChange={(e) => setNewRouteForm((f) => ({ ...f, containerName: e.target.value }))}
-                  className="rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 px-2 py-1.5 text-sm min-w-[120px]"
-                />
-                <input
-                  type="number"
-                  min={1}
-                  max={65535}
-                  placeholder="Port"
-                  value={newRouteForm.containerPort}
-                  onChange={(e) => setNewRouteForm((f) => ({ ...f, containerPort: e.target.value }))}
-                  className="rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 px-2 py-1.5 text-sm w-20"
-                />
-                <button
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-end gap-2">
+                  <input
+                    type="text"
+                    placeholder="Domain (e.g. app.example.com)"
+                    value={newRouteForm.domain}
+                    onChange={(e) => setNewRouteForm((f) => ({ ...f, domain: e.target.value }))}
+                    className="rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 px-2 py-1.5 text-sm min-w-[160px]"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Container name"
+                    value={newRouteForm.containerName}
+                    onChange={(e) => setNewRouteForm((f) => ({ ...f, containerName: e.target.value }))}
+                    className="rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 px-2 py-1.5 text-sm min-w-[120px]"
+                  />
+                  <input
+                    type="number"
+                    min={1}
+                    max={65535}
+                    placeholder="Port"
+                    value={newRouteForm.containerPort}
+                    onChange={(e) => setNewRouteForm((f) => ({ ...f, containerPort: e.target.value }))}
+                    className="rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 px-2 py-1.5 text-sm w-20"
+                  />
+                  <button
                   type="button"
                   disabled={routeAdding}
                   onClick={async () => {
@@ -1440,8 +1500,9 @@ const ServerDetails = () => {
                         domain: newRouteForm.domain.trim(),
                         containerName: newRouteForm.containerName.trim(),
                         containerPort: parseInt(newRouteForm.containerPort, 10) || 80,
+                        customNginxBlock: newRouteForm.customNginxBlock?.trim() || undefined,
                       });
-                      setNewRouteForm({ domain: '', containerName: '', containerPort: '80' });
+                      setNewRouteForm({ domain: '', containerName: '', containerPort: '80', customNginxBlock: '' });
                       await fetchProxyRoutes();
                     } catch (e) {
                       alert(e.response?.data?.error || 'Add failed');
@@ -1453,6 +1514,17 @@ const ServerDetails = () => {
                 >
                   {routeAdding ? 'Adding…' : 'Add route'}
                 </button>
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Custom nginx (optional)</label>
+                  <textarea
+                    value={newRouteForm.customNginxBlock}
+                    onChange={(e) => setNewRouteForm((f) => ({ ...f, customNginxBlock: e.target.value }))}
+                    placeholder="Leave empty for generated server block. Or paste custom server block(s) for this domain."
+                    rows={3}
+                    className="w-full max-w-2xl text-sm font-mono text-gray-800 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg px-2 py-1.5"
+                  />
+                </div>
               </div>
             </>
           )}

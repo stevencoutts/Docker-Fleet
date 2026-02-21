@@ -70,16 +70,14 @@ server {
 `;
 }
 
-/** Domains that have a cert in /etc/letsencrypt/live/<domain>/ (base name only, e.g. example.com). */
-function buildNginxConfig(routes, certDomains = new Set()) {
-  const defaultBlock = buildDefaultServerBlock();
-  const blocks = (routes || []).map((r) => {
-    const domain = r.domain.trim();
-    const port = parseInt(r.containerPort, 10) || 80;
-    const baseDomain = domain.replace(/^\*\./, '');
-    const hasCert = certDomains.has(baseDomain);
+/** Generate the default server block(s) for one route (HTTP + optional HTTPS). */
+function buildDefaultRouteBlock(r, certDomains = new Set()) {
+  const domain = r.domain.trim();
+  const port = parseInt(r.containerPort, 10) || 80;
+  const baseDomain = domain.replace(/^\*\./, '');
+  const hasCert = certDomains.has(baseDomain);
 
-    let block = `
+  let block = `
 server {
     listen 80;
     server_name ${domain};
@@ -95,8 +93,8 @@ server {
         proxy_send_timeout 60s;
     }
 }`;
-    if (hasCert) {
-      block += `
+  if (hasCert) {
+    block += `
 server {
     listen 443 ssl;
     server_name ${domain};
@@ -114,8 +112,17 @@ server {
         proxy_send_timeout 60s;
     }
 }`;
-    }
-    return block;
+  }
+  return block;
+}
+
+/** Domains that have a cert in /etc/letsencrypt/live/<domain>/ (base name only, e.g. example.com). */
+function buildNginxConfig(routes, certDomains = new Set()) {
+  const defaultBlock = buildDefaultServerBlock();
+  const blocks = (routes || []).map((r) => {
+    const custom = (r.customNginxBlock || '').trim();
+    if (custom) return custom;
+    return buildDefaultRouteBlock(r, certDomains);
   });
   return defaultBlock + (blocks.join('\n') || '# No proxy routes\n');
 }

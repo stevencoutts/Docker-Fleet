@@ -14,6 +14,7 @@ const { getHostInfo } = require('./system.controller');
 const {
   listProxyRoutes,
   addProxyRoute,
+  updateProxyRoute,
   deleteProxyRoute,
   enablePublicWww,
   disablePublicWww,
@@ -33,6 +34,7 @@ router.get('/', getAllServers);
 router.get('/:id/host-info', getHostInfo);
 router.get('/:id/proxy-routes', listProxyRoutes);
 router.post('/:id/proxy-routes', addProxyRoute);
+router.patch('/:id/proxy-routes/:routeId', updateProxyRoute);
 router.delete('/:id/proxy-routes/:routeId', deleteProxyRoute);
 router.post('/:id/public-www/enable', enablePublicWww);
 router.post('/:id/public-www/disable', disablePublicWww);

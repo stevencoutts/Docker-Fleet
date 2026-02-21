@@ -17,7 +17,7 @@ async function listProxyRoutes(req, res, next) {
 async function addProxyRoute(req, res, next) {
   try {
     const { id: serverId } = req.params;
-    const { domain, containerName, containerPort } = req.body;
+    const { domain, containerName, containerPort, customNginxBlock } = req.body;
 
     const server = await Server.findOne({ where: { id: serverId, userId: req.user.id } });
     if (!server) return res.status(404).json({ error: 'Server not found' });
@@ -31,8 +31,28 @@ async function addProxyRoute(req, res, next) {
       domain: String(domain).trim(),
       containerName: String(containerName).trim(),
       containerPort: port,
+      customNginxBlock: typeof customNginxBlock === 'string' ? customNginxBlock : null,
     });
     res.status(201).json({ route });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function updateProxyRoute(req, res, next) {
+  try {
+    const { id: serverId, routeId } = req.params;
+    const { customNginxBlock } = req.body ?? {};
+
+    const server = await Server.findOne({ where: { id: serverId, userId: req.user.id } });
+    if (!server) return res.status(404).json({ error: 'Server not found' });
+
+    const route = await ServerProxyRoute.findOne({ where: { id: routeId, serverId } });
+    if (!route) return res.status(404).json({ error: 'Proxy route not found' });
+
+    const value = customNginxBlock !== undefined ? (typeof customNginxBlock === 'string' ? customNginxBlock : null) : route.customNginxBlock;
+    await route.update({ customNginxBlock: value });
+    res.json({ route });
   } catch (error) {
     next(error);
   }
@@ -176,6 +196,7 @@ async function updateCustomNginxConfig(req, res, next) {
 module.exports = {
   listProxyRoutes,
   addProxyRoute,
+  updateProxyRoute,
   deleteProxyRoute,
   enablePublicWww,
   disablePublicWww,

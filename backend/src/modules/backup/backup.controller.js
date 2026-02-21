@@ -100,6 +100,7 @@ const exportData = async (req, res, next) => {
         domain: r.domain,
         containerName: r.containerName,
         containerPort: r.containerPort,
+        customNginxBlock: r.customNginxBlock ?? null,
       })),
       monitoringSettings: monitoringSettings
         ? {
@@ -234,6 +235,7 @@ const importData = async (req, res, next) => {
         domain: r.domain,
         containerName: r.containerName,
         containerPort: r.containerPort,
+        customNginxBlock: r.customNginxBlock ?? null,
       });
     }
     restored.proxyRoutes = proxyRoutes.filter((r) => oldIdToNewId.has(String(r.serverId))).length;

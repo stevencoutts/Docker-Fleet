@@ -31,6 +31,11 @@ module.exports = (sequelize) => {
         allowNull: false,
         field: 'container_port',
       },
+      customNginxBlock: {
+        type: DataTypes.TEXT,
+        allowNull: true,
+        field: 'custom_nginx_block',
+      },
       createdAt: {
         type: DataTypes.DATE,
         allowNull: false,
