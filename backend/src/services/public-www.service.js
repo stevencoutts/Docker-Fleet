@@ -266,6 +266,13 @@ async function ensureNginxAndCertbot(server, onProgress) {
 }
 
 /**
+ * Disable the distro default nginx site so our default_server in dockerfleet-proxy.conf is used (no "Welcome to nginx!").
+ */
+async function disableNginxDefaultSite(server) {
+  await exec(server, 'sudo rm -f /etc/nginx/sites-enabled/default', { allowFailure: true });
+}
+
+/**
  * Ensure the Docker Fleet default page exists on the host (so nginx default_server can serve it).
  */
 async function ensureDefaultPage(server) {
@@ -340,6 +347,7 @@ async function enablePublicWww(serverId, userId, options = {}) {
     await ensureHostnameResolves(server, onProgress);
     await configureFirewall(server, onProgress);
     await ensureNginxAndCertbot(server, onProgress);
+    await disableNginxDefaultSite(server);
     await ensureDefaultPage(server);
     await writeNginxConfigAndReload(server, routes, onProgress);
     if (routes.length > 0) await runCertbot(server, routes, certbotEmail, onProgress);
@@ -378,6 +386,7 @@ async function syncProxy(serverId, userId) {
   const routes = await ServerProxyRoute.findAll({ where: { serverId } });
 
   await ensureNginxAndCertbot(server);
+  await disableNginxDefaultSite(server);
   await ensureDefaultPage(server);
   await writeNginxConfigAndReload(server, routes);
   if (routes.length > 0) await runCertbot(server, routes);
