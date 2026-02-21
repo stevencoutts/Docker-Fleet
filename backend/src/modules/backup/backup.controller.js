@@ -93,6 +93,7 @@ const exportData = async (req, res, next) => {
         username: s.username,
         publicWwwEnabled: s.publicWwwEnabled,
         sshAllowedIps: s.sshAllowedIps ?? null,
+        customNginxConfig: s.customNginxConfig ?? null,
       })),
       serverProxyRoutes: proxyRoutes.map((r) => ({
         serverId: r.serverId,
@@ -199,6 +200,7 @@ const importData = async (req, res, next) => {
         {
           publicWwwEnabled: !!backupS.publicWwwEnabled,
           sshAllowedIps: backupS.sshAllowedIps ?? null,
+          customNginxConfig: backupS.customNginxConfig ?? null,
         },
         { where: { id: newId, userId } }
       );

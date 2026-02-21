@@ -64,10 +64,15 @@ export function getNginxConfig(serverId) {
   return api.get(`/api/v1/servers/${serverId}/public-www/nginx-config`);
 }
 
+export function updateCustomNginxConfig(serverId, customNginxConfig) {
+  return api.put(`/api/v1/servers/${serverId}/public-www/custom-nginx-config`, { customNginxConfig });
+}
+
 export const publicWwwService = {
   getProxyRoutes: (serverId) => api.get(`/api/v1/servers/${serverId}/proxy-routes`),
   getCertificates,
   getNginxConfig,
+  updateCustomNginxConfig,
   addProxyRoute: (serverId, data) => api.post(`/api/v1/servers/${serverId}/proxy-routes`, data),
   deleteProxyRoute: (serverId, routeId) => api.delete(`/api/v1/servers/${serverId}/proxy-routes/${routeId}`),
   enable: (serverId) => api.post(`/api/v1/servers/${serverId}/public-www/enable`, {}, { timeout: LONG_TIMEOUT_MS }),

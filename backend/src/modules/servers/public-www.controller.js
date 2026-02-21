@@ -159,6 +159,20 @@ async function getNginxConfig(req, res, next) {
   }
 }
 
+async function updateCustomNginxConfig(req, res, next) {
+  try {
+    const { id: serverId } = req.params;
+    const { customNginxConfig } = req.body ?? {};
+    const result = await publicWwwService.updateCustomNginxConfig(serverId, req.user.id, {
+      customNginxConfig: typeof customNginxConfig === 'string' ? customNginxConfig : null,
+    });
+    res.json(result);
+  } catch (error) {
+    if (error.message === 'Server not found') return res.status(404).json({ error: error.message });
+    next(error);
+  }
+}
+
 module.exports = {
   listProxyRoutes,
   addProxyRoute,
@@ -170,4 +184,5 @@ module.exports = {
   continueDnsCert,
   listCertificates,
   getNginxConfig,
+  updateCustomNginxConfig,
 };

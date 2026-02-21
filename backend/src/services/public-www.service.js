@@ -298,12 +298,14 @@ async function getCertDomains(server) {
 }
 
 /**
- * Write nginx config and reload nginx. If certDomains not provided, fetches from server.
+ * Write nginx config and reload nginx. If server.customNginxConfig is set (non-empty), that is used; otherwise config is generated from routes.
+ * If certDomains not provided, fetches from server.
  */
 async function writeNginxConfigAndReload(server, routes, onProgress, certDomains) {
   if (onProgress) onProgress('nginx_config', 'Writing nginx config and reloading...', 'running');
+  const custom = (server.customNginxConfig || '').trim();
   const domains = certDomains ?? await getCertDomains(server);
-  const config = buildNginxConfig(routes, domains);
+  const config = custom || buildNginxConfig(routes, domains);
   const escaped = config.replace(/'/g, "'\\''");
   await exec(server, `echo '${escaped}' | sudo tee ${NGINX_CONF_PATH} > /dev/null`, { allowFailure: false });
   await exec(server, 'sudo nginx -t && sudo systemctl reload nginx', { allowFailure: true });
@@ -563,7 +565,7 @@ const EMPTY_NGINX_PLACEHOLDER = '# No proxy routes';
 
 /**
  * Read the current nginx proxy config from the server (content of dockerfleet-proxy.conf).
- * When the file is empty or only the placeholder, also returns generatedConfig from current routes so the UI can show it.
+ * Always returns generatedConfig (from routes) and customNginxConfig (stored) for the UI.
  */
 async function getNginxConfig(serverId, userId) {
   const server = await Server.findByPk(serverId);
@@ -571,16 +573,28 @@ async function getNginxConfig(serverId, userId) {
 
   const r = await exec(server, `sudo cat ${NGINX_CONF_PATH} 2>/dev/null || true`, { allowFailure: true, timeout: 10000 });
   const config = (r.stdout || '').trim() || null;
-  const isPlaceholder = !config || config === EMPTY_NGINX_PLACEHOLDER || config.trim() === EMPTY_NGINX_PLACEHOLDER;
+  const routes = await ServerProxyRoute.findAll({ where: { serverId }, order: [['domain', 'ASC']] });
+  const certDomains = await getCertDomains(server);
+  const generatedConfig = buildNginxConfig(routes, certDomains);
+  const customNginxConfig = (server.customNginxConfig || '').trim() || undefined;
 
-  let generatedConfig = null;
-  if (isPlaceholder) {
-    const routes = await ServerProxyRoute.findAll({ where: { serverId }, order: [['domain', 'ASC']] });
-    const certDomains = await getCertDomains(server);
-    generatedConfig = buildNginxConfig(routes, certDomains);
-  }
+  return {
+    path: NGINX_CONF_PATH,
+    config,
+    generatedConfig,
+    customNginxConfig,
+  };
+}
 
-  return { path: NGINX_CONF_PATH, config, generatedConfig: generatedConfig || undefined };
+/**
+ * Update the server's custom nginx config. Pass customNginxConfig (string or null) to set or clear.
+ */
+async function updateCustomNginxConfig(serverId, userId, { customNginxConfig }) {
+  const server = await Server.findByPk(serverId);
+  if (!server || server.userId !== userId) throw new Error('Server not found');
+  const value = customNginxConfig != null && typeof customNginxConfig === 'string' ? customNginxConfig : null;
+  await server.update({ customNginxConfig: value });
+  return { customNginxConfig: (value || '').trim() || undefined };
 }
 
 module.exports = {
@@ -592,6 +606,7 @@ module.exports = {
   continueDnsCert,
   listCertificates,
   getNginxConfig,
+  updateCustomNginxConfig,
   buildNginxConfig,
   getCertDomains,
 };

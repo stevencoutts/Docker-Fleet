@@ -60,6 +60,8 @@ const ServerDetails = () => {
   const [certsLoading, setCertsLoading] = useState(false);
   const [nginxConfigView, setNginxConfigView] = useState(null);
   const [nginxConfigLoading, setNginxConfigLoading] = useState(false);
+  const [customNginxConfigText, setCustomNginxConfigText] = useState('');
+  const [customNginxConfigSaving, setCustomNginxConfigSaving] = useState(false);
   const [sshAllowedIps, setSshAllowedIps] = useState('');
   const [sshAllowedIpsSaving, setSshAllowedIpsSaving] = useState(false);
 
@@ -961,6 +963,39 @@ const ServerDetails = () => {
         <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
           Restriction is applied when you Enable Public WWW or click Sync config. Leave empty to allow SSH from any IP.
         </p>
+        <div className="mb-4">
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Custom nginx config</label>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+            If set, Sync config will use this instead of the generated config. Leave empty to use generated config.
+          </p>
+          <textarea
+            value={customNginxConfigText}
+            onChange={(e) => setCustomNginxConfigText(e.target.value)}
+            placeholder="# Optional: paste your full nginx config here..."
+            rows={8}
+            className="w-full text-sm font-mono text-gray-800 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg p-2 focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+          />
+          <button
+            type="button"
+            disabled={customNginxConfigSaving}
+            onClick={async () => {
+              setCustomNginxConfigSaving(true);
+              try {
+                await publicWwwService.updateCustomNginxConfig(serverId, customNginxConfigText);
+                if (nginxConfigView != null) {
+                  setNginxConfigView((v) => (v ? { ...v, customNginxConfig: (customNginxConfigText || '').trim() || undefined } : v));
+                }
+              } catch (e) {
+                alert(e.response?.data?.error || e.message || 'Failed to save');
+              } finally {
+                setCustomNginxConfigSaving(false);
+              }
+            }}
+            className="mt-2 px-3 py-1.5 text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 dark:bg-primary-500 dark:hover:bg-primary-600 rounded-lg disabled:opacity-50"
+          >
+            {customNginxConfigSaving ? 'Saving…' : 'Save custom config'}
+          </button>
+        </div>
         <div className="flex flex-wrap items-center gap-2 mb-4">
           <span className={`px-2 py-1 rounded text-sm font-medium ${server?.publicWwwEnabled ? 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200' : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'}`}>
             {server?.publicWwwEnabled ? 'Enabled' : 'Disabled'}
@@ -1062,7 +1097,8 @@ const ServerDetails = () => {
               setNginxConfigView(null);
               try {
                 const res = await publicWwwService.getNginxConfig(serverId);
-                setNginxConfigView({ path: res.data.path, config: res.data.config, generatedConfig: res.data.generatedConfig });
+                setNginxConfigView({ path: res.data.path, config: res.data.config, generatedConfig: res.data.generatedConfig, customNginxConfig: res.data.customNginxConfig });
+                setCustomNginxConfigText(res.data.customNginxConfig ?? '');
               } catch (e) {
                 setNginxConfigView({ path: '/etc/nginx/conf.d/dockerfleet-proxy.conf', config: null, error: e.response?.data?.error || e.message });
               } finally {
@@ -1089,17 +1125,23 @@ const ServerDetails = () => {
             </div>
             {nginxConfigView.error ? (
               <p className="text-sm text-red-600 dark:text-red-400">{nginxConfigView.error}</p>
-            ) : nginxConfigView.generatedConfig ? (
+            ) : (nginxConfigView.generatedConfig || nginxConfigView.customNginxConfig) ? (
               <>
+                {nginxConfigView.config && nginxConfigView.config !== '# No proxy routes' && (
+                  <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Current file on server:</p>
+                )}
                 {nginxConfigView.config && nginxConfigView.config !== '# No proxy routes' ? (
-                  <pre className="text-xs font-mono text-gray-800 dark:text-gray-200 overflow-x-auto max-h-96 overflow-y-auto p-2 rounded bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 whitespace-pre-wrap break-all mb-3">
+                  <pre className="text-xs font-mono text-gray-800 dark:text-gray-200 overflow-x-auto max-h-48 overflow-y-auto p-2 rounded bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 whitespace-pre-wrap break-all mb-3">
                     {nginxConfigView.config}
                   </pre>
-                ) : (
-                  <p className="text-sm text-amber-700 dark:text-amber-300 mb-2">File on server is empty or placeholder. Generated config below — click <strong>Sync config</strong> to apply.</p>
+                ) : nginxConfigView.config !== '# No proxy routes' && (
+                  <p className="text-sm text-amber-700 dark:text-amber-300 mb-2">File on server is empty or placeholder. Click <strong>Sync config</strong> to apply the config below.</p>
                 )}
+                <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
+                  {nginxConfigView.customNginxConfig ? 'Custom config (used when you Sync):' : 'Generated config (used when you Sync when no custom config is set):'}
+                </p>
                 <pre className="text-xs font-mono text-gray-800 dark:text-gray-200 overflow-x-auto max-h-96 overflow-y-auto p-2 rounded bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 whitespace-pre-wrap break-all">
-                  {nginxConfigView.generatedConfig}
+                  {nginxConfigView.customNginxConfig || nginxConfigView.generatedConfig}
                 </pre>
               </>
             ) : nginxConfigView.config ? (

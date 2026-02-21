@@ -81,6 +81,11 @@ module.exports = (sequelize) => {
         allowNull: true,
         field: 'ssh_allowed_ips',
       },
+      customNginxConfig: {
+        type: DataTypes.TEXT,
+        allowNull: true,
+        field: 'custom_nginx_config',
+      },
       privateKeyEncrypted: {
         type: DataTypes.JSON,
         allowNull: false,
