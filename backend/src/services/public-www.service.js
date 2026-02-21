@@ -581,6 +581,58 @@ async function listCertificates(serverId, userId) {
 const EMPTY_NGINX_PLACEHOLDER = '# No proxy routes';
 
 /**
+ * Extract server blocks from nginx config text that match the given domain (server_name).
+ * Returns the full server { ... } block(s) as a single string, or null if none match.
+ * Handles nested braces (e.g. location { } inside server { }).
+ */
+function extractServerBlocksForDomain(configText, domain) {
+  if (!configText || typeof domain !== 'string') return null;
+  const normalizedDomain = domain.replace(/^\*\./, '').trim();
+  if (!normalizedDomain) return null;
+  const blocks = [];
+  let i = 0;
+  const s = configText;
+  while (i < s.length) {
+    const serverStart = s.indexOf('server', i);
+    if (serverStart === -1) break;
+    const braceStart = s.indexOf('{', serverStart);
+    if (braceStart === -1) { i = serverStart + 1; continue; }
+    let depth = 1;
+    let j = braceStart + 1;
+    while (j < s.length && depth > 0) {
+      const ch = s[j];
+      if (ch === '{') depth++;
+      else if (ch === '}') depth--;
+      j++;
+    }
+    const block = s.slice(serverStart, j).trim();
+    const serverNameMatch = block.match(/server_name\s+([^;]+);/);
+    const names = serverNameMatch ? serverNameMatch[1].split(/\s+/).map((n) => n.trim().replace(/^["']|["']$/g, '')) : [];
+    const matches = names.some((n) => {
+      const d = n.replace(/^["']|["']$/g, '');
+      return d === normalizedDomain || d === domain || d === `*.${normalizedDomain}` || d.endsWith(`.${normalizedDomain}`);
+    });
+    if (matches) blocks.push(block);
+    i = j;
+  }
+  return blocks.length > 0 ? blocks.join('\n\n') : null;
+}
+
+/**
+ * Read the current nginx config from the server and return the server block(s) for the given domain.
+ * Use this to "import" existing nginx config for a domain into the route's custom nginx block.
+ */
+async function importNginxBlockForDomain(serverId, userId, domain) {
+  const server = await Server.findByPk(serverId);
+  if (!server || server.userId !== userId) throw new Error('Server not found');
+  const r = await exec(server, `sudo cat ${NGINX_CONF_PATH} 2>/dev/null || true`, { allowFailure: true, timeout: 10000 });
+  const config = (r.stdout || '').trim() || null;
+  if (!config) return { block: null, error: 'No nginx config found on server' };
+  const block = extractServerBlocksForDomain(config, domain);
+  return { block: block || null, error: block ? undefined : 'No server block found for this domain' };
+}
+
+/**
  * Read the current nginx proxy config from the server (content of dockerfleet-proxy.conf).
  * Always returns generatedConfig (from routes) and customNginxConfig (stored) for the UI.
  */
@@ -623,6 +675,7 @@ module.exports = {
   continueDnsCert,
   listCertificates,
   getNginxConfig,
+  importNginxBlockForDomain,
   updateCustomNginxConfig,
   buildNginxConfig,
   getCertDomains,

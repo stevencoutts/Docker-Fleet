@@ -50,6 +50,7 @@ const ServerDetails = () => {
   const [routeCustomNginxEditing, setRouteCustomNginxEditing] = useState(null); // routeId when editing per-route custom nginx
   const [routeCustomNginxText, setRouteCustomNginxText] = useState('');
   const [routeCustomNginxSaving, setRouteCustomNginxSaving] = useState(false);
+  const [routeImportingNginx, setRouteImportingNginx] = useState(null); // routeId when importing
   const [containerAction, setContainerAction] = useState({}); // { [containerId]: 'start'|'stop'|'restart'|'remove' }
   const [newRouteForm, setNewRouteForm] = useState({ domain: '', containerName: '', containerPort: '80' });
   const [dnsCertChallenge, setDnsCertChallenge] = useState(null);
@@ -65,6 +66,8 @@ const ServerDetails = () => {
   const [nginxConfigLoading, setNginxConfigLoading] = useState(false);
   const [sshAllowedIps, setSshAllowedIps] = useState('');
   const [sshAllowedIpsSaving, setSshAllowedIpsSaving] = useState(false);
+  const [publicWwwDomainsOpen, setPublicWwwDomainsOpen] = useState(false);
+  const [publicWwwSettingsOpen, setPublicWwwSettingsOpen] = useState(false);
 
   const stepLabel = (step) => {
     const labels = { hostname: 'Hostname', firewall: 'Firewall', install_nginx: 'Install nginx & certbot', nginx_config: 'Nginx config', certbot: 'Certificate(s)', done: 'Done' };
@@ -913,12 +916,26 @@ const ServerDetails = () => {
         </div>
 
         <div className="p-6 space-y-6">
-          {/* Settings card */}
-          <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/30 p-5">
-            <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-4 flex items-center gap-2">
+          {/* Settings: collapsible */}
+          <div>
+            <button
+              type="button"
+              onClick={() => setPublicWwwSettingsOpen((o) => !o)}
+              className="w-full text-left flex items-center gap-2 mb-3 group"
+            >
+              <span className="text-gray-500 dark:text-gray-400 transition-transform group-hover:text-gray-700 dark:group-hover:text-gray-300" aria-hidden>
+                {publicWwwSettingsOpen ? (
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
+                ) : (
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
+                )}
+              </span>
               <span className="h-px w-4 bg-primary-500 rounded-full" />
-              Settings
-            </h3>
+              <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">Settings</h3>
+            </button>
+            {publicWwwSettingsOpen && (
+            <>
+          <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/30 p-5">
             <div className="space-y-4">
               <div className="flex flex-wrap items-center gap-3">
                 <label className="text-sm font-medium text-gray-700 dark:text-gray-300 w-52 shrink-0">Let&apos;s Encrypt email</label>
@@ -1105,6 +1122,9 @@ const ServerDetails = () => {
             )}
           </button>
         </div>
+            </>
+            )}
+          </div>
         {nginxConfigView != null && (
           <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50/80 dark:bg-gray-900/40 p-4">
             <div className="flex items-center justify-between mb-3">
@@ -1170,20 +1190,38 @@ const ServerDetails = () => {
         )}
         {/* Domains: one card per proxy route with cert + custom nginx grouped */}
         <div className="border-t border-gray-200 dark:border-gray-700 pt-5">
-          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setPublicWwwDomainsOpen((o) => !o)}
+            className="w-full text-left flex items-center gap-2 mb-3 group"
+          >
+            <span className="text-gray-500 dark:text-gray-400 transition-transform group-hover:text-gray-700 dark:group-hover:text-gray-300" aria-hidden>
+              {publicWwwDomainsOpen ? (
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" /></svg>
+              ) : (
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
+              )}
+            </span>
             <span className="h-px w-4 bg-primary-500 rounded-full" />
-            Domains
-            {server?.publicWwwEnabled && (
+            <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">Domains</h3>
+            {!proxyRoutesLoading && (
+              <span className="text-xs text-gray-500 dark:text-gray-400 font-normal">
+                ({proxyRoutes.length === 0 ? 'none' : `${proxyRoutes.length} route${proxyRoutes.length !== 1 ? 's' : ''}`})
+              </span>
+            )}
+            {server?.publicWwwEnabled && publicWwwDomainsOpen && (
               <button
                 type="button"
                 disabled={certsLoading}
-                onClick={() => fetchCertificates()}
+                onClick={(e) => { e.stopPropagation(); fetchCertificates(); }}
                 className="ml-2 text-xs font-medium text-primary-600 dark:text-primary-400 hover:underline disabled:opacity-50"
               >
                 {certsLoading ? 'Refreshing…' : 'Refresh certs'}
               </button>
             )}
-          </h3>
+          </button>
+          {publicWwwDomainsOpen && (
+            <>
           <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">Certificate, proxy route, and nginx config per domain.</p>
           {proxyRoutesLoading ? (
             <p className="text-sm text-gray-500">Loading…</p>
@@ -1242,6 +1280,7 @@ const ServerDetails = () => {
                                   type="button"
                                   disabled={dnsCertLoading}
                                   onClick={() => {
+                                    setPublicWwwDomainsOpen(true);
                                     setDnsCertForRouteId(r.id);
                                     setDnsCertDomain(baseDomain);
                                     setDnsCertWildcard(false);
@@ -1264,30 +1303,80 @@ const ServerDetails = () => {
                                   {(r.customNginxBlock || '').trim().split('\n').slice(0, 6).join('\n')}
                                   {(r.customNginxBlock || '').trim().split('\n').length > 6 ? '\n…' : ''}
                                 </pre>
+                                <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                                  <button
+                                    type="button"
+                                    disabled={routeCustomNginxSaving}
+                                    onClick={() => {
+                                      setRouteCustomNginxEditing(r.id);
+                                      setRouteCustomNginxText(r.customNginxBlock ?? '');
+                                    }}
+                                    className="text-primary-600 dark:text-primary-400 hover:underline text-xs"
+                                  >
+                                    Edit custom nginx
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={routeCustomNginxSaving || routeImportingNginx === r.id}
+                                    onClick={async () => {
+                                      setRouteImportingNginx(r.id);
+                                      try {
+                                        const res = await publicWwwService.importNginxBlock(serverId, r.domain);
+                                        if (res.data?.block) {
+                                          setRouteCustomNginxText(res.data.block);
+                                          setRouteCustomNginxEditing(r.id);
+                                        } else {
+                                          alert(res.data?.error || 'No server block found for this domain on the host.');
+                                        }
+                                      } catch (e) {
+                                        alert(e.response?.data?.error || e.message || 'Import failed');
+                                      } finally {
+                                        setRouteImportingNginx(null);
+                                      }
+                                    }}
+                                    className="text-primary-600 dark:text-primary-400 hover:underline text-xs disabled:opacity-50"
+                                  >
+                                    {routeImportingNginx === r.id ? 'Importing…' : 'Import from server'}
+                                  </button>
+                                </span>
+                              </>
+                            ) : (
+                              <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
                                 <button
                                   type="button"
-                                  disabled={routeCustomNginxSaving}
+                                  disabled={routeBusy?.routeId === r.id || routeCustomNginxSaving}
                                   onClick={() => {
                                     setRouteCustomNginxEditing(r.id);
-                                    setRouteCustomNginxText(r.customNginxBlock ?? '');
+                                    setRouteCustomNginxText('');
                                   }}
                                   className="text-primary-600 dark:text-primary-400 hover:underline text-xs"
                                 >
-                                  Edit custom nginx
+                                  Add custom nginx
                                 </button>
-                              </>
-                            ) : (
-                              <button
-                                type="button"
-                                disabled={routeBusy?.routeId === r.id || routeCustomNginxSaving}
-                                onClick={() => {
-                                  setRouteCustomNginxEditing(r.id);
-                                  setRouteCustomNginxText('');
-                                }}
-                                className="text-primary-600 dark:text-primary-400 hover:underline text-xs"
-                              >
-                                Add custom nginx
-                              </button>
+                                <button
+                                  type="button"
+                                  disabled={routeBusy?.routeId === r.id || routeCustomNginxSaving || routeImportingNginx === r.id}
+                                  onClick={async () => {
+                                    setRouteImportingNginx(r.id);
+                                    try {
+                                      const res = await publicWwwService.importNginxBlock(serverId, r.domain);
+                                      if (res.data?.block) {
+                                        setRouteCustomNginxText(res.data.block);
+                                        setRouteCustomNginxEditing(r.id);
+                                      } else {
+                                        alert(res.data?.error || 'No server block found for this domain on the host.');
+                                      }
+                                    } catch (e) {
+                                      alert(e.response?.data?.error || e.message || 'Import failed');
+                                    } finally {
+                                      setRouteImportingNginx(null);
+                                    }
+                                  }}
+                                  className="text-primary-600 dark:text-primary-400 hover:underline text-xs disabled:opacity-50"
+                                >
+                                  {routeImportingNginx === r.id ? 'Importing…' : 'Import from server'}
+                                </button>
+                              </span>
                             )}
                           </div>
                         </div>
@@ -1527,6 +1616,8 @@ const ServerDetails = () => {
                 </button>
                 </div>
               </div>
+            </>
+          )}
             </>
           )}
         </div>

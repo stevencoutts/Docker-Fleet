@@ -64,6 +64,11 @@ export function getNginxConfig(serverId) {
   return api.get(`/api/v1/servers/${serverId}/public-www/nginx-config`);
 }
 
+/** Import existing nginx server block(s) for a domain from the server. Returns { block, error }. */
+export function importNginxBlock(serverId, domain) {
+  return api.get(`/api/v1/servers/${serverId}/public-www/nginx-import`, { params: { domain } });
+}
+
 export function updateCustomNginxConfig(serverId, customNginxConfig) {
   return api.put(`/api/v1/servers/${serverId}/public-www/custom-nginx-config`, { customNginxConfig });
 }
@@ -72,6 +77,7 @@ export const publicWwwService = {
   getProxyRoutes: (serverId) => api.get(`/api/v1/servers/${serverId}/proxy-routes`),
   getCertificates,
   getNginxConfig,
+  importNginxBlock,
   updateCustomNginxConfig,
   addProxyRoute: (serverId, data) => api.post(`/api/v1/servers/${serverId}/proxy-routes`, data),
   updateProxyRoute: (serverId, routeId, data) =>

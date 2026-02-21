@@ -179,6 +179,19 @@ async function getNginxConfig(req, res, next) {
   }
 }
 
+async function getImportNginxBlock(req, res, next) {
+  try {
+    const { id: serverId } = req.params;
+    const domain = req.query.domain || req.body?.domain;
+    if (!domain || !String(domain).trim()) return res.status(400).json({ error: 'domain is required' });
+    const result = await publicWwwService.importNginxBlockForDomain(serverId, req.user.id, String(domain).trim());
+    res.json(result);
+  } catch (error) {
+    if (error.message === 'Server not found') return res.status(404).json({ error: error.message });
+    next(error);
+  }
+}
+
 async function updateCustomNginxConfig(req, res, next) {
   try {
     const { id: serverId } = req.params;
@@ -205,5 +218,6 @@ module.exports = {
   continueDnsCert,
   listCertificates,
   getNginxConfig,
+  getImportNginxBlock,
   updateCustomNginxConfig,
 };
