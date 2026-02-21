@@ -7,6 +7,8 @@ const sshService = require('./ssh.service');
 const logger = require('../config/logger');
 
 const NGINX_CONF_PATH = '/etc/nginx/conf.d/dockerfleet-proxy.conf';
+const NGINX_DEFAULT_PAGE_DIR = '/etc/nginx/dockerfleet-default';
+const NGINX_DEFAULT_PAGE_PATH = '/etc/nginx/dockerfleet-default/index.html';
 const CERTBOT_DNS_HOOK_PATH = '/tmp/certbot-dns-hook.sh';
 const CERTBOT_DNS_RUNNER_PATH = '/tmp/certbot-dns-runner.sh';
 const CERTBOT_DNS_CONTINUE_FILE = '/tmp/certbot-dns-continue';
@@ -27,8 +29,50 @@ rm -f ${CERTBOT_DNS_CONTINUE_FILE}
 exit 0
 `;
 
+/** HTML for the default page shown when visiting the host by IP (replaces nginx default "Welcome to nginx!"). */
+const DEFAULT_PAGE_HTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Docker Fleet</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, -apple-system, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+    .card { text-align: center; padding: 2rem; max-width: 28rem; }
+    h1 { font-size: 1.75rem; font-weight: 700; margin: 0 0 0.5rem; letter-spacing: -0.02em; }
+    p { margin: 0; color: #94a3b8; font-size: 0.9375rem; line-height: 1.5; }
+    .badge { display: inline-block; margin-top: 1.5rem; padding: 0.25rem 0.75rem; background: #1e293b; border-radius: 9999px; font-size: 0.75rem; color: #94a3b8; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Docker Fleet</h1>
+    <p>This host is managed by Docker Fleet Manager. Add proxy routes to serve your domains here.</p>
+    <span class="badge">Managed by Docker Fleet</span>
+  </div>
+</body>
+</html>
+`;
+
+/** Nginx default_server block (port 80) that serves the Docker Fleet branded page when no server_name matches. */
+function buildDefaultServerBlock() {
+  return `
+server {
+    listen 80 default_server;
+    server_name _;
+    root ${NGINX_DEFAULT_PAGE_DIR};
+    index index.html;
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
+`;
+}
+
 /** Domains that have a cert in /etc/letsencrypt/live/<domain>/ (base name only, e.g. example.com). */
 function buildNginxConfig(routes, certDomains = new Set()) {
+  const defaultBlock = buildDefaultServerBlock();
   const blocks = (routes || []).map((r) => {
     const domain = r.domain.trim();
     const port = parseInt(r.containerPort, 10) || 80;
@@ -73,7 +117,7 @@ server {
     }
     return block;
   });
-  return blocks.join('\n') || '# No proxy routes\n';
+  return defaultBlock + (blocks.join('\n') || '# No proxy routes\n');
 }
 
 /**
@@ -222,6 +266,16 @@ async function ensureNginxAndCertbot(server, onProgress) {
 }
 
 /**
+ * Ensure the Docker Fleet default page exists on the host (so nginx default_server can serve it).
+ */
+async function ensureDefaultPage(server) {
+  await exec(server, `sudo mkdir -p ${NGINX_DEFAULT_PAGE_DIR}`, { allowFailure: false });
+  const b64 = Buffer.from(DEFAULT_PAGE_HTML, 'utf8').toString('base64');
+  await exec(server, `echo '${b64}' | base64 -d | sudo tee ${NGINX_DEFAULT_PAGE_PATH} > /dev/null`, { allowFailure: false });
+  await exec(server, `sudo chown -R www-data:www-data ${NGINX_DEFAULT_PAGE_DIR}`, { allowFailure: true });
+}
+
+/**
  * List domain names that have a cert in /etc/letsencrypt/live/ (excludes README).
  * Tries ls without sudo first (works when SSH user is root), then sudo ls if empty (for non-root with sudo).
  */
@@ -286,6 +340,7 @@ async function enablePublicWww(serverId, userId, options = {}) {
     await ensureHostnameResolves(server, onProgress);
     await configureFirewall(server, onProgress);
     await ensureNginxAndCertbot(server, onProgress);
+    await ensureDefaultPage(server);
     await writeNginxConfigAndReload(server, routes, onProgress);
     if (routes.length > 0) await runCertbot(server, routes, certbotEmail, onProgress);
 
@@ -323,6 +378,7 @@ async function syncProxy(serverId, userId) {
   const routes = await ServerProxyRoute.findAll({ where: { serverId } });
 
   await ensureNginxAndCertbot(server);
+  await ensureDefaultPage(server);
   await writeNginxConfigAndReload(server, routes);
   if (routes.length > 0) await runCertbot(server, routes);
 
