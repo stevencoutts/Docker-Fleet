@@ -1,7 +1,8 @@
 /**
  * Backup (export) and restore (import) of user data.
- * Includes servers (metadata only, no private keys), Public WWW (publicWwwEnabled, sshAllowedIps, proxy routes),
- * backup schedules, backup jobs, monitoring settings, and grouping rules.
+ * Includes: servers (metadata only, no private keys); Public WWW (publicWwwEnabled, sshAllowedIps,
+ * customNginxConfig, proxy routes with domain/container/port/customNginxBlock); user (email, letsEncryptEmail);
+ * backup schedules; backup jobs; monitoring settings; grouping rules.
  */
 const {
   Server,
@@ -35,13 +36,13 @@ const exportData = async (req, res, next) => {
 
     const servers = await Server.findAll({
       where: { userId },
-      attributes: ['id', 'name', 'host', 'port', 'username', 'publicWwwEnabled', 'sshAllowedIps'],
+      attributes: ['id', 'name', 'host', 'port', 'username', 'publicWwwEnabled', 'sshAllowedIps', 'customNginxConfig'],
     });
 
     const serverIds = servers.map((s) => s.id);
     const proxyRoutes = await ServerProxyRoute.findAll({
       where: { serverId: serverIds },
-      attributes: ['serverId', 'domain', 'containerName', 'containerPort'],
+      attributes: ['serverId', 'domain', 'containerName', 'containerPort', 'customNginxBlock'],
     });
 
     const monitoringSettings = await MonitoringSettings.findOne({
