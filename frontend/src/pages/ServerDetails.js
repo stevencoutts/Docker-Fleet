@@ -1139,53 +1139,6 @@ const ServerDetails = () => {
             )}
           </div>
         )}
-        {server?.publicWwwEnabled && (
-          <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/30 p-5">
-            <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3 flex items-center gap-2">
-              <span className="h-px w-4 bg-primary-500 rounded-full" />
-              Installed certificates
-              <button
-                type="button"
-                disabled={certsLoading}
-                onClick={() => fetchCertificates()}
-                className="ml-2 text-xs font-medium text-primary-600 dark:text-primary-400 hover:underline disabled:opacity-50"
-              >
-                {certsLoading ? 'Loading…' : 'Refresh'}
-              </button>
-            </h3>
-            {certsLoading && certificates.length === 0 ? (
-              <p className="text-sm text-gray-500">Loading…</p>
-            ) : certificates.length === 0 ? (
-              <p className="text-sm text-gray-500">No Let&apos;s Encrypt certificates on this server yet.</p>
-            ) : (
-              <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-600 overflow-hidden">
-                <table className="min-w-full text-sm">
-                  <thead className="bg-gray-100 dark:bg-gray-800/80">
-                    <tr>
-                      <th className="px-4 py-2.5 text-left font-medium text-gray-700 dark:text-gray-300">Name</th>
-                      <th className="px-4 py-2.5 text-left font-medium text-gray-700 dark:text-gray-300">Domains</th>
-                      <th className="px-4 py-2.5 text-left font-medium text-gray-700 dark:text-gray-300">Expiry</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-200 dark:divide-gray-600 bg-white dark:bg-gray-800/40">
-                    {certificates.map((c) => (
-                      <tr key={c.name} className="text-gray-900 dark:text-gray-100">
-                        <td className="px-4 py-2.5 font-mono text-sm">{c.name}</td>
-                        <td className="px-4 py-2.5 font-mono text-sm text-gray-700 dark:text-gray-300">{Array.isArray(c.domains) ? c.domains.join(', ') : ''}</td>
-                        <td className="px-4 py-2.5 text-sm text-gray-600 dark:text-gray-400">
-                          {c.expiryDate != null ? c.expiryDate : ''}
-                          {c.validDays != null && (
-                            <span className="ml-1 text-green-600 dark:text-green-400">({c.validDays} days)</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        )}
         {publicWwwLoading && enableSteps.length > 0 && (
           <div className="rounded-xl border border-primary-200 dark:border-primary-800 bg-primary-50/50 dark:bg-primary-900/20 p-4">
             <p className="text-xs font-semibold text-primary-700 dark:text-primary-300 mb-2">Progress</p>
@@ -1215,110 +1168,134 @@ const ServerDetails = () => {
             </ul>
           </div>
         )}
-        {/* Installed custom nginx configs: view/edit per-domain configs */}
-        {!proxyRoutesLoading && proxyRoutes.some((r) => r.customNginxBlock) && (
-          <div className="rounded-xl border border-amber-200 dark:border-amber-800/60 bg-amber-50/30 dark:bg-amber-900/10 p-5">
-            <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3 flex items-center gap-2">
-              <span className="h-px w-4 bg-amber-500 rounded-full" />
-              Installed custom nginx configs
-            </h3>
-            <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">View or edit per-domain custom server blocks. Click Edit to open the editor in the proxy routes list below.</p>
-            <ul className="space-y-3">
-              {proxyRoutes.filter((r) => r.customNginxBlock).map((r) => (
-                <li key={r.id} className="rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800/60 p-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-                    <span className="font-mono font-medium text-gray-900 dark:text-gray-100">{r.domain}</span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setRouteCustomNginxEditing(r.id);
-                        setRouteCustomNginxText(r.customNginxBlock ?? '');
-                        setTimeout(() => {
-                          const el = document.getElementById(`route-${r.id}`);
-                          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                        }, 100);
-                      }}
-                      className="text-sm font-medium text-primary-600 dark:text-primary-400 hover:underline"
-                    >
-                      Edit
-                    </button>
-                  </div>
-                  <pre className="text-xs font-mono text-gray-700 dark:text-gray-300 overflow-x-auto max-h-32 overflow-y-auto p-2 rounded bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-600 whitespace-pre-wrap break-all">
-                    {(r.customNginxBlock || '').trim()}
-                  </pre>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-
+        {/* Domains: one card per proxy route with cert + custom nginx grouped */}
         <div className="border-t border-gray-200 dark:border-gray-700 pt-5">
           <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3 flex items-center gap-2">
             <span className="h-px w-4 bg-primary-500 rounded-full" />
-            Proxy routes (domain → container:port)
+            Domains
+            {server?.publicWwwEnabled && (
+              <button
+                type="button"
+                disabled={certsLoading}
+                onClick={() => fetchCertificates()}
+                className="ml-2 text-xs font-medium text-primary-600 dark:text-primary-400 hover:underline disabled:opacity-50"
+              >
+                {certsLoading ? 'Refreshing…' : 'Refresh certs'}
+              </button>
+            )}
           </h3>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">Certificate, proxy route, and nginx config per domain.</p>
           {proxyRoutesLoading ? (
             <p className="text-sm text-gray-500">Loading…</p>
           ) : (
             <>
-              <ul className="space-y-2 mb-4">
-                {proxyRoutes.map((r) => (
-                  <li key={r.id} id={`route-${r.id}`} className="space-y-1">
-                    <div className="flex flex-wrap items-center gap-2 text-sm py-2 px-3 rounded-lg bg-gray-50 dark:bg-gray-800/50 border border-gray-200/80 dark:border-gray-600/80">
-                      <span className="font-mono font-medium text-gray-900 dark:text-gray-100">{r.domain}</span>
-                      <span className="text-gray-400 dark:text-gray-500">→</span>
-                      <span className="font-mono text-gray-700 dark:text-gray-300">{r.containerName}:{r.containerPort}</span>
-                      {r.customNginxBlock && <span className="text-xs px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300" title="Custom nginx set">custom</span>}
-                      <button
-                        type="button"
-                        disabled={routeBusy?.routeId === r.id || routeCustomNginxSaving}
-                        onClick={() => {
-                          setRouteCustomNginxEditing(r.id);
-                          setRouteCustomNginxText(r.customNginxBlock ?? '');
-                        }}
-                        className="text-primary-600 dark:text-primary-400 hover:underline disabled:opacity-50"
-                      >
-                        Custom nginx
-                      </button>
-                      {server?.publicWwwEnabled && (
+              {proxyRoutes.length === 0 ? (
+                <p className="text-sm text-gray-500">No domains yet. Add a route below.</p>
+              ) : (
+                <ul className="space-y-4 mb-4">
+              {proxyRoutes.map((r) => {
+                const baseDomain = r.domain.replace(/^\*\./, '');
+                const cert = certificates.find((c) => c.name === baseDomain || (Array.isArray(c.domains) && c.domains.includes(baseDomain)));
+                return (
+                  <li key={r.id} id={`route-${r.id}`} className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800/50 overflow-hidden">
+                    <div className="p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                        <h4 className="font-mono font-semibold text-gray-900 dark:text-gray-100 text-base">{r.domain}</h4>
                         <button
                           type="button"
-                          disabled={dnsCertLoading}
-                          onClick={() => {
-                            setDnsCertForRouteId(r.id);
-                            setDnsCertDomain(r.domain.replace(/^\*\./, ''));
-                            setDnsCertWildcard(false);
-                            setDnsCertChallenge(null);
+                          disabled={routeBusy?.routeId === r.id}
+                          onClick={async () => {
+                            setRouteBusy({ routeId: r.id, action: 'remove' });
+                            try {
+                              await publicWwwService.deleteProxyRoute(serverId, r.id);
+                              await fetchProxyRoutes();
+                              if (dnsCertForRouteId === r.id) setDnsCertForRouteId(null);
+                              if (routeCustomNginxEditing === r.id) setRouteCustomNginxEditing(null);
+                            } catch (e) {
+                              alert(e.response?.data?.error || 'Delete failed');
+                            } finally {
+                              setRouteBusy(null);
+                            }
                           }}
-                          className="text-primary-600 dark:text-primary-400 hover:underline"
+                          className="text-sm text-red-600 dark:text-red-400 hover:underline disabled:opacity-50"
                         >
-                          Get cert (DNS)
+                          {routeBusy?.routeId === r.id ? 'Removing…' : 'Remove route'}
                         </button>
-                      )}
-                      <button
-                        type="button"
-                        disabled={routeBusy?.routeId === r.id}
-                        onClick={async () => {
-                          setRouteBusy({ routeId: r.id, action: 'remove' });
-                          try {
-                            await publicWwwService.deleteProxyRoute(serverId, r.id);
-                            await fetchProxyRoutes();
-                            if (dnsCertForRouteId === r.id) setDnsCertForRouteId(null);
-                            if (routeCustomNginxEditing === r.id) setRouteCustomNginxEditing(null);
-                          } catch (e) {
-                            alert(e.response?.data?.error || 'Delete failed');
-                          } finally {
-                            setRouteBusy(null);
-                          }
-                        }}
-                        className="text-red-600 dark:text-red-400 hover:underline disabled:opacity-50"
-                      >
-                        {routeBusy?.routeId === r.id ? 'Removing…' : 'Remove'}
-                      </button>
+                      </div>
+                      <div className="grid gap-3 text-sm">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-gray-500 dark:text-gray-400 shrink-0">Proxy</span>
+                          <span className="font-mono text-gray-800 dark:text-gray-200">{r.containerName}:{r.containerPort}</span>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-gray-500 dark:text-gray-400 shrink-0">Certificate</span>
+                          {cert ? (
+                            <span className="text-gray-700 dark:text-gray-300">
+                              {cert.expiryDate != null ? cert.expiryDate : cert.name}
+                              {cert.validDays != null && <span className="ml-1 text-green-600 dark:text-green-400">({cert.validDays} days)</span>}
+                            </span>
+                          ) : (
+                            <>
+                              <span className="text-gray-500 dark:text-gray-400">No certificate</span>
+                              {server?.publicWwwEnabled && (
+                                <button
+                                  type="button"
+                                  disabled={dnsCertLoading}
+                                  onClick={() => {
+                                    setDnsCertForRouteId(r.id);
+                                    setDnsCertDomain(baseDomain);
+                                    setDnsCertWildcard(false);
+                                    setDnsCertChallenge(null);
+                                  }}
+                                  className="text-primary-600 dark:text-primary-400 hover:underline"
+                                >
+                                  Get cert (DNS)
+                                </button>
+                              )}
+                            </>
+                          )}
+                        </div>
+                        <div className="flex flex-wrap items-start gap-2">
+                          <span className="text-gray-500 dark:text-gray-400 shrink-0">Nginx config</span>
+                          <div className="min-w-0 flex-1">
+                            {r.customNginxBlock ? (
+                              <>
+                                <pre className="text-xs font-mono text-gray-700 dark:text-gray-300 overflow-x-auto max-h-24 overflow-y-auto p-2 rounded bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-600 whitespace-pre-wrap break-all mb-2">
+                                  {(r.customNginxBlock || '').trim().split('\n').slice(0, 6).join('\n')}
+                                  {(r.customNginxBlock || '').trim().split('\n').length > 6 ? '\n…' : ''}
+                                </pre>
+                                <button
+                                  type="button"
+                                  disabled={routeCustomNginxSaving}
+                                  onClick={() => {
+                                    setRouteCustomNginxEditing(r.id);
+                                    setRouteCustomNginxText(r.customNginxBlock ?? '');
+                                  }}
+                                  className="text-primary-600 dark:text-primary-400 hover:underline text-xs"
+                                >
+                                  Edit custom nginx
+                                </button>
+                              </>
+                            ) : (
+                              <button
+                                type="button"
+                                disabled={routeBusy?.routeId === r.id || routeCustomNginxSaving}
+                                onClick={() => {
+                                  setRouteCustomNginxEditing(r.id);
+                                  setRouteCustomNginxText('');
+                                }}
+                                className="text-primary-600 dark:text-primary-400 hover:underline text-xs"
+                              >
+                                Add custom nginx
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
                     </div>
                     {routeCustomNginxEditing === r.id && (
-                      <div className="ml-0 pl-0 mt-2 p-4 rounded-xl bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-700">
-                        <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">Custom nginx for {r.domain}. Leave empty to use generated server block. Paste full server block(s).</p>
+                      <div className="border-t border-gray-200 dark:border-gray-700 p-4 bg-gray-50 dark:bg-gray-900/40">
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">Custom nginx for {r.domain}. Leave empty to use generated server block.</p>
                         <textarea
                           value={routeCustomNginxText}
                           onChange={(e) => setRouteCustomNginxText(e.target.value)}
@@ -1360,12 +1337,21 @@ const ServerDetails = () => {
                       </div>
                     )}
                   </li>
-                ))}
-                {proxyRoutes.length === 0 && <li className="text-gray-500">No routes. Add one below.</li>}
-              </ul>
-              {dnsCertForRouteId != null && server?.publicWwwEnabled && (
+                );
+              })}
+                </ul>
+              )}
+          {dnsCertForRouteId != null && server?.publicWwwEnabled && (
                 <div className="mb-4 p-4 rounded-xl border border-primary-200 dark:border-primary-800 bg-primary-50/30 dark:bg-primary-900/20">
-                  <h4 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-2">Get certificate (DNS validation)</h4>
+                  <h4 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-2">
+                    Get certificate (DNS validation)
+                    {(() => {
+                      const route = proxyRoutes.find((route) => route.id === dnsCertForRouteId);
+                      return route?.domain ? (
+                        <span className="font-mono text-primary-600 dark:text-primary-400 ml-2">for {route.domain}</span>
+                      ) : null;
+                    })()}
+                  </h4>
                   <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
                     {!dnsCertChallenge
                       ? 'Click Request challenge to get the TXT record name and value below, then add that record at your DNS provider and click Continue. Supports wildcards (e.g. *.example.com).'
