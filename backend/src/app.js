@@ -199,6 +199,7 @@ const authLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   skipSuccessfulRequests: true,
+  validate: { trustProxy: false }, // We use trust proxy behind our own reverse proxy; disable strict check
   skip: (req) => {
     // Always skip for localhost/development or if bypassed by middleware
     const shouldSkip = req._rateLimitBypass || isDevelopment || isLocalhost(req);
@@ -216,6 +217,7 @@ const consoleLimiter = rateLimit({
   message: 'Too many console commands, please slow down.',
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { trustProxy: false }, // We use trust proxy behind our own reverse proxy; disable strict check
   skip: (req) => {
     // Always skip for localhost/development or if bypassed by middleware
     const shouldSkip = req._rateLimitBypass || isDevelopment || isLocalhost(req);
@@ -233,6 +235,7 @@ const limiter = rateLimit({
   message: 'Too many requests from this IP, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,
+  validate: { trustProxy: false }, // We use trust proxy behind our own reverse proxy; disable strict check
   skip: (req) => {
     // Always skip for localhost/development or if bypassed by middleware
     const shouldSkip = req._rateLimitBypass || isDevelopment || isLocalhost(req);
