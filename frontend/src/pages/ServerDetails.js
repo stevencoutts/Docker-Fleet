@@ -1313,7 +1313,9 @@ const ServerDetails = () => {
                                 await fetchProxyRoutes();
                                 setRouteCustomNginxEditing(null);
                               } catch (e) {
-                                alert(e.response?.data?.error || e.message || 'Save failed');
+                                const msg = e.response?.data?.error || e.message || 'Save failed';
+                                const isNetwork = !e.response && (msg === 'Network Error' || e.code === 'ECONNABORTED');
+                                alert(isNetwork ? `${msg}. Check that the backend is running and reachable (e.g. port 5020).` : msg);
                               } finally {
                                 setRouteCustomNginxSaving(false);
                               }

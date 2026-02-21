@@ -74,7 +74,8 @@ export const publicWwwService = {
   getNginxConfig,
   updateCustomNginxConfig,
   addProxyRoute: (serverId, data) => api.post(`/api/v1/servers/${serverId}/proxy-routes`, data),
-  updateProxyRoute: (serverId, routeId, data) => api.patch(`/api/v1/servers/${serverId}/proxy-routes/${routeId}`, data),
+  updateProxyRoute: (serverId, routeId, data) =>
+    api.patch(`/api/v1/servers/${serverId}/proxy-routes/${routeId}`, data, { timeout: 30000 }),
   deleteProxyRoute: (serverId, routeId) => api.delete(`/api/v1/servers/${serverId}/proxy-routes/${routeId}`),
   enable: (serverId) => api.post(`/api/v1/servers/${serverId}/public-www/enable`, {}, { timeout: LONG_TIMEOUT_MS }),
   enableWithProgress,
