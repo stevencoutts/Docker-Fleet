@@ -9,6 +9,8 @@ const logger = require('../config/logger');
 const NGINX_CONF_PATH = '/etc/nginx/conf.d/dockerfleet-proxy.conf';
 const NGINX_DEFAULT_PAGE_DIR = '/etc/nginx/dockerfleet-default';
 const NGINX_DEFAULT_PAGE_PATH = '/etc/nginx/dockerfleet-default/index.html';
+const NGINX_DEFAULT_SSL_CERT = '/etc/nginx/dockerfleet-default/selfsigned.crt';
+const NGINX_DEFAULT_SSL_KEY = '/etc/nginx/dockerfleet-default/selfsigned.key';
 const CERTBOT_DNS_HOOK_PATH = '/tmp/certbot-dns-hook.sh';
 const CERTBOT_DNS_RUNNER_PATH = '/tmp/certbot-dns-runner.sh';
 const CERTBOT_DNS_CONTINUE_FILE = '/tmp/certbot-dns-continue';
@@ -66,12 +68,23 @@ const DEFAULT_PAGE_HTML = `<!DOCTYPE html>
 </html>
 `;
 
-/** Nginx default_server block (port 80) that serves the Docker Fleet branded page when no server_name matches. */
+/** Nginx default_server blocks (80 and 443) that serve the Docker Fleet branded page when no server_name matches (e.g. request by IP). */
 function buildDefaultServerBlock() {
   return `
 server {
     listen 80 default_server;
     server_name _;
+    root ${NGINX_DEFAULT_PAGE_DIR};
+    index index.html;
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
+server {
+    listen 443 ssl default_server;
+    server_name _;
+    ssl_certificate ${NGINX_DEFAULT_SSL_CERT};
+    ssl_certificate_key ${NGINX_DEFAULT_SSL_KEY};
     root ${NGINX_DEFAULT_PAGE_DIR};
     index index.html;
     location / {
@@ -301,6 +314,17 @@ async function ensureDefaultPage(server) {
 }
 
 /**
+ * Ensure a self-signed cert exists for default_server on 443 (so https://ip shows the same holding page as http://ip).
+ */
+async function ensureDefaultSslCert(server) {
+  const check = await exec(server, `test -f ${NGINX_DEFAULT_SSL_CERT} && echo ok`, { allowFailure: true });
+  if ((check.stdout || '').trim() === 'ok') return;
+  const cmd = `sudo openssl req -x509 -nodes -days 3650 -newkey rsa:2048 -keyout ${NGINX_DEFAULT_SSL_KEY} -out ${NGINX_DEFAULT_SSL_CERT} -subj "/CN=default" 2>/dev/null`;
+  await exec(server, cmd, { allowFailure: false, timeout: 15000 });
+  await exec(server, `sudo chown www-data:www-data ${NGINX_DEFAULT_SSL_CERT} ${NGINX_DEFAULT_SSL_KEY}`, { allowFailure: true });
+}
+
+/**
  * List domain names that have a cert in /etc/letsencrypt/live/ (excludes README).
  * Tries ls without sudo first (works when SSH user is root), then sudo ls if empty (for non-root with sudo).
  */
@@ -368,6 +392,7 @@ async function enablePublicWww(serverId, userId, options = {}) {
     await ensureNginxAndCertbot(server, onProgress);
     await disableNginxDefaultSite(server);
     await ensureDefaultPage(server);
+    await ensureDefaultSslCert(server);
     await writeNginxConfigAndReload(server, routes, onProgress);
     if (routes.length > 0) await runCertbot(server, routes, certbotEmail, onProgress);
 
@@ -407,6 +432,7 @@ async function syncProxy(serverId, userId) {
   await ensureNginxAndCertbot(server);
   await disableNginxDefaultSite(server);
   await ensureDefaultPage(server);
+  await ensureDefaultSslCert(server);
   await writeNginxConfigAndReload(server, routes);
   if (routes.length > 0) await runCertbot(server, routes);
 
