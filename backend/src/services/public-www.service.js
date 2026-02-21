@@ -38,18 +38,29 @@ const DEFAULT_PAGE_HTML = `<!DOCTYPE html>
   <title>Docker Fleet</title>
   <style>
     * { box-sizing: border-box; }
-    body { margin: 0; font-family: system-ui, -apple-system, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
-    .card { text-align: center; padding: 2rem; max-width: 28rem; }
-    h1 { font-size: 1.75rem; font-weight: 700; margin: 0 0 0.5rem; letter-spacing: -0.02em; }
-    p { margin: 0; color: #94a3b8; font-size: 0.9375rem; line-height: 1.5; }
-    .badge { display: inline-block; margin-top: 1.5rem; padding: 0.25rem 0.75rem; background: #1e293b; border-radius: 9999px; font-size: 0.75rem; color: #94a3b8; }
+    body { margin: 0; font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif; background: linear-gradient(160deg, #0f172a 0%, #1e293b 50%, #0f172a 100%); color: #e2e8f0; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+    .card { text-align: center; padding: 2.5rem 2rem; max-width: 32rem; background: rgba(30, 41, 59, 0.5); border: 1px solid rgba(71, 85, 105, 0.4); border-radius: 1rem; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.4); }
+    .logo { font-size: 2rem; font-weight: 800; margin: 0 0 0.5rem; letter-spacing: -0.03em; background: linear-gradient(135deg, #e2e8f0 0%, #94a3b8 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+    p { margin: 0; color: #94a3b8; font-size: 0.9375rem; line-height: 1.6; }
+    .badge { display: inline-block; margin-top: 1.5rem; padding: 0.35rem 0.9rem; background: rgba(30, 41, 59, 0.9); border-radius: 9999px; font-size: 0.75rem; font-weight: 500; color: #94a3b8; border: 1px solid rgba(71, 85, 105, 0.5); }
+    .footer { margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid rgba(71, 85, 105, 0.4); display: flex; flex-wrap: wrap; justify-content: center; gap: 1rem; font-size: 0.875rem; }
+    .footer a { color: #94a3b8; text-decoration: none; transition: color 0.15s; }
+    .footer a:hover { color: #e2e8f0; }
+    .footer .sep { color: #475569; user-select: none; }
   </style>
 </head>
 <body>
   <div class="card">
-    <h1>Docker Fleet</h1>
+    <h1 class="logo">Docker Fleet</h1>
     <p>This host is managed by Docker Fleet Manager. Add proxy routes to serve your domains here.</p>
     <span class="badge">Managed by Docker Fleet</span>
+    <div class="footer">
+      <a href="https://stevec.couttsnet.com" target="_blank" rel="noopener">stevec.couttsnet.com</a>
+      <span class="sep">·</span>
+      <a href="https://github.com/stevencoutts/Docker-Fleet" target="_blank" rel="noopener">GitHub</a>
+      <span class="sep">·</span>
+      <span style="color: #94a3b8;">Steven Coutts</span>
+    </div>
   </div>
 </body>
 </html>
