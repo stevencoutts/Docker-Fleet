@@ -48,8 +48,8 @@ const Layout = () => {
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex flex-col transition-colors duration-200">
       <nav className="bg-white dark:bg-gray-800 shadow-sm border-b border-gray-200 dark:border-gray-700 transition-colors duration-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex flex-nowrap items-center justify-between gap-4 py-3 min-h-[4rem] sm:py-4 sm:h-16">
-            <div className="flex items-center gap-4 lg:gap-8 min-w-0 flex-1">
+          <div className="flex flex-nowrap items-center justify-between gap-4 py-3 min-h-[4rem] sm:py-4 sm:h-16 overflow-hidden">
+            <div className="flex items-center gap-4 lg:gap-8 min-w-0 flex-1 overflow-hidden">
               <div className="flex-shrink-0">
                 <Link to="/" className="text-xl font-bold text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors whitespace-nowrap">
                   DockerFleet Manager

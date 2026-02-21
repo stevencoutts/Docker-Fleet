@@ -34,11 +34,13 @@ code {
   font-size: 0.875rem;
 }
 
-/* Hide scrollbar on nav while keeping overflow scroll (e.g. trackpad) */
+/* Hide scrollbar on nav while keeping overflow scroll (e.g. trackpad). !important so it wins after paint. */
 .scrollbar-hide {
-  scrollbar-width: none;
-  -ms-overflow-style: none;
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
 }
 .scrollbar-hide::-webkit-scrollbar {
-  display: none;
+  display: none !important;
+  width: 0;
+  height: 0;
 }
