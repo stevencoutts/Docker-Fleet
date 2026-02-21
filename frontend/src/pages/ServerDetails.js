@@ -51,7 +51,7 @@ const ServerDetails = () => {
   const [routeCustomNginxText, setRouteCustomNginxText] = useState('');
   const [routeCustomNginxSaving, setRouteCustomNginxSaving] = useState(false);
   const [containerAction, setContainerAction] = useState({}); // { [containerId]: 'start'|'stop'|'restart'|'remove' }
-  const [newRouteForm, setNewRouteForm] = useState({ domain: '', containerName: '', containerPort: '80', customNginxBlock: '' });
+  const [newRouteForm, setNewRouteForm] = useState({ domain: '', containerName: '', containerPort: '80' });
   const [dnsCertChallenge, setDnsCertChallenge] = useState(null);
   const [dnsCertLoading, setDnsCertLoading] = useState(false);
   const [dnsCertForRouteId, setDnsCertForRouteId] = useState(null);
@@ -63,8 +63,6 @@ const ServerDetails = () => {
   const [certsLoading, setCertsLoading] = useState(false);
   const [nginxConfigView, setNginxConfigView] = useState(null);
   const [nginxConfigLoading, setNginxConfigLoading] = useState(false);
-  const [customNginxConfigText, setCustomNginxConfigText] = useState('');
-  const [customNginxConfigSaving, setCustomNginxConfigSaving] = useState(false);
   const [sshAllowedIps, setSshAllowedIps] = useState('');
   const [sshAllowedIpsSaving, setSshAllowedIpsSaving] = useState(false);
 
@@ -893,133 +891,121 @@ const ServerDetails = () => {
       )}
 
       {/* Public WWW: nginx proxy + Let's Encrypt, firewall 80/443 */}
-      <div className="mb-6 bg-white dark:bg-gray-800 shadow dark:shadow-gray-700 rounded-lg p-6">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2">Public WWW</h2>
-        <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">
-          Expose this host only on ports 80 and 443 with nginx reverse proxy and Let&apos;s Encrypt. Add proxy routes (domain → container:port), then Enable.
-        </p>
-        <p className="text-xs text-amber-700 dark:text-amber-300 mb-4">
-          Enable can take 2–5 minutes: it installs nginx and certbot on the host, configures the firewall, then requests Let&apos;s Encrypt certificates (your domain must point to this host&apos;s IP).
-        </p>
-        <div className="flex flex-wrap items-center gap-2 mb-4">
-          <label className="text-sm text-gray-700 dark:text-gray-300">
-            Let&apos;s Encrypt contact email:
-          </label>
-          <input
-            type="email"
-            value={letsEncryptEmail}
-            onChange={(e) => setLetsEncryptEmail(e.target.value)}
-            placeholder="admin@yourdomain.com"
-            className="rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 px-2 py-1.5 text-sm min-w-[200px]"
-          />
-          <button
-            type="button"
-            disabled={letsEncryptEmailSaving || !user?.id}
-            onClick={async () => {
-              setLetsEncryptEmailSaving(true);
-              try {
-                await api.put(`/api/v1/users/${user.id}`, { letsEncryptEmail: letsEncryptEmail.trim() || null });
-                await fetchUser();
-              } catch (e) {
-                alert(e.response?.data?.errors?.[0]?.msg || e.response?.data?.error || e.message || 'Save failed');
-              } finally {
-                setLetsEncryptEmailSaving(false);
-              }
-            }}
-            className="px-3 py-1.5 text-sm font-medium text-primary-700 dark:text-primary-300 bg-primary-50 dark:bg-primary-900/30 hover:bg-primary-100 dark:hover:bg-primary-900/50 rounded-lg disabled:opacity-50"
-          >
-            {letsEncryptEmailSaving ? 'Saving…' : 'Save'}
-          </button>
-        </div>
-        <div className="flex flex-wrap items-start gap-2 mb-4">
-          <label className="text-sm text-gray-700 dark:text-gray-300 shrink-0 pt-1.5">
-            Restrict SSH (port 22) to IPs:
-          </label>
-          <div className="flex flex-wrap items-center gap-2 flex-1 min-w-0">
-            <input
-              type="text"
-              value={sshAllowedIps}
-              onChange={(e) => setSshAllowedIps(e.target.value)}
-              placeholder="e.g. 1.2.3.4, 2001:db8::1 (leave empty = allow all)"
-              className="rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 px-2 py-1.5 text-sm min-w-[240px] flex-1"
-            />
-            <button
-              type="button"
-              disabled={sshAllowedIpsSaving || !server?.id}
-              onClick={async () => {
-                setSshAllowedIpsSaving(true);
-                try {
-                  const res = await serversService.update(serverId, { sshAllowedIps: sshAllowedIps.trim() || '' });
-                  setServer((s) => (s ? { ...s, ...res.data.server } : s));
-                } catch (e) {
-                  alert(e.response?.data?.errors?.[0]?.msg || e.response?.data?.error || e.message || 'Save failed');
-                } finally {
-                  setSshAllowedIpsSaving(false);
-                }
-              }}
-              className="px-3 py-1.5 text-sm font-medium text-primary-700 dark:text-primary-300 bg-primary-50 dark:bg-primary-900/30 hover:bg-primary-100 dark:hover:bg-primary-900/50 rounded-lg disabled:opacity-50"
-            >
-              {sshAllowedIpsSaving ? 'Saving…' : 'Save'}
-            </button>
+      <div className="mb-6 bg-white dark:bg-gray-800 shadow dark:shadow-gray-700 rounded-xl overflow-hidden border border-gray-200/60 dark:border-gray-700/60">
+        {/* Header with accent */}
+        <div className="bg-gradient-to-r from-primary-50 to-primary-100/50 dark:from-primary-900/20 dark:to-primary-800/10 border-b border-gray-200 dark:border-gray-700 px-6 py-4">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary-100 dark:bg-primary-900/50 text-primary-600 dark:text-primary-400">
+              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9a9 9 0 009 9m-9-9a9 9 0 009-9" />
+              </svg>
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Public WWW</h2>
+              <p className="text-sm text-gray-600 dark:text-gray-400">
+                Nginx reverse proxy, Let&apos;s Encrypt, ports 80/443. Add proxy routes then Enable.
+              </p>
+            </div>
           </div>
-        </div>
-        <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
-          Restriction is applied when you Enable Public WWW or click Sync config. Leave empty to allow SSH from any IP.
-        </p>
-        <div className="mb-4">
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Custom nginx config</label>
-          <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
-            If set, Sync config will use this instead of the generated config. Leave empty to use generated config.
+          <p className="mt-2 text-xs text-amber-700 dark:text-amber-300/90">
+            Enable takes 2–5 min: installs nginx & certbot, configures firewall, requests certs (domain must point to this host).
           </p>
-          <textarea
-            value={customNginxConfigText}
-            onChange={(e) => setCustomNginxConfigText(e.target.value)}
-            placeholder="# Optional: paste your full nginx config here..."
-            rows={8}
-            className="w-full text-sm font-mono text-gray-800 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg p-2 focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-          />
-          <button
-            type="button"
-            disabled={customNginxConfigSaving}
-            onClick={async () => {
-              setCustomNginxConfigSaving(true);
-              try {
-                await publicWwwService.updateCustomNginxConfig(serverId, customNginxConfigText);
-                if (nginxConfigView != null) {
-                  setNginxConfigView((v) => (v ? { ...v, customNginxConfig: (customNginxConfigText || '').trim() || undefined } : v));
-                }
-              } catch (e) {
-                alert(e.response?.data?.error || e.message || 'Failed to save');
-              } finally {
-                setCustomNginxConfigSaving(false);
-              }
-            }}
-            className="mt-2 px-3 py-1.5 text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 dark:bg-primary-500 dark:hover:bg-primary-600 rounded-lg disabled:opacity-50"
-          >
-            {customNginxConfigSaving ? 'Saving…' : 'Save custom config'}
-          </button>
         </div>
-        <div className="flex flex-wrap items-center gap-2 mb-4">
-          <span className={`px-2 py-1 rounded text-sm font-medium ${server?.publicWwwEnabled ? 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-200' : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300'}`}>
-            {server?.publicWwwEnabled ? 'Enabled' : 'Disabled'}
-          </span>
-          {!server?.publicWwwEnabled && (
+
+        <div className="p-6 space-y-6">
+          {/* Settings card */}
+          <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/30 p-5">
+            <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-4 flex items-center gap-2">
+              <span className="h-px w-4 bg-primary-500 rounded-full" />
+              Settings
+            </h3>
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center gap-3">
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-300 w-52 shrink-0">Let&apos;s Encrypt email</label>
+                <input
+                  type="email"
+                  value={letsEncryptEmail}
+                  onChange={(e) => setLetsEncryptEmail(e.target.value)}
+                  placeholder="admin@yourdomain.com"
+                  className="rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 px-3 py-2 text-sm min-w-[220px] focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                />
+                <button
+                  type="button"
+                  disabled={letsEncryptEmailSaving || !user?.id}
+                  onClick={async () => {
+                    setLetsEncryptEmailSaving(true);
+                    try {
+                      await api.put(`/api/v1/users/${user.id}`, { letsEncryptEmail: letsEncryptEmail.trim() || null });
+                      await fetchUser();
+                    } catch (e) {
+                      alert(e.response?.data?.errors?.[0]?.msg || e.response?.data?.error || e.message || 'Save failed');
+                    } finally {
+                      setLetsEncryptEmailSaving(false);
+                    }
+                  }}
+                  className="px-4 py-2 text-sm font-medium text-primary-700 dark:text-primary-300 bg-primary-50 dark:bg-primary-900/30 hover:bg-primary-100 dark:hover:bg-primary-900/50 rounded-lg disabled:opacity-50 transition-colors"
+                >
+                  {letsEncryptEmailSaving ? 'Saving…' : 'Save'}
+                </button>
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <label className="text-sm font-medium text-gray-700 dark:text-gray-300 w-52 shrink-0">Restrict SSH to IPs</label>
+                <input
+                  type="text"
+                  value={sshAllowedIps}
+                  onChange={(e) => setSshAllowedIps(e.target.value)}
+                  placeholder="e.g. 1.2.3.4 (empty = allow all)"
+                  className="rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 px-3 py-2 text-sm min-w-[220px] flex-1 max-w-md focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                />
+                <button
+                  type="button"
+                  disabled={sshAllowedIpsSaving || !server?.id}
+                  onClick={async () => {
+                    setSshAllowedIpsSaving(true);
+                    try {
+                      const res = await serversService.update(serverId, { sshAllowedIps: sshAllowedIps.trim() || '' });
+                      setServer((s) => (s ? { ...s, ...res.data.server } : s));
+                    } catch (e) {
+                      alert(e.response?.data?.errors?.[0]?.msg || e.response?.data?.error || e.message || 'Save failed');
+                    } finally {
+                      setSshAllowedIpsSaving(false);
+                    }
+                  }}
+                  className="px-4 py-2 text-sm font-medium text-primary-700 dark:text-primary-300 bg-primary-50 dark:bg-primary-900/30 hover:bg-primary-100 dark:hover:bg-primary-900/50 rounded-lg disabled:opacity-50 transition-colors"
+                >
+                  {sshAllowedIpsSaving ? 'Saving…' : 'Save'}
+                </button>
+              </div>
+              <p className="text-xs text-gray-500 dark:text-gray-400">Applied on Enable or Sync config. Leave SSH IPs empty to allow all.</p>
+            </div>
+          </div>
+
+          {/* Status & actions */}
+          <div className="flex flex-wrap items-center gap-3">
+            <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium ${server?.publicWwwEnabled ? 'bg-green-100 dark:bg-green-900/40 text-green-800 dark:text-green-200 ring-1 ring-green-200 dark:ring-green-800' : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 ring-1 ring-gray-200 dark:ring-gray-600'}`}>
+              {server?.publicWwwEnabled ? (
+                <><span className="h-2 w-2 rounded-full bg-green-500" /> Enabled</>
+              ) : (
+                <>Disabled</>
+              )}
+            </span>
+            {!server?.publicWwwEnabled && (
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    const res = await serversService.update(serverId, { publicWwwEnabled: true });
+                    setServer((s) => (s ? { ...s, ...res.data.server } : s));
+                  } catch (e) {
+                    alert(e.response?.data?.error || e.message || 'Failed to update');
+                  }
+                }}
+                className="text-sm text-primary-600 dark:text-primary-400 hover:underline"
+              >
+                Host already has Public WWW? Mark as enabled
+              </button>
+            )}
             <button
-              type="button"
-              onClick={async () => {
-                try {
-                  const res = await serversService.update(serverId, { publicWwwEnabled: true });
-                  setServer((s) => (s ? { ...s, ...res.data.server } : s));
-                } catch (e) {
-                  alert(e.response?.data?.error || e.message || 'Failed to update');
-                }
-              }}
-              className="text-sm text-primary-600 dark:text-primary-400 hover:underline"
-            >
-              Host already has Public WWW? Mark as enabled
-            </button>
-          )}
-          <button
             type="button"
             disabled={publicWwwLoading}
             onClick={async () => {
@@ -1047,11 +1033,11 @@ const ServerDetails = () => {
                 setEnableSteps((prev) => (prev.length ? prev : []));
               }
             }}
-            className="px-3 py-1.5 text-sm font-medium text-white bg-green-600 hover:bg-green-700 dark:bg-green-600 dark:hover:bg-green-500 rounded-lg disabled:opacity-50"
+            className="px-4 py-2 text-sm font-medium text-white bg-green-600 hover:bg-green-700 dark:bg-green-600 dark:hover:bg-green-500 rounded-lg disabled:opacity-50 transition-colors shadow-sm"
           >
             {publicWwwBusy === 'enable' ? 'Applying…' : 'Enable Public WWW'}
           </button>
-          <button
+            <button
             type="button"
             disabled={publicWwwLoading}
             onClick={async () => {
@@ -1067,11 +1053,11 @@ const ServerDetails = () => {
                 setPublicWwwBusy(null);
               }
             }}
-            className="px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-200 bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500 rounded-lg disabled:opacity-50"
+            className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-200 bg-gray-200 dark:bg-gray-600 hover:bg-gray-300 dark:hover:bg-gray-500 rounded-lg disabled:opacity-50 transition-colors"
           >
             {publicWwwBusy === 'disable' ? 'Disabling…' : 'Disable'}
           </button>
-          <button
+            <button
             type="button"
             disabled={publicWwwLoading || !server?.publicWwwEnabled}
             onClick={async () => {
@@ -1088,11 +1074,11 @@ const ServerDetails = () => {
                 setPublicWwwBusy(null);
               }
             }}
-            className="px-3 py-1.5 text-sm font-medium text-primary-700 dark:text-primary-300 bg-primary-50 dark:bg-primary-900/30 hover:bg-primary-100 dark:hover:bg-primary-900/50 rounded-lg disabled:opacity-50"
+            className="px-4 py-2 text-sm font-medium text-primary-700 dark:text-primary-300 bg-primary-50 dark:bg-primary-900/30 hover:bg-primary-100 dark:hover:bg-primary-900/50 rounded-lg disabled:opacity-50 transition-colors border border-primary-200 dark:border-primary-800"
           >
             {publicWwwBusy === 'sync' ? 'Syncing…' : 'Sync config'}
           </button>
-          <button
+            <button
             type="button"
             disabled={publicWwwLoading || !server?.publicWwwEnabled}
             onClick={async () => {
@@ -1100,15 +1086,14 @@ const ServerDetails = () => {
               setNginxConfigView(null);
               try {
                 const res = await publicWwwService.getNginxConfig(serverId);
-                setNginxConfigView({ path: res.data.path, config: res.data.config, generatedConfig: res.data.generatedConfig, customNginxConfig: res.data.customNginxConfig });
-                setCustomNginxConfigText(res.data.customNginxConfig ?? '');
+                setNginxConfigView({ path: res.data.path, config: res.data.config, generatedConfig: res.data.generatedConfig });
               } catch (e) {
                 setNginxConfigView({ path: '/etc/nginx/conf.d/dockerfleet-proxy.conf', config: null, error: e.response?.data?.error || e.message });
               } finally {
                 setNginxConfigLoading(false);
               }
             }}
-            className="px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg disabled:opacity-50"
+            className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg disabled:opacity-50 transition-colors border border-gray-300 dark:border-gray-600"
           >
             {nginxConfigLoading ? (
               <span className="inline-flex items-center gap-1.5">
@@ -1121,14 +1106,14 @@ const ServerDetails = () => {
           </button>
         </div>
         {nginxConfigView != null && (
-          <div className="mb-4 p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-700">
-            <div className="flex items-center justify-between mb-2">
+          <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50/80 dark:bg-gray-900/40 p-4">
+            <div className="flex items-center justify-between mb-3">
               <p className="text-xs font-medium text-gray-500 dark:text-gray-400">Nginx config on server: {nginxConfigView.path}</p>
-              <button type="button" onClick={() => setNginxConfigView(null)} className="text-xs text-gray-500 hover:underline">Hide</button>
+              <button type="button" onClick={() => setNginxConfigView(null)} className="text-xs font-medium text-gray-500 hover:text-gray-700 dark:hover:text-gray-300">Hide</button>
             </div>
             {nginxConfigView.error ? (
               <p className="text-sm text-red-600 dark:text-red-400">{nginxConfigView.error}</p>
-            ) : (nginxConfigView.generatedConfig || nginxConfigView.customNginxConfig) ? (
+            ) : nginxConfigView.generatedConfig ? (
               <>
                 {nginxConfigView.config && nginxConfigView.config !== '# No proxy routes' && (
                   <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Current file on server:</p>
@@ -1137,14 +1122,12 @@ const ServerDetails = () => {
                   <pre className="text-xs font-mono text-gray-800 dark:text-gray-200 overflow-x-auto max-h-48 overflow-y-auto p-2 rounded bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 whitespace-pre-wrap break-all mb-3">
                     {nginxConfigView.config}
                   </pre>
-                ) : nginxConfigView.config !== '# No proxy routes' && (
+                ) : (
                   <p className="text-sm text-amber-700 dark:text-amber-300 mb-2">File on server is empty or placeholder. Click <strong>Sync config</strong> to apply the config below.</p>
                 )}
-                <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
-                  {nginxConfigView.customNginxConfig ? 'Custom config (used when you Sync):' : 'Generated config (used when you Sync when no custom config is set):'}
-                </p>
+                <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Generated config (from proxy routes, used when you Sync):</p>
                 <pre className="text-xs font-mono text-gray-800 dark:text-gray-200 overflow-x-auto max-h-96 overflow-y-auto p-2 rounded bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 whitespace-pre-wrap break-all">
-                  {nginxConfigView.customNginxConfig || nginxConfigView.generatedConfig}
+                  {nginxConfigView.generatedConfig}
                 </pre>
               </>
             ) : nginxConfigView.config ? (
@@ -1157,38 +1140,39 @@ const ServerDetails = () => {
           </div>
         )}
         {server?.publicWwwEnabled && (
-          <div className="mb-4">
-            <div className="flex items-center gap-2 mb-2">
-              <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">Installed certificates</h3>
+          <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-900/30 p-5">
+            <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3 flex items-center gap-2">
+              <span className="h-px w-4 bg-primary-500 rounded-full" />
+              Installed certificates
               <button
                 type="button"
                 disabled={certsLoading}
                 onClick={() => fetchCertificates()}
-                className="text-xs text-primary-600 dark:text-primary-400 hover:underline disabled:opacity-50"
+                className="ml-2 text-xs font-medium text-primary-600 dark:text-primary-400 hover:underline disabled:opacity-50"
               >
                 {certsLoading ? 'Loading…' : 'Refresh'}
               </button>
-            </div>
+            </h3>
             {certsLoading && certificates.length === 0 ? (
               <p className="text-sm text-gray-500">Loading…</p>
             ) : certificates.length === 0 ? (
               <p className="text-sm text-gray-500">No Let&apos;s Encrypt certificates on this server yet.</p>
             ) : (
-              <div className="overflow-x-auto rounded border border-gray-200 dark:border-gray-600">
+              <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-600 overflow-hidden">
                 <table className="min-w-full text-sm">
-                  <thead className="bg-gray-50 dark:bg-gray-900/50">
+                  <thead className="bg-gray-100 dark:bg-gray-800/80">
                     <tr>
-                      <th className="px-3 py-2 text-left font-medium text-gray-700 dark:text-gray-300">Name</th>
-                      <th className="px-3 py-2 text-left font-medium text-gray-700 dark:text-gray-300">Domains</th>
-                      <th className="px-3 py-2 text-left font-medium text-gray-700 dark:text-gray-300">Expiry</th>
+                      <th className="px-4 py-2.5 text-left font-medium text-gray-700 dark:text-gray-300">Name</th>
+                      <th className="px-4 py-2.5 text-left font-medium text-gray-700 dark:text-gray-300">Domains</th>
+                      <th className="px-4 py-2.5 text-left font-medium text-gray-700 dark:text-gray-300">Expiry</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-200 dark:divide-gray-600">
+                  <tbody className="divide-y divide-gray-200 dark:divide-gray-600 bg-white dark:bg-gray-800/40">
                     {certificates.map((c) => (
                       <tr key={c.name} className="text-gray-900 dark:text-gray-100">
-                        <td className="px-3 py-2 font-mono">{c.name}</td>
-                        <td className="px-3 py-2 font-mono text-gray-700 dark:text-gray-300">{Array.isArray(c.domains) ? c.domains.join(', ') : ''}</td>
-                        <td className="px-3 py-2 text-gray-600 dark:text-gray-400">
+                        <td className="px-4 py-2.5 font-mono text-sm">{c.name}</td>
+                        <td className="px-4 py-2.5 font-mono text-sm text-gray-700 dark:text-gray-300">{Array.isArray(c.domains) ? c.domains.join(', ') : ''}</td>
+                        <td className="px-4 py-2.5 text-sm text-gray-600 dark:text-gray-400">
                           {c.expiryDate != null ? c.expiryDate : ''}
                           {c.validDays != null && (
                             <span className="ml-1 text-green-600 dark:text-green-400">({c.validDays} days)</span>
@@ -1203,8 +1187,8 @@ const ServerDetails = () => {
           </div>
         )}
         {publicWwwLoading && enableSteps.length > 0 && (
-          <div className="mb-4 p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-700">
-            <p className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2">Progress</p>
+          <div className="rounded-xl border border-primary-200 dark:border-primary-800 bg-primary-50/50 dark:bg-primary-900/20 p-4">
+            <p className="text-xs font-semibold text-primary-700 dark:text-primary-300 mb-2">Progress</p>
             <ul className="space-y-1.5 text-sm">
               {enableSteps.map((s, i) => (
                 <li key={`${s.step}-${i}`} className="flex items-center gap-2">
@@ -1231,8 +1215,11 @@ const ServerDetails = () => {
             </ul>
           </div>
         )}
-        <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
-          <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Proxy routes (domain → container:port)</h3>
+        <div className="border-t border-gray-200 dark:border-gray-700 pt-5">
+          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3 flex items-center gap-2">
+            <span className="h-px w-4 bg-primary-500 rounded-full" />
+            Proxy routes (domain → container:port)
+          </h3>
           {proxyRoutesLoading ? (
             <p className="text-sm text-gray-500">Loading…</p>
           ) : (
@@ -1240,11 +1227,11 @@ const ServerDetails = () => {
               <ul className="space-y-2 mb-4">
                 {proxyRoutes.map((r) => (
                   <li key={r.id} className="space-y-1">
-                    <div className="flex flex-wrap items-center gap-2 text-sm">
-                      <span className="font-mono text-gray-900 dark:text-gray-100">{r.domain}</span>
-                      <span className="text-gray-500">→</span>
+                    <div className="flex flex-wrap items-center gap-2 text-sm py-2 px-3 rounded-lg bg-gray-50 dark:bg-gray-800/50 border border-gray-200/80 dark:border-gray-600/80">
+                      <span className="font-mono font-medium text-gray-900 dark:text-gray-100">{r.domain}</span>
+                      <span className="text-gray-400 dark:text-gray-500">→</span>
                       <span className="font-mono text-gray-700 dark:text-gray-300">{r.containerName}:{r.containerPort}</span>
-                      {r.customNginxBlock && <span className="text-xs text-amber-600 dark:text-amber-400" title="Custom nginx set">(custom nginx)</span>}
+                      {r.customNginxBlock && <span className="text-xs px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300" title="Custom nginx set">custom</span>}
                       <button
                         type="button"
                         disabled={routeBusy?.routeId === r.id || routeCustomNginxSaving}
@@ -1293,7 +1280,7 @@ const ServerDetails = () => {
                       </button>
                     </div>
                     {routeCustomNginxEditing === r.id && (
-                      <div className="ml-0 pl-0 mt-2 p-3 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-700">
+                      <div className="ml-0 pl-0 mt-2 p-4 rounded-xl bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-700">
                         <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">Custom nginx for {r.domain}. Leave empty to use generated server block. Paste full server block(s).</p>
                         <textarea
                           value={routeCustomNginxText}
@@ -1340,8 +1327,8 @@ const ServerDetails = () => {
                 {proxyRoutes.length === 0 && <li className="text-gray-500">No routes. Add one below.</li>}
               </ul>
               {dnsCertForRouteId != null && server?.publicWwwEnabled && (
-                <div className="mb-4 p-4 rounded-lg bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-700">
-                  <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Get certificate (DNS validation)</h4>
+                <div className="mb-4 p-4 rounded-xl border border-primary-200 dark:border-primary-800 bg-primary-50/30 dark:bg-primary-900/20">
+                  <h4 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-2">Get certificate (DNS validation)</h4>
                   <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
                     {!dnsCertChallenge
                       ? 'Click Request challenge to get the TXT record name and value below, then add that record at your DNS provider and click Continue. Supports wildcards (e.g. *.example.com).'
@@ -1502,9 +1489,8 @@ const ServerDetails = () => {
                         domain: newRouteForm.domain.trim(),
                         containerName: newRouteForm.containerName.trim(),
                         containerPort: parseInt(newRouteForm.containerPort, 10) || 80,
-                        customNginxBlock: newRouteForm.customNginxBlock?.trim() || undefined,
                       });
-                      setNewRouteForm({ domain: '', containerName: '', containerPort: '80', customNginxBlock: '' });
+                      setNewRouteForm({ domain: '', containerName: '', containerPort: '80' });
                       await fetchProxyRoutes();
                     } catch (e) {
                       alert(e.response?.data?.error || 'Add failed');
@@ -1517,19 +1503,10 @@ const ServerDetails = () => {
                   {routeAdding ? 'Adding…' : 'Add route'}
                 </button>
                 </div>
-                <div>
-                  <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Custom nginx (optional)</label>
-                  <textarea
-                    value={newRouteForm.customNginxBlock}
-                    onChange={(e) => setNewRouteForm((f) => ({ ...f, customNginxBlock: e.target.value }))}
-                    placeholder="Leave empty for generated server block. Or paste custom server block(s) for this domain."
-                    rows={3}
-                    className="w-full max-w-2xl text-sm font-mono text-gray-800 dark:text-gray-200 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg px-2 py-1.5"
-                  />
-                </div>
               </div>
             </>
           )}
+        </div>
         </div>
       </div>
 

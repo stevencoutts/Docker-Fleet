@@ -305,14 +305,13 @@ async function getCertDomains(server) {
 }
 
 /**
- * Write nginx config and reload nginx. If server.customNginxConfig is set (non-empty), that is used; otherwise config is generated from routes.
+ * Write nginx config and reload nginx. Config is always generated from routes (per-route custom blocks or default).
  * If certDomains not provided, fetches from server.
  */
 async function writeNginxConfigAndReload(server, routes, onProgress, certDomains) {
   if (onProgress) onProgress('nginx_config', 'Writing nginx config and reloading...', 'running');
-  const custom = (server.customNginxConfig || '').trim();
   const domains = certDomains ?? await getCertDomains(server);
-  const config = custom || buildNginxConfig(routes, domains);
+  const config = buildNginxConfig(routes, domains);
   const escaped = config.replace(/'/g, "'\\''");
   await exec(server, `echo '${escaped}' | sudo tee ${NGINX_CONF_PATH} > /dev/null`, { allowFailure: false });
   await exec(server, 'sudo nginx -t && sudo systemctl reload nginx', { allowFailure: true });
