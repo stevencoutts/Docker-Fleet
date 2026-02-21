@@ -57,11 +57,9 @@ const DEFAULT_PAGE_HTML = `<!DOCTYPE html>
     <p>This host is managed by Docker Fleet Manager. Add proxy routes to serve your domains here.</p>
     <span class="badge">Managed by Docker Fleet</span>
     <div class="footer">
-      <a href="https://stevec.couttsnet.com" target="_blank" rel="noopener">stevec.couttsnet.com</a>
+      <a href="https://stevec.couttsnet.com" target="_blank" rel="noopener">Steven Coutts</a>
       <span class="sep">·</span>
       <a href="https://github.com/stevencoutts/Docker-Fleet" target="_blank" rel="noopener">GitHub</a>
-      <span class="sep">·</span>
-      <span style="color: #94a3b8;">Steven Coutts</span>
     </div>
   </div>
 </body>
