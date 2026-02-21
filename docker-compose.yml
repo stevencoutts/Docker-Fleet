@@ -72,7 +72,7 @@ services:
       dockerfile: Dockerfile
     container_name: dockerfleet-frontend
     ports:
-      - "127.0.0.1:3020:80"
+      - "3020:80"
     depends_on:
       - backend
     networks:
