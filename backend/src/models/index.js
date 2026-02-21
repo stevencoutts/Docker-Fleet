@@ -5,8 +5,16 @@ const logger = require('../config/logger');
 const env = process.env.NODE_ENV || 'development';
 const dbConfig = config[env];
 
-if (process.env.DB_NAME && process.env.DB_USER && process.env.DB_NAME === process.env.DB_USER) {
-  logger.warn('DB_NAME equals DB_USER. DB_NAME should be the database name (e.g. dockerfleet), not the username. Set DB_NAME=dockerfleet in .env and restart.');
+// DB_NAME = database name (e.g. dockerfleet). DB_USER = login user (e.g. dockerfleet_user). They must differ.
+const dbName = process.env.DB_NAME;
+const dbUser = process.env.DB_USER;
+if (dbName && dbUser && dbName === dbUser) {
+  logger.error(
+    'DB_NAME must be the database name, not the username. You have DB_NAME=DB_USER=%s. ' +
+    'Set DB_NAME=dockerfleet (and keep DB_USER=dockerfleet_user) in your .env or environment. ' +
+    'If the Postgres volume was created with defaults, the existing database is named "dockerfleet".',
+    dbName
+  );
 }
 
 const sequelize = new Sequelize(
@@ -75,6 +83,14 @@ sequelize
   })
   .catch((err) => {
     logger.error('Unable to connect to the database:', err);
+    const msg = err && err.message ? String(err.message) : '';
+    if (msg.includes('does not exist') && dbUser && msg.includes(dbUser)) {
+      logger.error(
+        'The database "%s" does not exist. DB_NAME should be the database name (e.g. dockerfleet), not the username. ' +
+        'Set DB_NAME=dockerfleet in .env. If you already have data, the existing database is likely named "dockerfleet".',
+        dbName || dbUser
+      );
+    }
   });
 
 module.exports = db;
