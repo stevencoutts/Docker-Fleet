@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { serversService } from '../services/servers.service';
+import { serversService, tailscaleEnableWithProgress } from '../services/servers.service';
 import { containersService } from '../services/containers.service';
 import { systemService } from '../services/system.service';
 import { publicWwwService } from '../services/publicWww.service';
@@ -68,9 +68,20 @@ const ServerDetails = () => {
   const [sshAllowedIpsSaving, setSshAllowedIpsSaving] = useState(false);
   const [publicWwwDomainsOpen, setPublicWwwDomainsOpen] = useState(false);
   const [publicWwwSettingsOpen, setPublicWwwSettingsOpen] = useState(false);
+  const [tailscaleBusy, setTailscaleBusy] = useState(null); // 'enable' | 'disable'
+  const [tailscaleAuthKey, setTailscaleAuthKey] = useState('');
+  const [tailscaleError, setTailscaleError] = useState('');
+  const [tailscaleErrorDetails, setTailscaleErrorDetails] = useState('');
+  const [tailscaleShowAuthInput, setTailscaleShowAuthInput] = useState(false);
+  const [tailscaleSteps, setTailscaleSteps] = useState([]);
+  const [tailscaleErrorExpanded, setTailscaleErrorExpanded] = useState(false);
 
   const stepLabel = (step) => {
     const labels = { hostname: 'Hostname', firewall: 'Firewall', install_nginx: 'Install nginx & certbot', nginx_config: 'Nginx config', certbot: 'Certificate(s)', done: 'Done' };
+    return labels[step] || step;
+  };
+  const tailscaleStepLabel = (step) => {
+    const labels = { checking: 'Check for Tailscale', found_existing: 'Use existing', installing: 'Install Tailscale', joining: 'Join network', getting_ip: 'Get IP', done: 'Done' };
     return labels[step] || step;
   };
 
@@ -696,14 +707,12 @@ const ServerDetails = () => {
             </h1>
             <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
               {(() => {
-                // Show IP address if server.host is an IP, otherwise show server.host
-                const serverHost = server.host;
-                if (/^\d+\.\d+\.\d+\.\d+$/.test(serverHost)) {
-                  return `${serverHost}:${server.port}`;
-                }
-                // If server.host is already an FQDN, show it with port
-                return `${serverHost}:${server.port}`;
+                const effectiveHost = server.tailscaleEnabled && server.tailscaleIp ? server.tailscaleIp : server.host;
+                return `${effectiveHost}:${server.port}`;
               })()}
+              {server.tailscaleEnabled && server.tailscaleIp && (
+                <span className="ml-1.5 text-emerald-600 dark:text-emerald-400">(Tailscale)</span>
+              )}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -892,6 +901,177 @@ const ServerDetails = () => {
           </div>
         </div>
       )}
+
+      {/* Tailscale: use Tailscale IP for management (SSH) */}
+      <div className="mb-6 bg-white dark:bg-gray-800 shadow dark:shadow-gray-700 rounded-lg p-6 border border-gray-200 dark:border-gray-700">
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2">Management (Tailscale)</h2>
+        <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+          When enabled, the app uses this node&apos;s Tailscale IP for SSH and management. If Tailscale is already running on the node, it will be used automatically; otherwise you can install and join with an auth key from the Tailscale admin console.
+        </p>
+        {tailscaleError && (
+          <div className="mb-4 p-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-sm text-red-700 dark:text-red-300">
+            <p className="font-medium">{tailscaleError}</p>
+            {tailscaleErrorDetails && (
+              <div className="mt-2">
+                <button
+                  type="button"
+                  onClick={() => setTailscaleErrorExpanded((e) => !e)}
+                  className="text-xs font-medium text-red-600 dark:text-red-400 hover:underline"
+                >
+                  {tailscaleErrorExpanded ? 'Hide' : 'Show'} technical details
+                </button>
+                {tailscaleErrorExpanded && (
+                  <pre className="mt-1.5 p-2 rounded bg-red-100/50 dark:bg-red-900/30 text-xs overflow-auto max-h-48 whitespace-pre-wrap break-all">
+                    {tailscaleErrorDetails}
+                  </pre>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+        {server.tailscaleEnabled && server.tailscaleIp ? (
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 text-emerald-800 dark:text-emerald-200 text-sm">
+              <span className="font-medium">Management address:</span>
+              <code className="bg-emerald-100 dark:bg-emerald-900/40 px-1.5 py-0.5 rounded">{server.tailscaleIp}:{server.port}</code>
+            </div>
+            <button
+              type="button"
+              onClick={async () => {
+                setTailscaleError('');
+                setTailscaleBusy('disable');
+                try {
+                  const res = await serversService.tailscaleDisable(serverId);
+                  setServer(res.data.server);
+                } catch (e) {
+                  setTailscaleError(e.response?.data?.details || e.response?.data?.error || e.message);
+                } finally {
+                  setTailscaleBusy(null);
+                }
+              }}
+              disabled={tailscaleBusy !== null}
+              className="px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-600 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-500 disabled:opacity-50"
+            >
+              {tailscaleBusy === 'disable' ? 'Disabling…' : 'Disable Tailscale'}
+            </button>
+          </div>
+        ) : (
+          <div>
+            {!tailscaleShowAuthInput ? (
+              <button
+                type="button"
+                onClick={async () => {
+                  setTailscaleError('');
+                  setTailscaleErrorDetails('');
+                  setTailscaleSteps([]);
+                  setTailscaleBusy('enable');
+                  try {
+                    const result = await tailscaleEnableWithProgress(serverId, undefined, (data) => {
+                      setTailscaleSteps((prev) => {
+                        const idx = prev.map((s) => s.step).lastIndexOf(data.step);
+                        const next = idx >= 0 ? prev.slice(0, idx + 1) : prev;
+                        if (idx >= 0) return next.map((s) => (s.step === data.step ? { ...s, message: data.message, status: data.status } : s));
+                        return [...next, { step: data.step, message: data.message, status: data.status }];
+                      });
+                    });
+                    setServer(result.server);
+                  } catch (e) {
+                    if (e.requireAuthKey) {
+                      setTailscaleShowAuthInput(true);
+                      setTailscaleError(e.message || 'Tailscale is not running. Enter an auth key to install and join.');
+                      setTailscaleErrorDetails('');
+                    } else {
+                      setTailscaleError(e.message);
+                      setTailscaleErrorDetails(e.details || '');
+                    }
+                    setTailscaleErrorExpanded(false);
+                  } finally {
+                    setTailscaleBusy(null);
+                    setTailscaleSteps([]);
+                  }
+                }}
+                disabled={tailscaleBusy !== null}
+                className="px-4 py-2 text-sm font-medium text-white bg-primary-600 dark:bg-primary-500 rounded-lg hover:bg-primary-700 dark:hover:bg-primary-600 disabled:opacity-50"
+              >
+                {tailscaleBusy === 'enable' ? 'Checking…' : 'Enable Tailscale'}
+              </button>
+            ) : (
+              <div className="flex flex-col gap-3 max-w-md">
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <input
+                    type="password"
+                    placeholder="Tailscale auth key (to install and join)"
+                    value={tailscaleAuthKey}
+                    onChange={(e) => setTailscaleAuthKey(e.target.value)}
+                    className="flex-1 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 px-3 py-2 text-sm"
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (!tailscaleAuthKey.trim()) { setTailscaleError('Enter an auth key'); return; }
+                        setTailscaleError('');
+                        setTailscaleErrorDetails('');
+                        setTailscaleSteps([]);
+                        setTailscaleBusy('enable');
+                        try {
+                          const result = await tailscaleEnableWithProgress(serverId, tailscaleAuthKey.trim(), (data) => {
+                            setTailscaleSteps((prev) => {
+                              const idx = prev.map((s) => s.step).lastIndexOf(data.step);
+                              const next = idx >= 0 ? prev.slice(0, idx + 1) : prev;
+                              if (idx >= 0) return next.map((s) => (s.step === data.step ? { ...s, message: data.message, status: data.status } : s));
+                              return [...next, { step: data.step, message: data.message, status: data.status }];
+                            });
+                          });
+                          setServer(result.server);
+                          setTailscaleAuthKey('');
+                          setTailscaleShowAuthInput(false);
+                        } catch (e) {
+                          setTailscaleError(e.message);
+                          setTailscaleErrorDetails(e.details || '');
+                          setTailscaleErrorExpanded(false);
+                        } finally {
+                          setTailscaleBusy(null);
+                          setTailscaleSteps([]);
+                        }
+                      }}
+                      disabled={tailscaleBusy !== null}
+                      className="px-4 py-2 text-sm font-medium text-white bg-primary-600 dark:bg-primary-500 rounded-lg hover:bg-primary-700 disabled:opacity-50"
+                    >
+                      {tailscaleBusy === 'enable' ? 'Installing…' : 'Install & join'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setTailscaleShowAuthInput(false); setTailscaleAuthKey(''); setTailscaleError(''); setTailscaleErrorDetails(''); }}
+                      disabled={tailscaleBusy !== null}
+                      className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-600 rounded-lg hover:bg-gray-200 disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+            {tailscaleBusy === 'enable' && tailscaleSteps.length > 0 && (
+              <ul className="mt-4 space-y-1.5 text-sm border-t border-gray-200 dark:border-gray-600 pt-4">
+                {tailscaleSteps.map((s, i) => (
+                  <li key={`${s.step}-${i}`} className="flex items-center gap-2">
+                    {s.status === 'ok' ? (
+                      <span className="text-emerald-600 dark:text-emerald-400 shrink-0" aria-hidden>✓</span>
+                    ) : s.status === 'fail' ? (
+                      <span className="text-red-600 dark:text-red-400 shrink-0" aria-hidden>✗</span>
+                    ) : (
+                      <span className="inline-block w-4 h-4 border-2 border-primary-500 border-t-transparent rounded-full animate-spin shrink-0" aria-hidden />
+                    )}
+                    <span className="font-medium text-gray-700 dark:text-gray-300">{tailscaleStepLabel(s.step)}</span>
+                    {s.message && <span className="text-gray-500 dark:text-gray-400">— {s.message}</span>}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* Public WWW: nginx proxy + Let's Encrypt, firewall 80/443 */}
       <div className="mb-6 bg-white dark:bg-gray-800 shadow dark:shadow-gray-700 rounded-xl overflow-hidden border border-gray-200/60 dark:border-gray-700/60">

@@ -934,7 +934,7 @@ const Dashboard = () => {
           </Link>
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="space-y-4">
           {servers.map((server) => {
             // Use stable containers ref for display to prevent flickering
             const serverContainers = stableContainersRef.current[server.id] || containers[server.id] || [];
@@ -943,99 +943,122 @@ const Dashboard = () => {
             const stoppedCount = serverContainers.length - runningCount;
             const serverIssues = containersThatShouldBeRunning.filter(c => c.serverId === server.id).length +
                                 containersWithoutAutoRestart.filter(c => c.serverId === server.id).length;
-            const serverHealth = serverContainers.length > 0 
-              ? Math.round((runningCount / serverContainers.length) * 100) 
+            const serverHealth = serverContainers.length > 0
+              ? Math.round((runningCount / serverContainers.length) * 100)
               : 100;
+            const info = hostInfos[server.id];
+            const hasIssues = serverIssues > 0;
 
             return (
               <Link
                 key={server.id}
                 to={`/servers/${server.id}`}
-                className={`bg-white dark:bg-gray-800 overflow-hidden shadow rounded-lg hover:shadow-lg transition-all duration-200 transform hover:-translate-y-1 relative ${
-                  serverIssues > 0 ? 'ring-2 ring-yellow-400 dark:ring-yellow-500' : ''
+                className={`group block overflow-hidden rounded-xl border transition-all duration-200 hover:shadow-lg hover:shadow-gray-500/10 dark:hover:shadow-black/20 ${
+                  hasIssues
+                    ? 'border-yellow-400/60 dark:border-yellow-500/50 bg-amber-50/30 dark:bg-amber-900/10 hover:border-yellow-400 dark:hover:border-yellow-500'
+                    : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 hover:border-primary-400/50 dark:hover:border-primary-500/50'
                 }`}
               >
-                <div className="p-5">
-                  {serverIssues > 0 && (
-                    <div className="absolute top-3 right-3">
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">
-                        {serverIssues} issue{serverIssues !== 1 ? 's' : ''}
+                <div className={`flex items-stretch min-h-[88px] ${hasIssues ? 'border-l-4 border-yellow-500' : 'border-l-4 border-transparent group-hover:border-primary-500'}`}>
+                  {/* Left: avatar + identity — fixed width so stats column starts at same position on every row */}
+                  <div className="flex items-center gap-5 pl-6 py-5 w-[300px] min-w-[300px] max-w-[300px] shrink-0">
+                    <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-primary-100 to-primary-50 dark:from-primary-900/60 dark:to-primary-800/40 flex items-center justify-center shadow-sm shrink-0">
+                      <span className="text-primary-600 dark:text-primary-300 font-bold text-lg">
+                        {server.name.charAt(0).toUpperCase()}
                       </span>
                     </div>
-                  )}
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center">
-                      <div className="flex-shrink-0">
-                        <div className="w-10 h-10 bg-primary-100 dark:bg-primary-900 rounded-lg flex items-center justify-center">
-                          <span className="text-primary-600 dark:text-primary-400 font-bold">
-                            {server.name.charAt(0).toUpperCase()}
+                    <div className="min-w-0 flex-1 overflow-hidden">
+                      <p className="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">
+                        {server.name || server.host}
+                      </p>
+                      <p className="text-base font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-2 min-w-0 flex-wrap">
+                        <span className="truncate">
+                          {server.tailscaleEnabled && server.tailscaleIp
+                            ? server.tailscaleIp
+                            : (server.host || server.name)}
+                        </span>
+                        {server.tailscaleEnabled && server.tailscaleIp && (
+                          <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400 shrink-0">Tailscale</span>
+                        )}
+                        {(server.publicHost || hostInfos[server.id]?.publicIp) && (
+                          <span className="text-xs text-gray-500 dark:text-gray-400 truncate">
+                            ({server.publicHost || hostInfos[server.id].publicIp})
                           </span>
-                        </div>
-                      </div>
-                      <div className="ml-5 flex-1 min-w-0 overflow-hidden">
-                        <dl className="min-w-0">
-                          <dt className="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">
-                            {server.name || server.host}
-                          </dt>
-                          <dd className="text-lg font-medium text-gray-900 dark:text-gray-100 flex items-center gap-2 min-w-0">
-                            {/* Big: host (connection IP/hostname); small: public IP/host (manual, detected, or name) */}
-                            <span className="flex-1 min-w-0 truncate">
-                              {server.host || server.name}
-                              {(server.publicHost && (
-                                <span className="text-xs text-gray-500 dark:text-gray-400 ml-1">
-                                  ({server.publicHost})
-                                </span>
-                              )) || (hostInfos[server.id]?.publicIp && (
-                                <span className="text-xs text-gray-500 dark:text-gray-400 ml-1">
-                                  ({hostInfos[server.id].publicIp})
-                                </span>
-                              )) || (server.name && server.host && String(server.name).trim() !== String(server.host).trim() && (
-                                <span className="text-xs text-gray-500 dark:text-gray-400 ml-1">
-                                  ({server.name})
-                                </span>
-                              ))}
-                            </span>
-                            {server.publicWwwEnabled && (
-                              <span className="shrink-0 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-primary-100 dark:bg-primary-900/40 text-primary-800 dark:text-primary-200" title="Public WWW (nginx + Let's Encrypt) enabled">
-                                WWW
-                              </span>
-                            )}
-                          </dd>
-                        </dl>
-                      </div>
+                        )}
+                        {server.publicWwwEnabled && (
+                          <span className="shrink-0 inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-semibold bg-primary-100 dark:bg-primary-900/50 text-primary-700 dark:text-primary-300" title="Public WWW enabled">
+                            WWW
+                          </span>
+                        )}
+                      </p>
                     </div>
                   </div>
-                  {server.lastSyncError && (
-                    <div className="mt-2 p-2 rounded bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800">
-                      <p className="text-xs font-medium text-red-800 dark:text-red-200">Sync error</p>
-                      <p className="text-xs text-red-700 dark:text-red-300 truncate" title={server.lastSyncError}>{server.lastSyncError}</p>
-                    </div>
-                  )}
-                  <div className="mt-4 space-y-2">
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-gray-500 dark:text-gray-400">Containers</span>
-                      <span className="font-medium text-gray-900 dark:text-gray-100">
-                        {runningCount} / {serverContainers.length} running
-                      </span>
+
+                  {/* Stats: grid with fixed column widths so Containers / CPU / Memory align across all cards */}
+                  <div className="flex-1 flex flex-col justify-center gap-2 px-6 py-4 min-w-0 border-l border-gray-100 dark:border-gray-700/80">
+                    <div className="grid grid-cols-[220px_90px_160px] items-baseline gap-x-6">
+                      <div className="min-w-0 flex items-baseline gap-2">
+                        <span className="text-sm text-gray-500 dark:text-gray-400 shrink-0">Containers</span>
+                        <span className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
+                          {runningCount} / {serverContainers.length} running
+                        </span>
+                        {stoppedCount > 0 && (
+                          <span className="text-xs text-amber-700 dark:text-amber-300 shrink-0">({stoppedCount} stopped)</span>
+                        )}
+                      </div>
+                      <div className="min-w-0 text-sm">
+                        {info?.cpuUsage ? (
+                          <span className="flex items-baseline gap-1.5">
+                            <span className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-gray-500 shrink-0">CPU</span>
+                            <span className="font-medium text-gray-900 dark:text-gray-100 truncate">{info.cpuUsage}</span>
+                          </span>
+                        ) : (
+                          <span className="text-gray-400 dark:text-gray-500">—</span>
+                        )}
+                      </div>
+                      <div className="min-w-0 text-sm">
+                        {(info?.usedMemory || info?.totalMemory) ? (
+                          <span className="flex items-baseline gap-1.5">
+                            <span className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-gray-500 shrink-0">Memory</span>
+                            <span className="font-medium text-gray-900 dark:text-gray-100 truncate">
+                              {info?.usedMemory || '—'}{info?.totalMemory ? ` / ${info.totalMemory}` : ''}
+                            </span>
+                          </span>
+                        ) : (
+                          <span className="text-gray-400 dark:text-gray-500">—</span>
+                        )}
+                      </div>
                     </div>
                     {serverContainers.length > 0 && (
-                      <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
-                        <div 
-                          className={`h-2 rounded-full transition-all ${
-                            serverHealth >= 90 ? 'bg-green-500' :
-                            serverHealth >= 70 ? 'bg-yellow-500' : 'bg-red-500'
-                          }`}
-                          style={{ width: `${serverHealth}%` }}
-                        ></div>
+                      <div className="w-[220px]">
+                        <div className="w-full h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full rounded-full transition-all ${
+                              serverHealth >= 90 ? 'bg-emerald-500' : serverHealth >= 70 ? 'bg-amber-500' : 'bg-red-500'
+                            }`}
+                            style={{ width: `${serverHealth}%` }}
+                          />
+                        </div>
                       </div>
                     )}
-                    {stoppedCount > 0 && (
-                      <div className="text-xs text-gray-500 dark:text-gray-400">
-                        {stoppedCount} stopped
-                      </div>
+                  </div>
+
+                  {/* Right: issues badge */}
+                  <div className="flex items-center pr-6 py-4 flex-shrink-0 border-l border-gray-100 dark:border-gray-700/80">
+                    {hasIssues && (
+                      <span className="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-200">
+                        {serverIssues} issue{serverIssues !== 1 ? 's' : ''}
+                      </span>
                     )}
                   </div>
                 </div>
+
+                {server.lastSyncError && (
+                  <div className="mx-6 mb-4 p-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800">
+                    <p className="text-xs font-medium text-red-800 dark:text-red-200">Sync error</p>
+                    <p className="text-xs text-red-700 dark:text-red-300 truncate" title={server.lastSyncError}>{server.lastSyncError}</p>
+                  </div>
+                )}
               </Link>
             );
           })}

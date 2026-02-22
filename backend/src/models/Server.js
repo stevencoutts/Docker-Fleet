@@ -91,6 +91,17 @@ module.exports = (sequelize) => {
         allowNull: true,
         field: 'public_host',
       },
+      tailscaleEnabled: {
+        type: DataTypes.BOOLEAN,
+        allowNull: false,
+        defaultValue: false,
+        field: 'tailscale_enabled',
+      },
+      tailscaleIp: {
+        type: DataTypes.STRING(45),
+        allowNull: true,
+        field: 'tailscale_ip',
+      },
       privateKeyEncrypted: {
         type: DataTypes.JSON,
         allowNull: false,
@@ -129,6 +140,17 @@ module.exports = (sequelize) => {
 
   Server.prototype.getDecryptedKey = function () {
     return decrypt(this.privateKeyEncrypted);
+  };
+
+  /**
+   * Host to use for SSH/management. When Tailscale is enabled and tailscaleIp is set,
+   * returns the Tailscale IP; otherwise returns the configured host.
+   */
+  Server.prototype.getEffectiveHost = function () {
+    if (this.tailscaleEnabled && this.tailscaleIp) {
+      return this.tailscaleIp;
+    }
+    return this.host;
   };
 
   return Server;

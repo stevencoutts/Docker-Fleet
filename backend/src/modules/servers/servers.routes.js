@@ -7,6 +7,9 @@ const {
   updateServer,
   deleteServer,
   testConnection,
+  tailscaleEnable,
+  tailscaleDisable,
+  tailscaleStatus,
   createServerValidation,
   updateServerValidation,
 } = require('./servers.controller');
@@ -46,6 +49,9 @@ router.get('/:id/public-www/nginx-import', getImportNginxBlock);
 router.put('/:id/public-www/custom-nginx-config', updateCustomNginxConfig);
 router.post('/:id/public-www/request-dns-cert', requestDnsCert);
 router.post('/:id/public-www/continue-dns-cert', continueDnsCert);
+router.post('/:id/tailscale/enable', tailscaleEnable);
+router.post('/:id/tailscale/disable', tailscaleDisable);
+router.get('/:id/tailscale/status', tailscaleStatus);
 router.get('/:id', getServerById);
 router.post('/', createServerValidation, validate, createServer);
 router.put('/:id', updateServerValidation, validate, updateServer);

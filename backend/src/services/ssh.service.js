@@ -18,7 +18,8 @@ class SSHService {
     }
 
     const ssh = new Client();
-    
+    const effectiveHost = typeof server.getEffectiveHost === 'function' ? server.getEffectiveHost() : server.host;
+
     return new Promise((resolve, reject) => {
       const privateKey = server.getDecryptedKey();
       
@@ -29,7 +30,7 @@ class SSHService {
           serverId: server.id,
         });
 
-        logger.info(`SSH connection established to ${server.host}:${server.port}`);
+        logger.info(`SSH connection established to ${effectiveHost}:${server.port}`);
         resolve(ssh);
       });
 
@@ -38,7 +39,7 @@ class SSHService {
         logger.error(`SSH connection error for ${server.id}:`, {
           message: err.message,
           code: err.code,
-          host: server.host,
+          host: effectiveHost,
           port: server.port,
           username: server.username,
           // Explicitly do NOT log privateKey
@@ -53,7 +54,7 @@ class SSHService {
       });
 
       ssh.connect({
-        host: server.host,
+        host: effectiveHost,
         port: server.port,
         username: server.username,
         privateKey: privateKey,
@@ -77,7 +78,8 @@ class SSHService {
         pty: options.pty !== false, // Allow disabling pty if needed
       }, (err, stream) => {
         if (err) {
-          logger.error(`Command execution failed on ${server.host}:`, err);
+          const host = typeof server.getEffectiveHost === 'function' ? server.getEffectiveHost() : server.host;
+          logger.error(`Command execution failed on ${host}:`, err);
           reject(err);
           return;
         }
@@ -91,8 +93,9 @@ class SSHService {
             streamClosed = true;
             stream.close();
             const cmdPreview = typeof command === 'string' ? command.substring(0, 300) : String(command).substring(0, 300);
+            const host = typeof server.getEffectiveHost === 'function' ? server.getEffectiveHost() : server.host;
             logger.warn('SSH command timed out', {
-              host: server.host,
+              host,
               timeoutMs: timeout,
               commandPreview: cmdPreview,
               stdoutTail: stdout.slice(-800),
