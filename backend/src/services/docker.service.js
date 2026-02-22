@@ -1142,7 +1142,8 @@ class DockerService {
 
   async pullImage(server, imageName) {
     const command = `docker pull ${imageName}`;
-    const result = await sshService.executeCommand(server, command, { allowFailure: true });
+    // Pull can take several minutes for large images; use 5 min timeout
+    const result = await sshService.executeCommand(server, command, { allowFailure: true, timeout: 300000 });
     return {
       success: result.code === 0,
       message: result.stdout || result.stderr,

@@ -10,7 +10,7 @@ export const containersService = {
   getUpdateStatus: (serverId, containerId) =>
     api.get(`/api/v1/servers/${serverId}/containers/${containerId}/update-status`, { timeout: 30000 }),
   pullAndUpdate: (serverId, containerId) =>
-    api.post(`/api/v1/servers/${serverId}/containers/${containerId}/pull-and-update`, {}, { timeout: 120000 }),
+    api.post(`/api/v1/servers/${serverId}/containers/${containerId}/pull-and-update`, {}, { timeout: 360000 }),
   recreate: (serverId, containerId, body = {}) =>
     api.post(`/api/v1/servers/${serverId}/containers/${containerId}/recreate`, body, { timeout: 120000 }),
   getLogs: (serverId, containerId, params = {}) => {
