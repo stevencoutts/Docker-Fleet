@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const { authenticate } = require('../middleware/auth.middleware');
 const authRoutes = require('../modules/auth/auth.routes');
 const serversRoutes = require('../modules/servers/servers.routes');
 const containersRoutes = require('../modules/containers/containers.routes');
@@ -10,7 +11,11 @@ const groupingRoutes = require('../modules/grouping/grouping.routes');
 const backupSchedulesRoutes = require('../modules/backup-schedules/backup-schedules.routes');
 const backupRoutes = require('../modules/backup/backup.routes');
 
+// Public: only auth routes (setup, login, register, refresh); /auth/me uses authenticate in its own route
 router.use('/auth', authRoutes);
+
+// All other API routes require a valid Bearer token
+router.use(authenticate);
 router.use('/backup', backupRoutes);
 router.use('/backup-schedules', backupSchedulesRoutes);
 router.use('/servers', serversRoutes);
