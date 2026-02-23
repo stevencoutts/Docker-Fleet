@@ -238,7 +238,9 @@ const consoleLimiter = rateLimit({
   },
 });
 
-// General rate limiter - bypassed for localhost; uses config for production
+// General rate limiter - bypassed for localhost; uses config for production.
+// Skip auth routes so they are only limited by authLimiter (higher limit); otherwise
+// setup/me/login burn the general quota and /auth/me 429 is treated as "logged out".
 const limiter = rateLimit({
   windowMs: config.rateLimit.windowMs,
   max: config.rateLimit.max,
@@ -247,12 +249,12 @@ const limiter = rateLimit({
   legacyHeaders: false,
   validate: { trustProxy: false }, // We use trust proxy behind our own reverse proxy; disable strict check
   skip: (req) => {
-    // Always skip for localhost/development or if bypassed by middleware
-    const shouldSkip = req._rateLimitBypass || isDevelopment || isLocalhost(req);
-    if (shouldSkip) {
+    if (req._rateLimitBypass || isDevelopment || isLocalhost(req)) {
       logger.debug(`Skipping general rate limit for ${req.method} ${req.path} from ${req.ip || 'unknown'}`);
+      return true;
     }
-    return shouldSkip;
+    if (req.path.startsWith('/v1/auth')) return true;
+    return false;
   },
 });
 
