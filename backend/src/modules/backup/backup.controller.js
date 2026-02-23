@@ -18,6 +18,12 @@ const backupSchedulerService = require('../../services/backup-scheduler.service'
 const logger = require('../../config/logger');
 
 const BACKUP_VERSION = 1;
+const BACKUP_IMPORT_MAX_BYTES = 5 * 1024 * 1024; // 5MB
+const BACKUP_IMPORT_MAX_SERVERS = 500;
+const BACKUP_IMPORT_MAX_PROXY_ROUTES = 5000;
+const BACKUP_IMPORT_MAX_GROUPING_RULES = 500;
+const BACKUP_IMPORT_MAX_SCHEDULES = 200;
+const BACKUP_IMPORT_MAX_JOBS = 200;
 
 /**
  * GET /api/v1/backup/export
@@ -170,13 +176,53 @@ const importData = async (req, res, next) => {
     if (!data || typeof data !== 'object') {
       return res.status(400).json({ error: 'Invalid backup: body must be a JSON object' });
     }
+    const payloadSize = Buffer.byteLength(JSON.stringify(data), 'utf8');
+    if (payloadSize > BACKUP_IMPORT_MAX_BYTES) {
+      return res.status(413).json({
+        error: `Backup payload too large (max ${BACKUP_IMPORT_MAX_BYTES} bytes)`,
+      });
+    }
+    const servers = Array.isArray(data.servers) ? data.servers : [];
+    if (servers.length > BACKUP_IMPORT_MAX_SERVERS) {
+      return res.status(400).json({
+        error: `Too many servers in backup (max ${BACKUP_IMPORT_MAX_SERVERS})`,
+      });
+    }
+    const proxyRoutes = Array.isArray(data.serverProxyRoutes)
+      ? data.serverProxyRoutes
+      : Array.isArray(data.proxyRoutes)
+        ? data.proxyRoutes
+        : [];
+    if (proxyRoutes.length > BACKUP_IMPORT_MAX_PROXY_ROUTES) {
+      return res.status(400).json({
+        error: `Too many proxy routes in backup (max ${BACKUP_IMPORT_MAX_PROXY_ROUTES})`,
+      });
+    }
+    const groupingRulesArr = Array.isArray(data.containerGroupingRules) ? data.containerGroupingRules : [];
+    if (groupingRulesArr.length > BACKUP_IMPORT_MAX_GROUPING_RULES) {
+      return res.status(400).json({
+        error: `Too many grouping rules in backup (max ${BACKUP_IMPORT_MAX_GROUPING_RULES})`,
+      });
+    }
+    const schedulesArr = Array.isArray(data.backupSchedules) ? data.backupSchedules : [];
+    if (schedulesArr.length > BACKUP_IMPORT_MAX_SCHEDULES) {
+      return res.status(400).json({
+        error: `Too many backup schedules in backup (max ${BACKUP_IMPORT_MAX_SCHEDULES})`,
+      });
+    }
+    const jobsArr = Array.isArray(data.backupJobs) ? data.backupJobs : [];
+    if (jobsArr.length > BACKUP_IMPORT_MAX_JOBS) {
+      return res.status(400).json({
+        error: `Too many backup jobs in backup (max ${BACKUP_IMPORT_MAX_JOBS})`,
+      });
+    }
     if (data.version !== BACKUP_VERSION) {
       return res.status(400).json({
         error: `Unsupported backup version: ${data.version}. This app supports version ${BACKUP_VERSION}.`,
       });
     }
 
-    const backupServers = Array.isArray(data.servers) ? data.servers : [];
+    const backupServers = servers;
     const currentServers = await Server.findAll({
       where: { userId },
       attributes: ['id', 'name', 'host'],
@@ -210,11 +256,7 @@ const importData = async (req, res, next) => {
       );
     }
 
-    const proxyRoutes = Array.isArray(data.serverProxyRoutes)
-      ? data.serverProxyRoutes
-      : Array.isArray(data.proxyRoutes)
-        ? data.proxyRoutes
-        : [];
+    // proxyRoutes already defined above for size validation
     // When backup has routes but no server matched (or only one current server), assign all backup route serverIds to a current server so routes aren't lost
     if (currentServers.length >= 1 && proxyRoutes.length > 0) {
       const targetId = currentServers[0].id;
@@ -268,7 +310,7 @@ const importData = async (req, res, next) => {
       restored.monitoringSettings = true;
     }
 
-    const groupingRules = Array.isArray(data.containerGroupingRules) ? data.containerGroupingRules : [];
+    const groupingRules = groupingRulesArr;
     await ContainerGroupingRule.destroy({ where: { userId } });
     for (const r of groupingRules) {
       await ContainerGroupingRule.create({
@@ -282,7 +324,7 @@ const importData = async (req, res, next) => {
     }
     restored.containerGroupingRules = groupingRules.length;
 
-    const schedules = Array.isArray(data.backupSchedules) ? data.backupSchedules : [];
+    const schedules = schedulesArr;
     const scheduleServerId = (s) => {
       const key = `${(s.serverName || '').trim()}\n${(s.serverHost || '').trim()}`;
       return currentServers.find((c) => serverKey(c) === key)?.id;
@@ -304,7 +346,7 @@ const importData = async (req, res, next) => {
     }
     restored.backupSchedules = schedules.filter((s) => scheduleServerId(s)).length;
 
-    const jobs = Array.isArray(data.backupJobs) ? data.backupJobs : [];
+    const jobs = jobsArr;
     await BackupJob.destroy({ where: { userId } });
     for (const j of jobs) {
       const entries = Array.isArray(j.entries) ? j.entries : [];

@@ -537,8 +537,12 @@ const createSnapshot = async (req, res, next) => {
 
     // If download was requested and successful, send file
     if (fileData && downloadFileName) {
+      const safeFilename = String(downloadFileName)
+        .replace(/[\x00-\x1f\x7f\\"]/g, '_')
+        .replace(/\s+/g, '_')
+        .slice(0, 200) || 'snapshot.tar';
       res.setHeader('Content-Type', 'application/x-tar');
-      res.setHeader('Content-Disposition', `attachment; filename="${downloadFileName}"`);
+      res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"`);
       res.setHeader('Content-Length', fileData.length);
       res.send(fileData);
     } else {

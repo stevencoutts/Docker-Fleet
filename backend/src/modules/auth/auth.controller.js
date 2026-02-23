@@ -152,6 +152,10 @@ const registerValidation = [
   body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters'),
 ];
 
+const refreshValidation = [
+  body('refreshToken').notEmpty().withMessage('Refresh token is required').isString(),
+];
+
 module.exports = {
   login,
   register,
@@ -160,4 +164,5 @@ module.exports = {
   checkSetup,
   loginValidation,
   registerValidation,
+  refreshValidation,
 };

@@ -1,6 +1,21 @@
 const sshService = require('./ssh.service');
 const registryService = require('./registry.service');
 const logger = require('../config/logger');
+const {
+  validateContainerId,
+  validateImageId,
+  validateShell,
+  validateImageName,
+  validateTag,
+  validatePortMapping,
+  validateExportPath,
+  escapeSingleQuoted,
+  DOCKER_ID_REGEX,
+} = require('../utils/shellSafe');
+
+function filterValidContainerIds(ids) {
+  return (ids || []).filter((id) => DOCKER_ID_REGEX.test(String(id || '').trim()));
+}
 
 /** Comma-separated name suffixes; containers whose name ends with one of these are treated as dev/skip-update. */
 const DEFAULT_SKIP_UPDATE_SUFFIXES = '-db-1,-postgres-1,-db';
@@ -60,9 +75,10 @@ class DockerService {
     }
 
     // Batch fetch restart policies, mounts, and networks: docker inspect with multiple IDs returns a single JSON array
-    if (containerIds.length > 0) {
+    const safeContainerIds = filterValidContainerIds(containerIds);
+    if (safeContainerIds.length > 0) {
       try {
-        const idsString = containerIds.join(' ');
+        const idsString = safeContainerIds.join(' ');
         const inspectCommand = `docker inspect ${idsString}`;
         const inspectResult = await sshService.executeCommand(server, inspectCommand, { allowFailure: true });
 
@@ -103,7 +119,7 @@ class DockerService {
         } else {
           // Fallback: restart policy only via format
           try {
-            const idsString = containerIds.join(' ');
+            const idsString = safeContainerIds.join(' ');
             const inspectCommand = `docker inspect ${idsString} --format '{{.Id}}|{{.HostConfig.RestartPolicy.Name}}'`;
             const inspectResult = await sshService.executeCommand(server, inspectCommand, { allowFailure: true });
             if (inspectResult && inspectResult.stdout) {
@@ -133,7 +149,8 @@ class DockerService {
   }
 
   async getContainerDetails(server, containerId) {
-    const command = `docker inspect ${containerId}`;
+    const safeId = validateContainerId(containerId);
+    const command = `docker inspect ${safeId}`;
     const result = await sshService.executeCommand(server, command, { timeout: 15000 });
     
     try {
@@ -623,8 +640,9 @@ class DockerService {
   }
 
   async getContainerLogs(server, containerId, options = {}) {
+    const safeId = validateContainerId(containerId);
     const { tail = 100, follow = false, since } = options;
-    let command = `docker logs ${containerId}`;
+    let command = `docker logs ${safeId}`;
     
     if (tail) command += ` --tail ${tail}`;
     if (since) command += ` --since ${since}`;
@@ -648,30 +666,35 @@ class DockerService {
   }
 
   async startContainer(server, containerId) {
-    const command = `docker start ${containerId}`;
+    const safeId = validateContainerId(containerId);
+    const command = `docker start ${safeId}`;
     const result = await sshService.executeCommand(server, command);
     return { success: result.code === 0, message: result.stdout || result.stderr };
   }
 
   async stopContainer(server, containerId) {
-    const command = `docker stop ${containerId}`;
+    const safeId = validateContainerId(containerId);
+    const command = `docker stop ${safeId}`;
     const result = await sshService.executeCommand(server, command);
     return { success: result.code === 0, message: result.stdout || result.stderr };
   }
 
   async restartContainer(server, containerId) {
-    const command = `docker restart ${containerId}`;
+    const safeId = validateContainerId(containerId);
+    const command = `docker restart ${safeId}`;
     const result = await sshService.executeCommand(server, command);
     return { success: result.code === 0, message: result.stdout || result.stderr };
   }
 
   async removeContainer(server, containerId, force = false) {
-    const command = `docker rm ${force ? '-f' : ''} ${containerId}`;
+    const safeId = validateContainerId(containerId);
+    const command = `docker rm ${force ? '-f' : ''} ${safeId}`;
     const result = await sshService.executeCommand(server, command);
     return { success: result.code === 0, message: result.stdout || result.stderr };
   }
 
   async updateRestartPolicy(server, containerId, policy = 'unless-stopped') {
+    const safeId = validateContainerId(containerId);
     // Valid policies: no, always, on-failure, unless-stopped
     const validPolicies = ['no', 'always', 'on-failure', 'unless-stopped'];
     if (!validPolicies.includes(policy)) {
@@ -679,7 +702,7 @@ class DockerService {
     }
 
     // Use docker update to change restart policy
-    const command = `docker update --restart=${policy} ${containerId}`;
+    const command = `docker update --restart=${policy} ${safeId}`;
     const result = await sshService.executeCommand(server, command);
     
     if (result.code !== 0) {
@@ -694,45 +717,31 @@ class DockerService {
   }
 
   async executeCommand(server, containerId, command, options = {}) {
-    // Execute a command inside a container using docker exec
-    // Default to /bin/sh if no shell is specified
-    const shell = options.shell || '/bin/sh';
-    
+    const safeContainerId = validateContainerId(containerId);
+    const shell = validateShell(options.shell || '/bin/sh');
+
     let finalCommand = command;
-    
-    // Make interactive commands work by converting them to non-interactive versions
-    // Handle pagers (more, less) by making them non-interactive
+
     if (command.trim().startsWith('more ')) {
-      // Convert 'more file' to 'cat file' for simplicity, or use more with non-interactive flags
-      // Using cat is simpler and works everywhere
       const args = command.substring(5).trim();
-      finalCommand = `cat ${args}`;
+      finalCommand = `cat ${escapeSingleQuoted(args)}`;
     } else if (command.trim().startsWith('less ')) {
-      // Convert 'less file' to 'cat file' or use less with non-interactive flags
       const args = command.substring(5).trim();
-      // Try less with -F (quit if one screen) and -X (don't clear screen) flags
-      // If that doesn't work, fall back to cat
-      finalCommand = `less -F -X ${args} 2>/dev/null || cat ${args}`;
+      finalCommand = `less -F -X ${escapeSingleQuoted(args)} 2>/dev/null || cat ${escapeSingleQuoted(args)}`;
     } else if (command.trim() === 'more' || command.trim() === 'less') {
-      // Just 'more' or 'less' without args - convert to cat
       finalCommand = 'cat';
     } else {
-      // For other potentially interactive commands (vi, vim, nano, emacs, htop), 
-      // we can't make them work, so we'll let them timeout with a helpful message
       const interactiveCommands = ['vi ', 'vim ', 'nano ', 'emacs ', 'htop'];
       const commandLower = command.toLowerCase();
       const isInteractive = interactiveCommands.some(cmd => commandLower.includes(cmd));
-      
+
       if (isInteractive) {
-        // For editors and htop, we can't make them work, so wrap with timeout
         finalCommand = `timeout 5s sh -c '${command.replace(/'/g, "'\\''")}' 2>&1 || echo "Interactive commands like '${command.split(' ')[0]}' are not supported. Use 'cat' to view files."`;
       }
     }
-    
-    // Build docker exec command - use sh -c to execute the command
-    // Escape single quotes in the command
+
     const escapedCommand = finalCommand.replace(/'/g, "'\\''");
-    const dockerCommand = `docker exec -i ${containerId} ${shell} -c '${escapedCommand}'`;
+    const dockerCommand = `docker exec -i ${safeContainerId} ${shell} -c '${escapedCommand}'`;
     
     const result = await sshService.executeCommand(server, dockerCommand, {
       allowFailure: true,
@@ -749,9 +758,9 @@ class DockerService {
   }
 
   async getContainerStats(server, containerId) {
-    // Try Docker API first (most reliable for full stats)
+    const safeContainerId = validateContainerId(containerId);
     try {
-      const apiCommand = `curl -s --unix-socket /var/run/docker.sock http://localhost/containers/${containerId}/stats?stream=false 2>/dev/null`;
+      const apiCommand = `curl -s --unix-socket /var/run/docker.sock http://localhost/containers/${safeContainerId}/stats?stream=false 2>/dev/null`;
       const apiResult = await sshService.executeCommand(server, apiCommand, { allowFailure: true });
       
       if (apiResult.code === 0 && apiResult.stdout.trim()) {
@@ -772,7 +781,7 @@ class DockerService {
                 Object.values(stats.networks).every(net => (net.rx_bytes || 0) === 0 && (net.tx_bytes || 0) === 0)) {
               // Try to get network stats from /proc/net/dev (most reliable for cumulative stats)
               try {
-                const pidCommand = `docker inspect ${containerId} --format '{{.State.Pid}}'`;
+                const pidCommand = `docker inspect ${safeContainerId} --format '{{.State.Pid}}'`;
                 const pidResult = await sshService.executeCommand(server, pidCommand, { allowFailure: true });
                 
                 if (pidResult.code === 0 && pidResult.stdout.trim()) {
@@ -782,7 +791,7 @@ class DockerService {
                   const procNetResult = await sshService.executeCommand(server, procNetCommand, { allowFailure: true });
                   
                   // Get network interface names from docker inspect
-                  const networkCommand = `docker inspect ${containerId} --format '{{json .NetworkSettings.Networks}}'`;
+                  const networkCommand = `docker inspect ${safeContainerId} --format '{{json .NetworkSettings.Networks}}'`;
                   const networkResult = await sshService.executeCommand(server, networkCommand, { allowFailure: true });
                   
                   let netRxBytes = 0;
@@ -847,11 +856,11 @@ class DockerService {
     // Fallback: Use docker stats and docker inspect to build stats object
     try {
       // Get basic stats from docker stats
-      const statsCommand = `docker stats ${containerId} --no-stream --format '{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}|{{.NetIO}}|{{.BlockIO}}|{{.PIDs}}'`;
+      const statsCommand = `docker stats ${safeContainerId} --no-stream --format '{{.CPUPerc}}|{{.MemUsage}}|{{.MemPerc}}|{{.NetIO}}|{{.BlockIO}}|{{.PIDs}}'`;
       const statsResult = await sshService.executeCommand(server, statsCommand, { allowFailure: true });
       
       // Get detailed info from docker inspect
-      const inspectCommand = `docker inspect ${containerId} --format '{{json .HostConfig.Memory}}|{{json .State.Pid}}'`;
+      const inspectCommand = `docker inspect ${safeContainerId} --format '{{json .HostConfig.Memory}}|{{json .State.Pid}}'`;
       const inspectResult = await sshService.executeCommand(server, inspectCommand, { allowFailure: true });
       
       let cpuPercent = 0;
@@ -906,7 +915,7 @@ class DockerService {
       // If we still don't have memLimit, try to get it from the container
       if (memLimit === 0) {
         try {
-          const memInfoCommand = `docker inspect ${containerId} --format '{{.HostConfig.Memory}}'`;
+          const memInfoCommand = `docker inspect ${safeContainerId} --format '{{.HostConfig.Memory}}'`;
           const memInfoResult = await sshService.executeCommand(server, memInfoCommand, { allowFailure: true });
           if (memInfoResult.code === 0 && memInfoResult.stdout.trim()) {
             const limit = parseInt(memInfoResult.stdout.trim());
@@ -923,7 +932,7 @@ class DockerService {
       let networks = {};
       try {
         // First, get network interface names
-        const networkCommand = `docker inspect ${containerId} --format '{{json .NetworkSettings.Networks}}'`;
+        const networkCommand = `docker inspect ${safeContainerId} --format '{{json .NetworkSettings.Networks}}'`;
         const networkResult = await sshService.executeCommand(server, networkCommand, { allowFailure: true });
         
         if (networkResult.code === 0 && networkResult.stdout.trim()) {
@@ -931,7 +940,7 @@ class DockerService {
             const networkData = JSON.parse(networkResult.stdout.trim());
             if (networkData && typeof networkData === 'object') {
               // Get the container's PID to access /proc/net/dev
-              const pidCommand = `docker inspect ${containerId} --format '{{.State.Pid}}'`;
+              const pidCommand = `docker inspect ${safeContainerId} --format '{{.State.Pid}}'`;
               const pidResult = await sshService.executeCommand(server, pidCommand, { allowFailure: true });
               
               if (pidResult.code === 0 && pidResult.stdout.trim()) {
@@ -993,7 +1002,7 @@ class DockerService {
       if (Object.keys(networks).length === 0) {
         // Try to get actual network stats from /proc/net/dev
         try {
-          const pidCommand = `docker inspect ${containerId} --format '{{.State.Pid}}'`;
+          const pidCommand = `docker inspect ${safeContainerId} --format '{{.State.Pid}}'`;
           const pidResult = await sshService.executeCommand(server, pidCommand, { allowFailure: true });
           
           if (pidResult.code === 0 && pidResult.stdout.trim()) {
@@ -1141,7 +1150,8 @@ class DockerService {
   }
 
   async pullImage(server, imageName) {
-    const command = `docker pull ${imageName}`;
+    const safeName = validateImageName(imageName);
+    const command = `docker pull ${escapeSingleQuoted(safeName)}`;
     // Pull can take several minutes for large images; use 5 min timeout
     const result = await sshService.executeCommand(server, command, { allowFailure: true, timeout: 300000 });
     return {
@@ -1151,16 +1161,18 @@ class DockerService {
   }
 
   async removeImage(server, imageId, force = false) {
-    const command = `docker rmi ${force ? '-f' : ''} ${imageId}`;
+    const safeId = validateImageId(imageId);
+    const command = `docker rmi ${force ? '-f' : ''} ${safeId}`;
     const result = await sshService.executeCommand(server, command);
     return { success: result.code === 0, message: result.stdout || result.stderr };
   }
 
   async commitContainer(server, containerId, imageName, tag = 'snapshot') {
-    // Commit container to an image
-    // Format: imageName:tag
-    const fullImageName = tag ? `${imageName}:${tag}` : imageName;
-    const command = `docker commit ${containerId} ${fullImageName}`;
+    const safeContainerId = validateContainerId(containerId);
+    const safeImageName = validateImageName(imageName);
+    const safeTag = validateTag(tag);
+    const fullImageName = `${safeImageName}:${safeTag}`;
+    const command = `docker commit ${safeContainerId} ${escapeSingleQuoted(fullImageName)}`;
     const result = await sshService.executeCommand(server, command, { allowFailure: true });
     
     if (result.code !== 0) {
@@ -1175,9 +1187,9 @@ class DockerService {
   }
 
   async exportImage(server, imageName, outputPath) {
-    // Export image to a tar file
-    // docker save -o outputPath imageName
-    const command = `docker save -o ${outputPath} ${imageName}`;
+    const safeImageName = validateImageName(imageName);
+    const safePath = validateExportPath(outputPath);
+    const command = `docker save -o ${safePath} ${escapeSingleQuoted(safeImageName)}`;
     const result = await sshService.executeCommand(server, command, { allowFailure: true });
     
     if (result.code !== 0) {
@@ -1542,7 +1554,7 @@ class DockerService {
     }
     if (options.ports && options.ports.length > 0) {
       options.ports.forEach((port) => {
-        command += ` -p ${port}`;
+        command += ` -p ${validatePortMapping(port)}`;
       });
     } else if (options.publishAllExposed !== false) {
       // Publish all ports exposed by the image to random host ports (docker -P)

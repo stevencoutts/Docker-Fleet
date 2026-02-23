@@ -2,6 +2,9 @@ const { BackupJob, BackupJobEntry, Server } = require('../../models');
 const backupSchedulerService = require('../../services/backup-scheduler.service');
 
 const validScheduleTypes = ['interval', 'daily', 'weekly'];
+const MAX_BULK_TARGETS = 200;
+const MAX_SCHEDULE_CONFIG_KEYS = 20;
+const MAX_SCHEDULE_CONFIG_STRING_LENGTH = 2000;
 
 /**
  * List all backup jobs for the current user (each job has many entries).
@@ -49,6 +52,18 @@ const createJob = async (req, res, next) => {
 
     if (!Array.isArray(targets) || targets.length === 0) {
       return res.status(400).json({ error: 'targets must be a non-empty array of { serverId, containerName }' });
+    }
+    if (targets.length > MAX_BULK_TARGETS) {
+      return res.status(400).json({ error: `Too many targets (max ${MAX_BULK_TARGETS})` });
+    }
+    if (scheduleConfig != null && (typeof scheduleConfig !== 'object' || Array.isArray(scheduleConfig))) {
+      return res.status(400).json({ error: 'scheduleConfig must be an object' });
+    }
+    if (scheduleConfig && Object.keys(scheduleConfig).length > MAX_SCHEDULE_CONFIG_KEYS) {
+      return res.status(400).json({ error: `scheduleConfig has too many keys (max ${MAX_SCHEDULE_CONFIG_KEYS})` });
+    }
+    if (scheduleConfig && JSON.stringify(scheduleConfig).length > MAX_SCHEDULE_CONFIG_STRING_LENGTH) {
+      return res.status(400).json({ error: 'scheduleConfig too large' });
     }
     if (!scheduleType || !validScheduleTypes.includes(scheduleType)) {
       return res.status(400).json({
@@ -134,7 +149,19 @@ const updateJob = async (req, res, next) => {
       }
       updates.scheduleType = scheduleType;
     }
-    if (scheduleConfig !== undefined) updates.scheduleConfig = scheduleConfig;
+    if (scheduleConfig !== undefined) {
+      if (typeof scheduleConfig !== 'object' || scheduleConfig === null || Array.isArray(scheduleConfig)) {
+        return res.status(400).json({ error: 'scheduleConfig must be an object' });
+      }
+      if (Object.keys(scheduleConfig).length > MAX_SCHEDULE_CONFIG_KEYS) {
+        return res.status(400).json({ error: `scheduleConfig has too many keys (max ${MAX_SCHEDULE_CONFIG_KEYS})` });
+      }
+      const configStr = JSON.stringify(scheduleConfig);
+      if (configStr.length > MAX_SCHEDULE_CONFIG_STRING_LENGTH) {
+        return res.status(400).json({ error: 'scheduleConfig too large' });
+      }
+      updates.scheduleConfig = scheduleConfig;
+    }
     if (retention !== undefined) updates.retention = Math.max(1, parseInt(retention, 10) || 5);
     if (enabled !== undefined) updates.enabled = enabled;
     if (name !== undefined) updates.name = name ? String(name).trim() : null;

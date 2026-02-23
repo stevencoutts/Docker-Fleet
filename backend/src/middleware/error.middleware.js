@@ -1,6 +1,11 @@
 const logger = require('../config/logger');
 
 const errorHandler = (err, req, res, next) => {
+  if (err.code === 'INVALID_INPUT') {
+    res.status(400).json({ error: err.message || 'Invalid input' });
+    return;
+  }
+
   logger.error('Error:', {
     message: err.message,
     stack: err.stack,

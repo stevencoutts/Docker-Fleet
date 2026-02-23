@@ -6,6 +6,16 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const config = require('./config/config');
 const logger = require('./config/logger');
+
+if (config.env === 'production') {
+  if (!config.jwt.secret || !config.jwt.refreshSecret) {
+    logger.warn('SECURITY: JWT_SECRET and/or JWT_REFRESH_SECRET are not set in production. Set strong secrets via environment variables.');
+  }
+  if (!config.encryption.key) {
+    logger.warn('SECURITY: ENCRYPTION_KEY is not set in production. Set a strong key via environment variables.');
+  }
+}
+
 const { errorHandler, notFoundHandler } = require('./middleware/error.middleware');
 const routes = require('./routes');
 const setupSocketIO = require('./websocket/socket.handler');
@@ -193,8 +203,8 @@ const bypassRateLimit = (req, res, next) => {
 
 // Very lenient rate limiter for auth endpoints - but we'll bypass it for localhost
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10000, // Very high limit (effectively unlimited)
+  windowMs: config.rateLimit.windowMs,
+  max: Math.max(1000, config.rateLimit.max * 10),
   message: 'Too many login attempts from this IP, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,
@@ -228,10 +238,10 @@ const consoleLimiter = rateLimit({
   },
 });
 
-// General rate limiter - bypassed for localhost
+// General rate limiter - bypassed for localhost; uses config for production
 const limiter = rateLimit({
   windowMs: config.rateLimit.windowMs,
-  max: 10000, // Very high limit (effectively unlimited for localhost)
+  max: config.rateLimit.max,
   message: 'Too many requests from this IP, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,

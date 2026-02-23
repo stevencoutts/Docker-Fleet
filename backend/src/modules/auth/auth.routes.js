@@ -8,6 +8,7 @@ const {
   checkSetup,
   loginValidation,
   registerValidation,
+  refreshValidation,
 } = require('./auth.controller');
 const { authenticate } = require('../../middleware/auth.middleware');
 const { validate } = require('../../middleware/validation.middleware');
@@ -15,7 +16,7 @@ const { validate } = require('../../middleware/validation.middleware');
 router.get('/setup', checkSetup);
 router.post('/login', loginValidation, validate, login);
 router.post('/register', registerValidation, validate, register);
-router.post('/refresh', refreshToken);
+router.post('/refresh', refreshValidation, validate, refreshToken);
 router.get('/me', authenticate, getMe);
 
 module.exports = router;
