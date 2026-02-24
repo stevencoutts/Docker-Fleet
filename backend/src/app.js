@@ -241,6 +241,8 @@ const consoleLimiter = rateLimit({
 // General rate limiter - bypassed for localhost; uses config for production.
 // Skip auth routes so they are only limited by authLimiter (higher limit); otherwise
 // setup/me/login burn the general quota and /auth/me 429 is treated as "logged out".
+// Skip container update flow (pull-and-update, update-status polling, recreate) so
+// a long-running upgrade does not hit 429 and fail mid-way.
 const limiter = rateLimit({
   windowMs: config.rateLimit.windowMs,
   max: config.rateLimit.max,
@@ -254,6 +256,7 @@ const limiter = rateLimit({
       return true;
     }
     if (req.path.startsWith('/v1/auth')) return true;
+    if (req.path.includes('update-status') || req.path.includes('pull-and-update') || req.path.endsWith('/recreate')) return true;
     return false;
   },
 });
