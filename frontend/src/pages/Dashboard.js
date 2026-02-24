@@ -1000,10 +1000,10 @@ const Dashboard = () => {
                     )}
                   </div>
 
-                  {/* Stats: single column on mobile, fixed grid on sm+ */}
+                  {/* Stats: Containers full width, then CPU+Memory one line on mobile; fixed grid on sm+ */}
                   <div className="flex-1 flex flex-col justify-center gap-2 px-4 pb-4 sm:px-6 sm:py-4 min-w-0 border-t sm:border-t-0 border-l-0 sm:border-l border-gray-100 dark:border-gray-700/80">
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-[220px_90px_160px] sm:items-baseline sm:gap-x-6">
-                      <div className="min-w-0 flex items-baseline gap-2">
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-[220px_90px_160px] sm:items-baseline sm:gap-x-6 sm:gap-y-0">
+                      <div className="min-w-0 flex items-baseline gap-2 col-span-2 sm:col-span-1">
                         <span className="text-sm text-gray-500 dark:text-gray-400 shrink-0">Containers</span>
                         <span className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
                           {runningCount} / {serverContainers.length} running
@@ -1036,7 +1036,7 @@ const Dashboard = () => {
                       </div>
                     </div>
                     {serverContainers.length > 0 && (
-                      <div className="w-full max-w-[220px] sm:max-w-none sm:w-[220px]">
+                      <div className="w-full sm:w-[220px]">
                         <div className="w-full h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
                           <div
                             className={`h-full rounded-full transition-all ${
