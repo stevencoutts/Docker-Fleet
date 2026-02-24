@@ -959,11 +959,11 @@ const Dashboard = () => {
                     : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 hover:border-primary-400/50 dark:hover:border-primary-500/50'
                 }`}
               >
-                <div className={`flex items-stretch min-h-[88px] ${hasIssues ? 'border-l-4 border-yellow-500' : 'border-l-4 border-transparent group-hover:border-primary-500'}`}>
-                  {/* Left: avatar + identity — fixed width so stats column starts at same position on every row */}
-                  <div className="flex items-center gap-5 pl-6 py-5 w-[300px] min-w-[300px] max-w-[300px] shrink-0">
-                    <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-primary-100 to-primary-50 dark:from-primary-900/60 dark:to-primary-800/40 flex items-center justify-center shadow-sm shrink-0">
-                      <span className="text-primary-600 dark:text-primary-300 font-bold text-lg">
+                <div className={`flex flex-col sm:flex-row sm:items-stretch sm:min-h-[88px] ${hasIssues ? 'border-l-4 border-yellow-500' : 'border-l-4 border-transparent group-hover:border-primary-500'}`}>
+                  {/* Left: avatar + identity — full width on mobile, fixed width on sm+ */}
+                  <div className="flex items-center gap-3 sm:gap-5 pl-4 pr-4 pt-4 pb-3 sm:pl-6 sm:py-5 w-full sm:w-[300px] sm:min-w-[300px] sm:max-w-[300px] shrink-0">
+                    <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-xl bg-gradient-to-br from-primary-100 to-primary-50 dark:from-primary-900/60 dark:to-primary-800/40 flex items-center justify-center shadow-sm shrink-0">
+                      <span className="text-primary-600 dark:text-primary-300 font-bold text-base sm:text-lg">
                         {server.name.charAt(0).toUpperCase()}
                       </span>
                     </div>
@@ -971,7 +971,7 @@ const Dashboard = () => {
                       <p className="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">
                         {server.name || server.host}
                       </p>
-                      <p className="text-base font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-2 min-w-0 flex-wrap">
+                      <p className="text-sm sm:text-base font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-2 min-w-0 flex-wrap">
                         <span className="truncate">
                           {server.tailscaleEnabled && server.tailscaleIp
                             ? server.tailscaleIp
@@ -992,11 +992,17 @@ const Dashboard = () => {
                         )}
                       </p>
                     </div>
+                    {/* Issues badge on mobile: inline with header to save space */}
+                    {hasIssues && (
+                      <span className="sm:hidden inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-200 shrink-0">
+                        {serverIssues} issue{serverIssues !== 1 ? 's' : ''}
+                      </span>
+                    )}
                   </div>
 
-                  {/* Stats: grid with fixed column widths so Containers / CPU / Memory align across all cards */}
-                  <div className="flex-1 flex flex-col justify-center gap-2 px-6 py-4 min-w-0 border-l border-gray-100 dark:border-gray-700/80">
-                    <div className="grid grid-cols-[220px_90px_160px] items-baseline gap-x-6">
+                  {/* Stats: single column on mobile, fixed grid on sm+ */}
+                  <div className="flex-1 flex flex-col justify-center gap-2 px-4 pb-4 sm:px-6 sm:py-4 min-w-0 border-t sm:border-t-0 border-l-0 sm:border-l border-gray-100 dark:border-gray-700/80">
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-[220px_90px_160px] sm:items-baseline sm:gap-x-6">
                       <div className="min-w-0 flex items-baseline gap-2">
                         <span className="text-sm text-gray-500 dark:text-gray-400 shrink-0">Containers</span>
                         <span className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
@@ -1030,7 +1036,7 @@ const Dashboard = () => {
                       </div>
                     </div>
                     {serverContainers.length > 0 && (
-                      <div className="w-[220px]">
+                      <div className="w-full max-w-[220px] sm:max-w-none sm:w-[220px]">
                         <div className="w-full h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
                           <div
                             className={`h-full rounded-full transition-all ${
@@ -1043,8 +1049,8 @@ const Dashboard = () => {
                     )}
                   </div>
 
-                  {/* Right: issues badge */}
-                  <div className="flex items-center pr-6 py-4 flex-shrink-0 border-l border-gray-100 dark:border-gray-700/80">
+                  {/* Right: issues badge (hidden on mobile; shown in header there) */}
+                  <div className="hidden sm:flex items-center pr-6 py-4 flex-shrink-0 border-l border-gray-100 dark:border-gray-700/80">
                     {hasIssues && (
                       <span className="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-200">
                         {serverIssues} issue{serverIssues !== 1 ? 's' : ''}
