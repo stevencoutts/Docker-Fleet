@@ -1,0 +1,1401 @@
+openapi: 3.0.3
+info:
+  title: DockerFleet Manager API
+  description: |
+    Backend API for DockerFleet Manager. Most endpoints require Bearer JWT authentication.
+    Obtain a token via POST /auth/login or POST /auth/register.
+    For API scanners: fetch this spec from GET {baseUrl}/api-docs/openapi.json (e.g. http://localhost:5000/api-docs/openapi.json)
+    and set the server base URL to your app host (e.g. http://localhost:5000). Use the token from login in the Authorization header.
+  version: 1.0.0
+
+servers:
+  - url: /api/v1
+    description: API base path; use full base URL in scanner (e.g. http://localhost:5000)
+
+tags:
+  - name: Auth
+    description: Authentication (no Bearer required)
+  - name: Users
+    description: User management (admin or self)
+  - name: Servers
+    description: Docker hosts and proxy/Tailscale
+  - name: Containers
+    description: Containers, logs, stats, snapshots, execute
+  - name: Images
+    description: Docker images
+  - name: Backup
+    description: Export/import backup
+  - name: Backup Schedules
+    description: Scheduled backup jobs
+  - name: App Config
+    description: Application configuration (admin)
+  - name: Monitoring
+    description: Monitoring settings
+  - name: Grouping
+    description: Display grouping rules
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  security:
+    - bearerAuth: []
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+      example:
+        error: "Invalid credentials"
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string }
+    RegisterRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, minLength: 6 }
+    RefreshRequest:
+      type: object
+      required: [refreshToken]
+      properties:
+        refreshToken: { type: string }
+    AuthResponse:
+      type: object
+      properties:
+        token: { type: string }
+        refreshToken: { type: string }
+        user:
+          type: object
+          properties:
+            id: { type: integer }
+            email: { type: string }
+            role: { type: string, enum: [admin, user] }
+    UserUpdate:
+      type: object
+      properties:
+        email: { type: string, format: email }
+        role: { type: string, enum: [admin, user] }
+        letsEncryptEmail: { type: string, format: email, nullable: true }
+    PasswordUpdate:
+      type: object
+      required: [password]
+      properties:
+        password: { type: string }
+    ServerCreate:
+      type: object
+      required: [name, host, username, privateKey]
+      properties:
+        name: { type: string }
+        host: { type: string }
+        port: { type: integer, minimum: 1, maximum: 65535 }
+        username: { type: string }
+        privateKey: { type: string }
+    ServerUpdate:
+      type: object
+      properties:
+        name: { type: string }
+        host: { type: string }
+        port: { type: integer, minimum: 1, maximum: 65535 }
+        username: { type: string }
+        privateKey: { type: string, nullable: true }
+        sshAllowedIps: { type: string }
+        publicWwwEnabled: { type: boolean }
+        publicHost: { type: string }
+    RestartPolicyUpdate:
+      type: object
+      required: [policy]
+      properties:
+        policy: { type: string, enum: [no, on-failure, unless-stopped, always] }
+    ExecuteCommand:
+      type: object
+      required: [command]
+      properties:
+        command: { type: string }
+    RestoreSnapshot:
+      type: object
+      required: [snapshotId, containerName]
+      properties:
+        snapshotId: { type: string }
+        containerName: { type: string }
+    DeployContainer:
+      type: object
+      properties:
+        image: { type: string }
+        name: { type: string }
+        env: { type: object }
+        ports: { type: array, items: { type: string } }
+        restartPolicy: { type: string }
+    GroupingRuleCreate:
+      type: object
+      required: [groupName, pattern]
+      properties:
+        groupName: { type: string }
+        pattern: { type: string }
+        patternType: { type: string, enum: [prefix, suffix, contains, regex] }
+        enabled: { type: boolean }
+        sortOrder: { type: integer }
+    GroupingRuleUpdate:
+      type: object
+      properties:
+        groupName: { type: string }
+        pattern: { type: string }
+        patternType: { type: string, enum: [prefix, suffix, contains, regex] }
+        enabled: { type: boolean }
+        sortOrder: { type: integer }
+    MonitoringSettings:
+      type: object
+      properties:
+        alertOnContainerDown: { type: boolean }
+        alertOnContainerRecovery: { type: boolean }
+        alertOnNoAutoRestart: { type: boolean }
+        alertCooldownMs: { type: integer, minimum: 0 }
+        noAutoRestartCooldownMs: { type: integer, minimum: 0 }
+        minDownTimeBeforeAlertMs: { type: integer, minimum: 0 }
+    BackupScheduleBulk:
+      type: object
+      properties:
+        jobs: { type: array, items: { type: object } }
+    ProxyRouteAdd:
+      type: object
+      properties:
+        host: { type: string }
+        path: { type: string }
+        targetPort: { type: integer }
+        targetPath: { type: string }
+    ProxyRouteUpdate:
+      type: object
+      properties:
+        host: { type: string }
+        path: { type: string }
+        targetPort: { type: integer }
+        targetPath: { type: string }
+    CustomNginxConfig:
+      type: object
+      properties:
+        customNginxConfig: { type: string }
+    AppConfigUpdate:
+      type: object
+      additionalProperties: true
+
+paths:
+  # ---------- Auth (no Bearer) ----------
+  /auth/setup:
+    get:
+      tags: [Auth]
+      summary: Check if initial setup is needed
+      security: []
+      responses:
+        "200":
+          description: Setup status
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Login
+      security: []
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        "200":
+          description: Success
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+        "401":
+          description: Invalid credentials
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register (first user becomes admin)
+      security: []
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegisterRequest' }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+        "400":
+          description: User already exists or validation error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Refresh access token
+      security: []
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RefreshRequest' }
+      responses:
+        "200":
+          description: New token pair
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Current user (requires Bearer)
+      responses:
+        "200":
+          description: Current user
+        "401":
+          description: Unauthorized
+
+  # ---------- Users ----------
+  /users:
+    get:
+      tags: [Users]
+      summary: List all users (admin only)
+      responses:
+        "200":
+          description: List of users
+        "401":
+          description: Unauthorized
+        "403":
+          description: Forbidden
+  /users/{id}:
+    get:
+      tags: [Users]
+      summary: Get user by ID (admin or self)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: User
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+    put:
+      tags: [Users]
+      summary: Update user (admin or self)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UserUpdate' }
+      responses:
+        "200":
+          description: Updated
+        "400":
+          description: Validation error
+        "401":
+          description: Unauthorized
+        "403":
+          description: Forbidden
+        "404":
+          description: Not found
+    delete:
+      tags: [Users]
+      summary: Delete user (admin only)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Deleted
+        "401":
+          description: Unauthorized
+        "403":
+          description: Forbidden
+        "404":
+          description: Not found
+  /users/{id}/password:
+    put:
+      tags: [Users]
+      summary: Update user password (admin or self)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PasswordUpdate' }
+      responses:
+        "200":
+          description: Updated
+        "400":
+          description: Validation error
+        "401":
+          description: Unauthorized
+        "403":
+          description: Forbidden
+        "404":
+          description: Not found
+
+  # ---------- Servers ----------
+  /servers:
+    get:
+      tags: [Servers]
+      summary: List all servers
+      responses:
+        "200":
+          description: List of servers
+        "401":
+          description: Unauthorized
+    post:
+      tags: [Servers]
+      summary: Create server
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ServerCreate' }
+      responses:
+        "201":
+          description: Created
+        "400":
+          description: Validation error
+        "401":
+          description: Unauthorized
+  /servers/{id}:
+    get:
+      tags: [Servers]
+      summary: Get server by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Server
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+    put:
+      tags: [Servers]
+      summary: Update server
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ServerUpdate' }
+      responses:
+        "200":
+          description: Updated
+        "400":
+          description: Validation error
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+    delete:
+      tags: [Servers]
+      summary: Delete server
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Deleted
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /servers/{id}/test:
+    post:
+      tags: [Servers]
+      summary: Test server connection
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Connection test result
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /servers/{id}/host-info:
+    get:
+      tags: [Servers]
+      summary: Get host info
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Host info
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /servers/{id}/proxy-routes:
+    get:
+      tags: [Servers]
+      summary: List proxy routes
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: List of proxy routes
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+    post:
+      tags: [Servers]
+      summary: Add proxy route
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProxyRouteAdd' }
+      responses:
+        "201":
+          description: Created
+        "400":
+          description: Validation error
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /servers/{id}/proxy-routes/{routeId}:
+    patch:
+      tags: [Servers]
+      summary: Update proxy route
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: routeId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProxyRouteUpdate' }
+      responses:
+        "200":
+          description: Updated
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+    delete:
+      tags: [Servers]
+      summary: Delete proxy route
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: routeId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Deleted
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /servers/{id}/public-www/enable:
+    post:
+      tags: [Servers]
+      summary: Enable public WWW
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /servers/{id}/public-www/disable:
+    post:
+      tags: [Servers]
+      summary: Disable public WWW
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /servers/{id}/public-www/sync:
+    post:
+      tags: [Servers]
+      summary: Sync public WWW
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /servers/{id}/public-www/certificates:
+    get:
+      tags: [Servers]
+      summary: List certificates
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: List of certificates
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /servers/{id}/public-www/nginx-config:
+    get:
+      tags: [Servers]
+      summary: Get nginx config
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Nginx config
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /servers/{id}/public-www/nginx-import:
+    get:
+      tags: [Servers]
+      summary: Get nginx import block
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Import block
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /servers/{id}/public-www/custom-nginx-config:
+    put:
+      tags: [Servers]
+      summary: Update custom nginx config
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CustomNginxConfig' }
+      responses:
+        "200":
+          description: Updated
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /servers/{id}/public-www/request-dns-cert:
+    post:
+      tags: [Servers]
+      summary: Request DNS cert
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /servers/{id}/public-www/continue-dns-cert:
+    post:
+      tags: [Servers]
+      summary: Continue DNS cert
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /servers/{id}/tailscale/enable:
+    post:
+      tags: [Servers]
+      summary: Enable Tailscale
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /servers/{id}/tailscale/disable:
+    post:
+      tags: [Servers]
+      summary: Disable Tailscale
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /servers/{id}/tailscale/status:
+    get:
+      tags: [Servers]
+      summary: Tailscale status
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Status
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+
+  # ---------- Containers ----------
+  /servers/{serverId}/backup-schedules:
+    get:
+      tags: [Containers]
+      summary: List backup schedules for server
+      parameters:
+        - name: serverId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: List of backup schedules
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /servers/{serverId}/containers:
+    get:
+      tags: [Containers]
+      summary: List containers
+      parameters:
+        - name: serverId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: List of containers
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+    post:
+      tags: [Containers]
+      summary: Deploy container
+      parameters:
+        - name: serverId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeployContainer' }
+      responses:
+        "201":
+          description: Created
+        "400":
+          description: Validation error
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /servers/{serverId}/containers/restore:
+    post:
+      tags: [Containers]
+      summary: Restore snapshot
+      parameters:
+        - name: serverId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RestoreSnapshot' }
+      responses:
+        "200":
+          description: Success
+        "400":
+          description: Validation error
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /servers/{serverId}/containers/{containerId}:
+    get:
+      tags: [Containers]
+      summary: Get container details
+      parameters:
+        - name: serverId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: containerId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Container details
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+    delete:
+      tags: [Containers]
+      summary: Remove container
+      parameters:
+        - name: serverId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: containerId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Removed
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /servers/{serverId}/containers/{containerId}/start:
+    post:
+      tags: [Containers]
+      summary: Start container
+      parameters:
+        - name: serverId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: containerId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /servers/{serverId}/containers/{containerId}/stop:
+    post:
+      tags: [Containers]
+      summary: Stop container
+      parameters:
+        - name: serverId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: containerId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /servers/{serverId}/containers/{containerId}/restart:
+    post:
+      tags: [Containers]
+      summary: Restart container
+      parameters:
+        - name: serverId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: containerId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /servers/{serverId}/containers/{containerId}/update-status:
+    get:
+      tags: [Containers]
+      summary: Get container image update status
+      parameters:
+        - name: serverId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: containerId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Update status
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /servers/{serverId}/containers/{containerId}/pull-and-update:
+    post:
+      tags: [Containers]
+      summary: Pull image and recreate container
+      parameters:
+        - name: serverId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: containerId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /servers/{serverId}/containers/{containerId}/recreate:
+    post:
+      tags: [Containers]
+      summary: Recreate container
+      parameters:
+        - name: serverId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: containerId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /servers/{serverId}/containers/{containerId}/logs:
+    get:
+      tags: [Containers]
+      summary: Get container logs
+      parameters:
+        - name: serverId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: containerId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: tail
+          in: query
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Logs
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /servers/{serverId}/containers/{containerId}/stats:
+    get:
+      tags: [Containers]
+      summary: Get container stats
+      parameters:
+        - name: serverId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: containerId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Stats
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /servers/{serverId}/containers/{containerId}/snapshots:
+    get:
+      tags: [Containers]
+      summary: List snapshots
+      parameters:
+        - name: serverId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: containerId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: List of snapshots
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /servers/{serverId}/containers/{containerId}/snapshot:
+    post:
+      tags: [Containers]
+      summary: Create snapshot
+      parameters:
+        - name: serverId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: containerId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "201":
+          description: Created
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /servers/{serverId}/containers/{containerId}/restart-policy:
+    put:
+      tags: [Containers]
+      summary: Update restart policy
+      parameters:
+        - name: serverId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: containerId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RestartPolicyUpdate' }
+      responses:
+        "200":
+          description: Updated
+        "400":
+          description: Validation error
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /servers/{serverId}/containers/{containerId}/execute:
+    post:
+      tags: [Containers]
+      summary: Execute command in container
+      parameters:
+        - name: serverId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: containerId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ExecuteCommand' }
+      responses:
+        "200":
+          description: Command output
+        "400":
+          description: Validation error
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+
+  # ---------- Images ----------
+  /servers/{serverId}/images:
+    get:
+      tags: [Images]
+      summary: List images
+      parameters:
+        - name: serverId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: List of images
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /servers/{serverId}/images/pull:
+    post:
+      tags: [Images]
+      summary: Pull image
+      parameters:
+        - name: serverId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                image: { type: string }
+      responses:
+        "200":
+          description: Success
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+  /servers/{serverId}/images/{imageId}:
+    delete:
+      tags: [Images]
+      summary: Remove image
+      parameters:
+        - name: serverId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: imageId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Removed
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+
+  # ---------- Backup ----------
+  /backup/export:
+    get:
+      tags: [Backup]
+      summary: Export backup data
+      responses:
+        "200":
+          description: Backup file
+        "401":
+          description: Unauthorized
+  /backup/import:
+    post:
+      tags: [Backup]
+      summary: Import backup data
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        "200":
+          description: Success
+        "400":
+          description: Validation error
+        "401":
+          description: Unauthorized
+
+  # ---------- Backup Schedules ----------
+  /backup-schedules:
+    get:
+      tags: [Backup Schedules]
+      summary: List backup schedule jobs
+      responses:
+        "200":
+          description: List of jobs
+        "401":
+          description: Unauthorized
+    post:
+      tags: [Backup Schedules]
+      summary: Create backup job(s) (bulk)
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BackupScheduleBulk' }
+      responses:
+        "201":
+          description: Created
+        "400":
+          description: Validation error
+        "401":
+          description: Unauthorized
+  /backup-schedules/{jobId}:
+    put:
+      tags: [Backup Schedules]
+      summary: Update backup job
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200":
+          description: Updated
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+    delete:
+      tags: [Backup Schedules]
+      summary: Delete backup job
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Deleted
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+
+  # ---------- App Config (admin) ----------
+  /app-config:
+    get:
+      tags: [App Config]
+      summary: Get app configuration (admin)
+      responses:
+        "200":
+          description: App config key-value map
+        "401":
+          description: Unauthorized
+        "403":
+          description: Forbidden
+    put:
+      tags: [App Config]
+      summary: Update app configuration (admin)
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AppConfigUpdate' }
+      responses:
+        "200":
+          description: Updated
+        "401":
+          description: Unauthorized
+        "403":
+          description: Forbidden
+  /app-config/env-file:
+    get:
+      tags: [App Config]
+      summary: Download .env file (admin)
+      responses:
+        "200":
+          description: .env file content
+        "401":
+          description: Unauthorized
+        "403":
+          description: Forbidden
+
+  # ---------- Monitoring ----------
+  /monitoring:
+    get:
+      tags: [Monitoring]
+      summary: Get monitoring settings
+      responses:
+        "200":
+          description: Monitoring settings
+        "401":
+          description: Unauthorized
+    put:
+      tags: [Monitoring]
+      summary: Update monitoring settings
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MonitoringSettings' }
+      responses:
+        "200":
+          description: Updated
+        "400":
+          description: Validation error
+        "401":
+          description: Unauthorized
+
+  # ---------- Grouping ----------
+  /grouping:
+    get:
+      tags: [Grouping]
+      summary: List grouping rules
+      responses:
+        "200":
+          description: List of rules
+        "401":
+          description: Unauthorized
+    post:
+      tags: [Grouping]
+      summary: Create grouping rule
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GroupingRuleCreate' }
+      responses:
+        "201":
+          description: Created
+        "400":
+          description: Validation error
+        "401":
+          description: Unauthorized
+  /grouping/{id}:
+    get:
+      tags: [Grouping]
+      summary: Get grouping rule by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Rule
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+    put:
+      tags: [Grouping]
+      summary: Update grouping rule
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GroupingRuleUpdate' }
+      responses:
+        "200":
+          description: Updated
+        "400":
+          description: Validation error
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+    delete:
+      tags: [Grouping]
+      summary: Delete grouping rule
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Deleted
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found

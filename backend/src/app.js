@@ -1,5 +1,8 @@
 const express = require('express');
 const http = require('http');
+const path = require('path');
+const fs = require('fs');
+const yaml = require('js-yaml');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -298,6 +301,19 @@ app.use('/api/', limiter);
 // Health check
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// OpenAPI spec for API scanners (public, no auth)
+app.get('/api-docs/openapi.json', (req, res) => {
+  try {
+    const specPath = path.join(__dirname, '..', 'openapi.yaml');
+    const raw = fs.readFileSync(specPath, 'utf8');
+    const spec = yaml.load(raw);
+    res.json(spec);
+  } catch (err) {
+    logger.error('Failed to load OpenAPI spec', err);
+    res.status(500).json({ error: 'Failed to load API spec' });
+  }
 });
 
 // API routes
