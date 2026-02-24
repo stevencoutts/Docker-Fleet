@@ -47,6 +47,7 @@ db.BackupJobEntry = require('./BackupJobEntry')(sequelize, Sequelize);
 db.ServerContainerCache = require('./ServerContainerCache')(sequelize, Sequelize);
 db.ServerHostInfoCache = require('./ServerHostInfoCache')(sequelize, Sequelize);
 db.ServerProxyRoute = require('./ServerProxyRoute')(sequelize, Sequelize);
+db.AppSettings = require('./AppSettings')(sequelize, Sequelize);
 
 // Associations
 db.Server.belongsTo(db.User, { foreignKey: 'userId', as: 'user' });

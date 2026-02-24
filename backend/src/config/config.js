@@ -3,69 +3,89 @@ if (process.env.NODE_ENV !== 'production') {
   require('dotenv').config();
 }
 
+// Getters so config reflects process.env at read time (allows AppSettings to merge in after DB load).
 module.exports = {
-  env: process.env.NODE_ENV || 'development',
-  port: process.env.PORT || 5000,
-  apiVersion: process.env.API_VERSION || 'v1',
-  
-  database: {
-    host: process.env.DB_HOST,
-    port: process.env.DB_PORT,
-    name: process.env.DB_NAME,
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
+  get env() {
+    return process.env.NODE_ENV || 'development';
   },
-  
-  jwt: {
-    secret: process.env.JWT_SECRET,
-    expiresIn: process.env.JWT_EXPIRES_IN || '24h',
-    refreshSecret: process.env.JWT_REFRESH_SECRET,
-    refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d',
+  get port() {
+    return parseInt(process.env.PORT) || 5000;
   },
-  
-  encryption: {
-    key: process.env.ENCRYPTION_KEY,
-    algorithm: 'aes-256-gcm',
+  get apiVersion() {
+    return process.env.API_VERSION || 'v1';
   },
-  
-  cors: {
-    origin: process.env.CORS_ORIGIN || 'http://localhost:3020',
+
+  get database() {
+    return {
+      host: process.env.DB_HOST,
+      port: process.env.DB_PORT,
+      name: process.env.DB_NAME,
+      user: process.env.DB_USER,
+      password: process.env.DB_PASSWORD,
+    };
   },
-  
-  // Unauthenticated: per-IP limit. Authenticated: per-user limit (best practice: bound abuse per token/user).
-  rateLimit: {
-    windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
-    max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 2000,
-    authenticatedMax: parseInt(process.env.RATE_LIMIT_AUTHENTICATED_MAX) || 10000,
+
+  get jwt() {
+    return {
+      secret: process.env.JWT_SECRET,
+      expiresIn: process.env.JWT_EXPIRES_IN || '24h',
+      refreshSecret: process.env.JWT_REFRESH_SECRET,
+      refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d',
+    };
   },
-  
-  logging: {
-    level: process.env.LOG_LEVEL || 'info',
+
+  get encryption() {
+    return {
+      key: process.env.ENCRYPTION_KEY,
+      algorithm: 'aes-256-gcm',
+    };
   },
-  
-  email: {
-    enabled: process.env.EMAIL_ENABLED === 'true',
-    fromAddress: process.env.EMAIL_FROM_ADDRESS || 'noreply@dockerfleet.local',
-    fromName: process.env.EMAIL_FROM_NAME || 'DockerFleet Manager',
-    smtp: {
-      host: process.env.SMTP_HOST || 'localhost',
-      port: parseInt(process.env.SMTP_PORT) || 587,
-      secure: process.env.SMTP_SECURE === 'true', // true for 465, false for other ports
-      user: process.env.SMTP_USER || '',
-      password: process.env.SMTP_PASSWORD || '',
-      rejectUnauthorized: process.env.SMTP_REJECT_UNAUTHORIZED !== 'false',
-    },
+
+  get cors() {
+    return {
+      origin: process.env.CORS_ORIGIN || 'http://localhost:3020',
+    };
   },
-  
-  monitoring: {
-    checkIntervalMs: parseInt(process.env.MONITORING_CHECK_INTERVAL_MS) || 60000, // Default: 1 minute
-    alertCooldownMs: parseInt(process.env.MONITORING_ALERT_COOLDOWN_MS) || 43200000, // Default: 12 hours
-    noAutoRestartCooldownMs: parseInt(process.env.MONITORING_NO_AUTO_RESTART_COOLDOWN_MS) || 43200000, // Default: 12 hours
-    // Alert type toggles
-    alertOnContainerDown: process.env.MONITORING_ALERT_ON_CONTAINER_DOWN !== 'false', // Default: true
-    alertOnContainerRecovery: process.env.MONITORING_ALERT_ON_CONTAINER_RECOVERY !== 'false', // Default: true
-    alertOnNoAutoRestart: process.env.MONITORING_ALERT_ON_NO_AUTO_RESTART !== 'false', // Default: true
-    // Thresholds
-    minDownTimeBeforeAlertMs: parseInt(process.env.MONITORING_MIN_DOWN_TIME_MS) || 0, // Default: 0 (alert immediately)
+
+  get rateLimit() {
+    return {
+      windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
+      max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 2000,
+      authenticatedMax: parseInt(process.env.RATE_LIMIT_AUTHENTICATED_MAX) || 10000,
+    };
+  },
+
+  get logging() {
+    return {
+      level: process.env.LOG_LEVEL || 'info',
+    };
+  },
+
+  get email() {
+    return {
+      enabled: process.env.EMAIL_ENABLED === 'true',
+      fromAddress: process.env.EMAIL_FROM_ADDRESS || 'noreply@dockerfleet.local',
+      fromName: process.env.EMAIL_FROM_NAME || 'DockerFleet Manager',
+      smtp: {
+        host: process.env.SMTP_HOST || 'localhost',
+        port: parseInt(process.env.SMTP_PORT) || 587,
+        secure: process.env.SMTP_SECURE === 'true',
+        user: process.env.SMTP_USER || '',
+        password: process.env.SMTP_PASSWORD || '',
+        rejectUnauthorized: process.env.SMTP_REJECT_UNAUTHORIZED !== 'false',
+      },
+    };
+  },
+
+  get monitoring() {
+    return {
+      checkIntervalMs: parseInt(process.env.MONITORING_CHECK_INTERVAL_MS) || 60000,
+      alertCooldownMs: parseInt(process.env.MONITORING_ALERT_COOLDOWN_MS) || 43200000,
+      noAutoRestartCooldownMs: parseInt(process.env.MONITORING_NO_AUTO_RESTART_COOLDOWN_MS) || 43200000,
+      alertOnContainerDown: process.env.MONITORING_ALERT_ON_CONTAINER_DOWN !== 'false',
+      alertOnContainerRecovery: process.env.MONITORING_ALERT_ON_CONTAINER_RECOVERY !== 'false',
+      alertOnNoAutoRestart: process.env.MONITORING_ALERT_ON_NO_AUTO_RESTART !== 'false',
+      minDownTimeBeforeAlertMs: parseInt(process.env.MONITORING_MIN_DOWN_TIME_MS) || 0,
+    };
   },
 };

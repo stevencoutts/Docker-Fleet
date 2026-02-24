@@ -332,18 +332,35 @@ const gracefulShutdown = () => {
 process.on('SIGTERM', gracefulShutdown);
 process.on('SIGINT', gracefulShutdown);
 
-// Start server
 const PORT = config.port;
-server.listen(PORT, () => {
-  logger.info(`Server running on port ${PORT} in ${config.env} mode`);
-  
-  setTimeout(async () => {
-    if (config.email && config.email.enabled) {
-      await monitoringService.start();
-    }
-    backupSchedulerService.start();
-    pollingService.start();
-  }, 5000);
-});
 
-module.exports = { app, io };
+const { loadAppSettingsIntoEnv: loadAppSettings } = require('./config/loadAppSettings');
+async function loadAppSettingsIntoEnv() {
+  return loadAppSettings(db);
+}
+
+function listen() {
+  server.listen(PORT, () => {
+    logger.info(`Server running on port ${PORT} in ${config.env} mode`);
+    setTimeout(async () => {
+      if (config.email && config.email.enabled) {
+        await monitoringService.start();
+      }
+      backupSchedulerService.start();
+      pollingService.start();
+    }, 5000);
+  });
+}
+
+if (require.main === module) {
+  db.sequelize
+    .authenticate()
+    .then(() => loadAppSettingsIntoEnv())
+    .then(() => listen())
+    .catch((err) => {
+      logger.error('Startup failed:', err);
+      process.exit(1);
+    });
+}
+
+module.exports = { app, io, loadAppSettingsIntoEnv };

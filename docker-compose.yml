@@ -1,7 +1,9 @@
+# Minimal compose: set variables in .env (see .env.example). Compose passes them through.
 services:
   postgres:
     image: postgres:15-alpine
     container_name: dockerfleet-postgres
+    env_file: .env
     environment:
       POSTGRES_DB: ${DB_NAME:-dockerfleet}
       POSTGRES_USER: ${DB_USER:-dockerfleet_user}
@@ -24,36 +26,12 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: dockerfleet-backend
+    env_file: .env
     environment:
       NODE_ENV: ${NODE_ENV:-production}
       PORT: 5000
-      API_VERSION: ${API_VERSION:-v1}
       DB_HOST: postgres
-      DB_PORT: 5432
-      DB_NAME: ${DB_NAME:-dockerfleet}
-      DB_USER: ${DB_USER:-dockerfleet_user}
-      DB_PASSWORD: ${DB_PASSWORD:-dockerfleet_password}
-      JWT_SECRET: ${JWT_SECRET:-change-this-in-production}
-      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-24h}
-      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-change-this-in-production}
-      JWT_REFRESH_EXPIRES_IN: ${JWT_REFRESH_EXPIRES_IN:-7d}
-      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-change-this-32-character-key!!}
-      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3020}
-      RATE_LIMIT_WINDOW_MS: ${RATE_LIMIT_WINDOW_MS:-900000}
-      RATE_LIMIT_MAX_REQUESTS: ${RATE_LIMIT_MAX_REQUESTS:-100}
-      LOG_LEVEL: ${LOG_LEVEL:-info}
-      LETSENCRYPT_EMAIL: ${LETSENCRYPT_EMAIL:-}
-      EMAIL_ENABLED: ${EMAIL_ENABLED:-false}
-      EMAIL_FROM_ADDRESS: ${EMAIL_FROM_ADDRESS:-noreply@dockerfleet.local}
-      EMAIL_FROM_NAME: ${EMAIL_FROM_NAME:-DockerFleet Manager}
-      SMTP_HOST: ${SMTP_HOST:-localhost}
-      SMTP_PORT: ${SMTP_PORT:-587}
-      SMTP_SECURE: ${SMTP_SECURE:-false}
-      SMTP_USER: ${SMTP_USER:-}
-      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
-      SMTP_REJECT_UNAUTHORIZED: ${SMTP_REJECT_UNAUTHORIZED:-true}
-      MONITORING_CHECK_INTERVAL_MS: ${MONITORING_CHECK_INTERVAL_MS:-60000}
-      MONITORING_ALERT_COOLDOWN_MS: ${MONITORING_ALERT_COOLDOWN_MS:-300000}
+      DB_PORT: "5432"
     ports:
       - "5020:5000"
     volumes:
@@ -71,6 +49,7 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     container_name: dockerfleet-frontend
+    env_file: .env
     ports:
       - "3020:80"
     depends_on:
@@ -78,8 +57,6 @@ services:
     networks:
       - dockerfleet-network
     restart: unless-stopped
-    environment:
-      - REACT_APP_API_URL=${REACT_APP_API_URL:-}
 
 volumes:
   postgres_data:

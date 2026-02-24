@@ -17,6 +17,7 @@ const Layout = () => {
 
   const adminNavigation = user?.role === 'admin' ? [
     { name: 'Users', path: '/admin/users' },
+    { name: 'App configuration', path: '/admin/app-config' },
   ] : [];
 
   const personalNavigation = [

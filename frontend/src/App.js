@@ -18,6 +18,7 @@ import Profile from './pages/Profile';
 import MonitoringSettings from './pages/MonitoringSettings';
 import BulkBackupSchedules from './pages/BulkBackupSchedules';
 import BackupRestore from './pages/BackupRestore';
+import AppConfig from './pages/AppConfig';
 
 function App() {
   return (
@@ -48,6 +49,14 @@ function App() {
                 element={
                   <AdminRoute>
                     <Users />
+                  </AdminRoute>
+                }
+              />
+              <Route
+                path="admin/app-config"
+                element={
+                  <AdminRoute>
+                    <AppConfig />
                   </AdminRoute>
                 }
               />
