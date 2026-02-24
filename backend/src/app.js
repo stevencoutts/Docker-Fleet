@@ -17,6 +17,7 @@ if (config.env === 'production') {
 }
 
 const { errorHandler, notFoundHandler } = require('./middleware/error.middleware');
+const { optionalAuthenticate } = require('./middleware/auth.middleware');
 const routes = require('./routes');
 const setupSocketIO = require('./websocket/socket.handler');
 const monitoringService = require('./services/monitoring.service');
@@ -238,34 +239,48 @@ const consoleLimiter = rateLimit({
   },
 });
 
-// General rate limiter - bypassed for localhost; uses config for production.
-// Skip auth routes so they are only limited by authLimiter (higher limit); otherwise
-// setup/me/login burn the general quota and /auth/me 429 is treated as "logged out".
-// Skip container update flow (pull-and-update, update-status polling, recreate) so
-// a long-running upgrade does not hit 429 and fail mid-way.
-const limiter = rateLimit({
+// Per-user rate limiter for authenticated requests (best practice: limit abuse per token/user).
+// Skip when not authenticated, bypass, or auth/update paths; uses user id as key.
+const authenticatedLimiter = rateLimit({
   windowMs: config.rateLimit.windowMs,
-  max: config.rateLimit.max,
-  message: 'Too many requests from this IP, please try again later.',
+  max: config.rateLimit.authenticatedMax,
+  message: 'Too many requests for this account, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,
-  validate: { trustProxy: false }, // We use trust proxy behind our own reverse proxy; disable strict check
+  validate: { trustProxy: false },
+  keyGenerator: (req) => String(req.user?.id ?? req.ip),
   skip: (req) => {
-    if (req._rateLimitBypass || isDevelopment || isLocalhost(req)) {
-      logger.debug(`Skipping general rate limit for ${req.method} ${req.path} from ${req.ip || 'unknown'}`);
-      return true;
-    }
+    if (req._rateLimitBypass || isDevelopment || isLocalhost(req)) return true;
+    if (!req.user) return true; // unauthenticated: handled by general limiter
     if (req.path.startsWith('/v1/auth')) return true;
     if (req.path.includes('update-status') || req.path.includes('pull-and-update') || req.path.endsWith('/recreate')) return true;
     return false;
   },
 });
 
-// Apply bypass middleware globally FIRST - this must be before any rate limiters
-// This ensures localhost requests are always bypassed
-app.use('/api/', bypassRateLimit);
+// General rate limiter - applies only to unauthenticated API requests (per IP).
+const limiter = rateLimit({
+  windowMs: config.rateLimit.windowMs,
+  max: config.rateLimit.max,
+  message: 'Too many requests from this IP, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
+  validate: { trustProxy: false },
+  skip: (req) => {
+    if (req._rateLimitBypass || isDevelopment || isLocalhost(req)) return true;
+    if (req.user) return true; // authenticated: limited by authenticatedLimiter instead
+    if (req.path.startsWith('/v1/auth')) return true;
+    if (req.path.includes('update-status') || req.path.includes('pull-and-update') || req.path.endsWith('/recreate')) return true;
+    return false;
+  },
+});
 
-// Apply rate limiters AFTER bypass middleware
+// Apply bypass middleware globally FIRST - this ensures localhost requests are always bypassed
+app.use('/api/', bypassRateLimit);
+// Set req.user when valid Bearer token present (no 401); used so we can skip general limit for authenticated users
+app.use('/api/', optionalAuthenticate);
+
+// Apply rate limiters AFTER bypass and optional auth
 // The skip functions in each limiter will check for bypass flag
 // For auth routes, bypass check happens in the limiter's skip function
 app.use('/api/v1/auth/login', authLimiter);
@@ -276,7 +291,8 @@ app.use('/api/v1/auth/me', authLimiter);
 // Apply lenient limiter to console/execute endpoints (before general limiter)
 app.use('/api/v1/servers/:serverId/containers/:containerId/execute', consoleLimiter);
 
-// Apply general limiter to all other API routes
+// Apply per-user limiter for authenticated requests, then per-IP for unauthenticated
+app.use('/api/', authenticatedLimiter);
 app.use('/api/', limiter);
 
 // Health check

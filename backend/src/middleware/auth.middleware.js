@@ -38,6 +38,26 @@ const authenticate = async (req, res, next) => {
   }
 };
 
+/**
+ * Optionally set req.user if a valid Bearer token is present.
+ * Never sends 401/500; used before rate limiters so authenticated requests can be excluded.
+ */
+const optionalAuthenticate = async (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return next();
+  }
+  const token = authHeader.substring(7);
+  try {
+    const decoded = jwt.verify(token, config.jwt.secret);
+    const user = await User.findByPk(decoded.userId);
+    if (user) req.user = user;
+  } catch (_) {
+    // Invalid or expired token - leave req.user unset
+  }
+  next();
+};
+
 const authorize = (...roles) => {
   return (req, res, next) => {
     if (!req.user) {
@@ -54,5 +74,6 @@ const authorize = (...roles) => {
 
 module.exports = {
   authenticate,
+  optionalAuthenticate,
   authorize,
 };

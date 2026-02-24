@@ -32,9 +32,11 @@ module.exports = {
     origin: process.env.CORS_ORIGIN || 'http://localhost:3020',
   },
   
+  // Unauthenticated: per-IP limit. Authenticated: per-user limit (best practice: bound abuse per token/user).
   rateLimit: {
     windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
     max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 2000,
+    authenticatedMax: parseInt(process.env.RATE_LIMIT_AUTHENTICATED_MAX) || 10000,
   },
   
   logging: {
