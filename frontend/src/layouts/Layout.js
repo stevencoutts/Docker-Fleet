@@ -52,7 +52,7 @@ const Layout = () => {
             <div className="flex items-center gap-4 lg:gap-8 min-w-0 flex-1 overflow-hidden">
               <div className="flex-shrink-0">
                 <Link to="/" className="text-xl font-bold text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors whitespace-nowrap">
-                  DockerFleet Manager
+                  DockerFleet
                 </Link>
               </div>
               <div className="hidden sm:flex items-center flex-1 min-w-0 overflow-x-auto overflow-y-hidden scrollbar-hide border-l border-gray-200 dark:border-gray-600 pl-4 lg:pl-6 pr-4 gap-2 sm:gap-4">
@@ -104,8 +104,14 @@ const Layout = () => {
                   </svg>
                 )}
               </button>
-              <span className="text-sm text-gray-600 dark:text-gray-400 truncate max-w-[8rem] sm:max-w-[12rem]" title={user?.email}>
-                {user?.email}
+              <span
+                className="flex items-center justify-center w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-600 text-gray-600 dark:text-gray-300 shrink-0"
+                title={user?.email}
+                aria-label={user?.email ? `User: ${user.email}` : 'User'}
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                </svg>
               </span>
               <button
                 onClick={logout}
