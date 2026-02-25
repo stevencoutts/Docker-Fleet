@@ -962,10 +962,23 @@ const Dashboard = () => {
                 <div className={`flex flex-col sm:flex-row sm:items-stretch sm:min-h-[88px] ${hasIssues ? 'border-l-4 border-yellow-500' : 'border-l-4 border-transparent group-hover:border-primary-500'}`}>
                   {/* Left: avatar + identity — full width on mobile, fixed width on sm+ */}
                   <div className="flex items-center gap-3 sm:gap-5 pl-4 pr-4 pt-4 pb-3 sm:pl-6 sm:py-5 w-full sm:w-[300px] sm:min-w-[300px] sm:max-w-[300px] shrink-0">
-                    <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-xl bg-gradient-to-br from-primary-100 to-primary-50 dark:from-primary-900/60 dark:to-primary-800/40 flex items-center justify-center shadow-sm shrink-0">
-                      <span className="text-primary-600 dark:text-primary-300 font-bold text-base sm:text-lg">
-                        {server.name.charAt(0).toUpperCase()}
-                      </span>
+                    <div className="flex flex-col items-center gap-1 shrink-0">
+                      <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-xl bg-gradient-to-br from-primary-100 to-primary-50 dark:from-primary-900/60 dark:to-primary-800/40 flex items-center justify-center shadow-sm">
+                        <span className="text-primary-600 dark:text-primary-300 font-bold text-base sm:text-lg">
+                          {server.name.charAt(0).toUpperCase()}
+                        </span>
+                      </div>
+                      {server.lastSyncError ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-medium text-red-600 dark:text-red-400" title={server.lastSyncError}>
+                          <span className="w-1.5 h-1.5 rounded-full bg-red-500" aria-hidden />
+                          Down
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" aria-hidden />
+                          Up
+                        </span>
+                      )}
                     </div>
                     <div className="min-w-0 flex-1 overflow-hidden">
                       <p className="text-sm font-medium text-gray-500 dark:text-gray-400 truncate">
