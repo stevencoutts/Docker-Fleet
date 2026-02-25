@@ -47,16 +47,27 @@ async function enableTailscale(server, authKey, options = {}) {
     throw err;
   }
 
-  // 3. Install Tailscale (idempotent; safe if already installed) — allow up to 5 min on slow networks
+  // 3. Install Tailscale (idempotent; safe if already installed). Run without PTY so the script
+  //    does not wait on TTY input (e.g. prompts); allow up to 10 min on slow or locked apt.
   if (onProgress) onProgress('installing', 'Installing Tailscale (this may take a few minutes)…', 'running');
   const installScript = 'curl -fsSL https://tailscale.com/install.sh | sh';
-  await sshService.executeCommand(server, installScript, { timeout: 300000 });
-  if (onProgress) onProgress('installing', 'Tailscale installed', 'ok');
+  try {
+    await sshService.executeCommand(server, installScript, { timeout: 600000, pty: false });
+    if (onProgress) onProgress('installing', 'Tailscale installed', 'ok');
+  } catch (installErr) {
+    // If install failed/timed out but tailscale is now available (e.g. install finished late), continue
+    const check = await getExistingTailscaleIp(server);
+    if (!check) {
+      if (onProgress) onProgress('installing', 'Install failed or timed out', 'fail');
+      throw installErr;
+    }
+    if (onProgress) onProgress('installing', 'Tailscale available', 'ok');
+  }
 
-  // 4. Bring up Tailscale with auth key (avoid putting key in shell history via env)
+  // 4. Bring up Tailscale with auth key (avoid putting key in shell history via env). No PTY so no TTY prompts.
   if (onProgress) onProgress('joining', 'Joining Tailscale network…', 'running');
   const upCmd = `export AUTHKEY='${key.replace(/'/g, "'\\''")}' && tailscale up --auth-key="$AUTHKEY"`;
-  await sshService.executeCommand(server, upCmd, { timeout: 90000 });
+  await sshService.executeCommand(server, upCmd, { timeout: 90000, pty: false });
   if (onProgress) onProgress('joining', 'Joined network', 'ok');
 
   // 5. Get Tailscale IPv4
