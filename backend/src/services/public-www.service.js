@@ -4,6 +4,7 @@
  */
 const { Server, ServerProxyRoute, User } = require('../models');
 const sshService = require('./ssh.service');
+const dockerService = require('./docker.service');
 const logger = require('../config/logger');
 
 const NGINX_CONF_PATH = '/etc/nginx/conf.d/dockerfleet-proxy.conf';
@@ -277,6 +278,138 @@ async function configureFirewall(server, onProgress) {
 }
 
 /**
+ * Build a map of host port -> container name from running containers (Ports from docker ps).
+ * Used to resolve proxy_pass target port to a container when importing existing nginx vhosts.
+ */
+async function getHostPortToContainerMap(server) {
+  const map = new Map();
+  try {
+    const containers = await dockerService.listContainers(server, false);
+    for (const c of containers) {
+      const name = (c.Names || '').replace(/^\//, '').trim();
+      if (!name) continue;
+      const portsStr = c.Ports || '';
+      // Ports format: "0.0.0.0:8080->80/tcp, 0.0.0.0:8081->81/tcp" or "8080->80/tcp"
+      const segments = portsStr.split(',').map((s) => s.trim()).filter(Boolean);
+      for (const seg of segments) {
+        const m = seg.match(/(\d+)->\d+/);
+        if (m) {
+          const hostPort = parseInt(m[1], 10);
+          if (hostPort >= 1 && hostPort <= 65535) map.set(hostPort, name);
+        }
+      }
+    }
+  } catch (e) {
+    logger.warn('Public WWW: could not list containers for port map', { host: server.host, message: e.message });
+  }
+  return map;
+}
+
+/**
+ * Parse nginx config text for server blocks that proxy to localhost; return vhosts with domain(s) and target port.
+ * Each item: { domains: string[], targetPort: number }.
+ * Ignores server_name _ and blocks without proxy_pass to 127.0.0.1 or localhost.
+ */
+function parseVhostsFromNginxConfig(configText) {
+  if (!configText || typeof configText !== 'string') return [];
+  const vhosts = [];
+  let i = 0;
+  const s = configText;
+  while (i < s.length) {
+    const serverStart = s.indexOf('server', i);
+    if (serverStart === -1) break;
+    const braceStart = s.indexOf('{', serverStart);
+    if (braceStart === -1) {
+      i = serverStart + 1;
+      continue;
+    }
+    let depth = 1;
+    let j = braceStart + 1;
+    while (j < s.length && depth > 0) {
+      const ch = s[j];
+      if (ch === '{') depth++;
+      else if (ch === '}') depth--;
+      j++;
+    }
+    const block = s.slice(serverStart, j);
+    const serverNameMatch = block.match(/server_name\s+([^;]+);/);
+    const names = serverNameMatch
+      ? serverNameMatch[1].split(/\s+/).map((n) => n.trim().replace(/^["']|["']$/g, '').toLowerCase()).filter((n) => n && n !== '_')
+      : [];
+    const proxyPassMatch = block.match(/proxy_pass\s+https?:\/\/(?:127\.0\.0\.1|localhost)(?::(\d+))?(\/.*)?\s*;/);
+    const port = proxyPassMatch ? (proxyPassMatch[1] ? parseInt(proxyPassMatch[1], 10) : 80) : null;
+    if (names.length && port >= 1 && port <= 65535) {
+      vhosts.push({ domains: names, targetPort: port });
+    }
+    i = j;
+  }
+  return vhosts;
+}
+
+/**
+ * Check if nginx is running and has existing vhost config we should not overwrite (sites-enabled or conf.d with server blocks).
+ * Returns { hasExistingVhosts: boolean, configText: string }. configText is the concatenated config from existing vhost files (excluding our dockerfleet-proxy.conf).
+ */
+async function detectExistingNginxWithVhosts(server) {
+  let configText = '';
+  try {
+    const nginxRunning = await exec(server, 'systemctl is-active nginx 2>/dev/null || true', { allowFailure: true, timeout: 5000 });
+    if ((nginxRunning.stdout || '').trim() !== 'active') return { hasExistingVhosts: false, configText: '' };
+
+    const ourBasename = 'dockerfleet-proxy.conf';
+    const catSites = await exec(
+      server,
+      'for f in /etc/nginx/sites-enabled/* /etc/nginx/conf.d/* 2>/dev/null; do [ -f "$f" ] && [ "$(basename "$f")" != "' +
+        ourBasename +
+        '" ] && cat "$f" 2>/dev/null; done',
+      { allowFailure: true, timeout: 15000 }
+    );
+    configText = (catSites.stdout || '').trim();
+  } catch (e) {
+    logger.warn('Public WWW: detect existing nginx failed', { host: server.host, message: e.message });
+    return { hasExistingVhosts: false, configText: '' };
+  }
+  const vhosts = parseVhostsFromNginxConfig(configText);
+  const hasExistingVhosts = vhosts.length > 0;
+  return { hasExistingVhosts, configText };
+}
+
+/**
+ * Import existing nginx vhosts as proxy routes. Resolves target port to container via Docker port bindings.
+ * Only creates routes for vhosts that have proxy_pass to 127.0.0.1/localhost. Uses placeholder container name if port does not match any container.
+ */
+async function importExistingVhostsAsRoutes(serverId, server, configText, onProgress) {
+  const vhosts = parseVhostsFromNginxConfig(configText);
+  if (vhosts.length === 0) return { imported: 0 };
+  if (onProgress) onProgress('import_vhosts', 'Resolving containers and creating proxy routes...', 'running');
+  const portToContainer = await getHostPortToContainerMap(server);
+  const existing = await ServerProxyRoute.findAll({ where: { serverId }, attributes: ['domain'] });
+  const existingDomains = new Set(existing.map((r) => r.domain.trim().toLowerCase()));
+  let imported = 0;
+  for (const v of vhosts) {
+    const containerName = portToContainer.get(v.targetPort) || `imported-port-${v.targetPort}`;
+    for (const domain of v.domains) {
+      const d = domain.trim().toLowerCase();
+      if (!d || existingDomains.has(d)) continue;
+      try {
+        await ServerProxyRoute.create({
+          serverId,
+          domain: d,
+          containerName,
+          containerPort: v.targetPort,
+        });
+        existingDomains.add(d);
+        imported++;
+      } catch (e) {
+        logger.warn('Public WWW: import route failed', { domain: d, message: e.message });
+      }
+    }
+  }
+  if (onProgress) onProgress('import_vhosts', `Imported ${imported} proxy route(s) from existing nginx.`, 'ok');
+  return { imported };
+}
+
+/**
  * Ensure nginx and certbot are installed (Debian/Ubuntu). Can take several minutes on first run.
  */
 async function ensureNginxAndCertbot(server, onProgress) {
@@ -388,6 +521,19 @@ async function enablePublicWww(serverId, userId, options = {}) {
     await ensureHostnameResolves(server, onProgress);
     await configureFirewall(server, onProgress);
     await ensureNginxAndCertbot(server, onProgress);
+
+    const { hasExistingVhosts, configText } = await detectExistingNginxWithVhosts(server);
+    if (hasExistingVhosts) {
+      // Do not edit nginx config: import existing vhosts as proxy routes and leave their config untouched.
+      const { imported } = await importExistingVhostsAsRoutes(serverId, server, configText, onProgress);
+      await server.update({ publicWwwEnabled: true });
+      if (onProgress) onProgress('done', 'Public WWW enabled (existing nginx left as-is, routes imported).', 'ok');
+      return {
+        success: true,
+        message: `Public WWW enabled. Existing nginx config was not changed. ${imported} proxy route(s) imported from current vhosts.`,
+      };
+    }
+
     await disableNginxDefaultSite(server);
     await ensureDefaultPage(server);
     await ensureDefaultSslCert(server);
