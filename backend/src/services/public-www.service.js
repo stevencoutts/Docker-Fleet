@@ -396,9 +396,9 @@ async function detectExistingNginxWithVhosts(server) {
       const ourBasename = 'dockerfleet-proxy.conf';
       const catSites = await exec(
         server,
-        'for f in /etc/nginx/sites-enabled/* /etc/nginx/conf.d/* 2>/dev/null; do [ -f "$f" ] && [ "$(basename "$f")" != "' +
+        'cat /etc/nginx/sites-enabled/default 2>/dev/null; for f in /etc/nginx/sites-enabled/* /etc/nginx/conf.d/* 2>/dev/null; do [ -f "$f" ] && [ "$(basename "$f")" != "' +
           ourBasename +
-          '" ] && cat "$f" 2>/dev/null; done',
+          '" ] && [ "$f" != /etc/nginx/sites-enabled/default ] && cat "$f" 2>/dev/null; done',
         { allowFailure: true, timeout: 15000 }
       );
       configText = (catSites.stdout || '').trim();
@@ -414,7 +414,7 @@ async function detectExistingNginxWithVhosts(server) {
 
 /**
  * Import existing nginx vhosts as proxy routes. Resolves target port to container via Docker port bindings.
- * Only creates routes for vhosts that have proxy_pass to 127.0.0.1/localhost. Uses placeholder container name if port does not match any container.
+ * Only creates routes when the target port is served by a running container (skips vhosts with no matching container).
  */
 async function importExistingVhostsAsRoutes(serverId, server, configText, onProgress) {
   const vhosts = parseVhostsFromNginxConfig(configText);
@@ -425,7 +425,8 @@ async function importExistingVhostsAsRoutes(serverId, server, configText, onProg
   const existingDomains = new Set(existing.map((r) => r.domain.trim().toLowerCase()));
   let imported = 0;
   for (const v of vhosts) {
-    const containerName = portToContainer.get(v.targetPort) || `imported-port-${v.targetPort}`;
+    if (!portToContainer.has(v.targetPort)) continue;
+    const containerName = portToContainer.get(v.targetPort);
     for (const domain of v.domains) {
       const d = domain.trim().toLowerCase();
       if (!d || existingDomains.has(d)) continue;
