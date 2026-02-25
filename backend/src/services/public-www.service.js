@@ -54,7 +54,7 @@ const DEFAULT_PAGE_HTML = `<!DOCTYPE html>
 <body>
   <div class="card">
     <h1 class="logo">Docker Fleet</h1>
-    <p>This host is managed by Docker Fleet Manager. Add proxy routes to serve your domains here.</p>
+    <p>This host is managed by Docker Fleet. Add proxy routes to serve your domains here.</p>
     <span class="badge">Managed by Docker Fleet</span>
     <div class="footer">
       <a href="https://stevec.couttsnet.com" target="_blank" rel="noopener">Steven Coutts</a>
