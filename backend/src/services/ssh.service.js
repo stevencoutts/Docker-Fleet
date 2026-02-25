@@ -8,7 +8,7 @@ class SSHService {
 
   async connect(server) {
     const connectionKey = `${server.id}`;
-    
+
     // Return existing connection if available
     if (this.connections.has(connectionKey)) {
       const existingConnection = this.connections.get(connectionKey);
@@ -17,51 +17,63 @@ class SSHService {
       }
     }
 
-    const ssh = new Client();
     const effectiveHost = typeof server.getEffectiveHost === 'function' ? server.getEffectiveHost() : server.host;
+    const canFallback = server.tailscaleEnabled &&
+      server.tailscaleIp &&
+      effectiveHost !== server.host;
 
     return new Promise((resolve, reject) => {
       const privateKey = server.getDecryptedKey();
-      
-      ssh.on('ready', () => {
-        this.connections.set(connectionKey, {
-          ssh,
-          isConnected: true,
-          serverId: server.id,
+      let triedFallback = false;
+
+      const tryConnect = (host, isFallback = false) => {
+        const ssh = new Client();
+
+        ssh.on('ready', () => {
+          this.connections.set(connectionKey, {
+            ssh,
+            isConnected: true,
+            serverId: server.id,
+          });
+          logger.info(`SSH connection established to ${host}:${server.port}${isFallback ? ' (fallback from Tailscale IP)' : ''}`);
+          resolve(ssh);
         });
 
-        logger.info(`SSH connection established to ${effectiveHost}:${server.port}`);
-        resolve(ssh);
-      });
+        ssh.on('error', (err) => {
+          logger.error(`SSH connection error for ${server.id}:`, {
+            message: err.message,
+            code: err.code,
+            host,
+            port: server.port,
+            username: server.username,
+          });
+          this.connections.delete(connectionKey);
+          if (isFallback || !canFallback || triedFallback) {
+            reject(new Error(`SSH connection failed: ${err.message}`));
+            return;
+          }
+          triedFallback = true;
+          logger.warn(`Tailscale IP unreachable for ${server.id}, falling back to management host ${server.host}`, { message: err.message });
+          tryConnect(server.host, true);
+        });
 
-      ssh.on('error', (err) => {
-        // Never log private keys - only log error without sensitive data
-        logger.error(`SSH connection error for ${server.id}:`, {
-          message: err.message,
-          code: err.code,
-          host: effectiveHost,
+        ssh.on('close', () => {
+          logger.info(`SSH connection closed for ${server.id}`);
+          this.connections.delete(connectionKey);
+        });
+
+        ssh.connect({
+          host,
           port: server.port,
           username: server.username,
-          // Explicitly do NOT log privateKey
+          privateKey,
+          readyTimeout: 10000,
+          keepaliveInterval: 10000,
+          keepaliveCountMax: 3,
         });
-        this.connections.delete(connectionKey);
-        reject(new Error(`SSH connection failed: ${err.message}`));
-      });
+      };
 
-      ssh.on('close', () => {
-        logger.info(`SSH connection closed for ${server.id}`);
-        this.connections.delete(connectionKey);
-      });
-
-      ssh.connect({
-        host: effectiveHost,
-        port: server.port,
-        username: server.username,
-        privateKey: privateKey,
-        readyTimeout: 10000,
-        keepaliveInterval: 10000,
-        keepaliveCountMax: 3,
-      });
+      tryConnect(effectiveHost);
     });
   }
 
