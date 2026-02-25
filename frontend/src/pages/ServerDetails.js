@@ -74,6 +74,7 @@ const ServerDetails = () => {
   const [tailscaleErrorDetails, setTailscaleErrorDetails] = useState('');
   const [tailscaleShowAuthInput, setTailscaleShowAuthInput] = useState(false);
   const [tailscaleStoreAuthKey, setTailscaleStoreAuthKey] = useState(true);
+  const [tailscaleAcceptRoutesEnable, setTailscaleAcceptRoutesEnable] = useState(false);
   const [tailscaleSteps, setTailscaleSteps] = useState([]);
   const [tailscaleErrorExpanded, setTailscaleErrorExpanded] = useState(false);
 
@@ -958,6 +959,24 @@ const ServerDetails = () => {
                 </button>
               </span>
             )}
+            <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={!!server.tailscaleAcceptRoutes}
+                onChange={async (e) => {
+                  const value = e.target.checked;
+                  setTailscaleError('');
+                  try {
+                    const res = await serversService.update(serverId, { tailscaleAcceptRoutes: value });
+                    setServer(res.data.server);
+                  } catch (err) {
+                    setTailscaleError(err.response?.data?.error || err.message);
+                  }
+                }}
+                className="rounded border-gray-300 dark:border-gray-600 text-primary-600 focus:ring-primary-500"
+              />
+              Accept subnet routes from other peers
+            </label>
             <button
               type="button"
               onClick={async () => {
@@ -1072,7 +1091,7 @@ const ServerDetails = () => {
                                 return [...next, { step: data.step, message: data.message, status: data.status }];
                               });
                             },
-                            { storeAuthKey: tailscaleStoreAuthKey }
+                            { storeAuthKey: tailscaleStoreAuthKey, acceptRoutes: tailscaleAcceptRoutesEnable }
                           );
                           setServer(result.server);
                           setTailscaleAuthKey('');
@@ -1109,6 +1128,15 @@ const ServerDetails = () => {
                     className="rounded border-gray-300 dark:border-gray-600 text-primary-600 focus:ring-primary-500"
                   />
                   Store auth key for 90 days (so re-enable can use it without entering again)
+                </label>
+                <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={tailscaleAcceptRoutesEnable}
+                    onChange={(e) => setTailscaleAcceptRoutesEnable(e.target.checked)}
+                    className="rounded border-gray-300 dark:border-gray-600 text-primary-600 focus:ring-primary-500"
+                  />
+                  Accept subnet routes from other peers
                 </label>
               </div>
             )}

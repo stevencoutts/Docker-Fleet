@@ -153,7 +153,7 @@ const createServer = async (req, res, next) => {
 const updateServer = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const { name, host, port, username, privateKey, sshAllowedIps, publicWwwEnabled, publicHost } = req.body;
+    const { name, host, port, username, privateKey, sshAllowedIps, publicWwwEnabled, publicHost, tailscaleAcceptRoutes } = req.body;
 
     const server = await Server.findOne({
       where: { id, userId: req.user.id },
@@ -207,8 +207,19 @@ const updateServer = async (req, res, next) => {
     if (publicHost !== undefined) {
       server.publicHost = publicHost === '' || publicHost == null ? null : String(publicHost).trim() || null;
     }
+    if (tailscaleAcceptRoutes !== undefined) {
+      server.tailscaleAcceptRoutes = !!tailscaleAcceptRoutes;
+    }
 
     await server.save();
+
+    if (server.tailscaleEnabled && tailscaleAcceptRoutes !== undefined) {
+      try {
+        await tailscaleService.applyAcceptRoutes(server);
+      } catch (e) {
+        logger.warn('Tailscale apply accept-routes failed', { serverId: id, message: e.message });
+      }
+    }
 
     if (server.publicWwwEnabled && sshAllowedIps !== undefined) {
       try {
@@ -296,7 +307,7 @@ function tailscaleInstallErrorMessage(rawMessage) {
 
 const tailscaleEnable = async (req, res, next) => {
   const { id } = req.params;
-  const { authKey: bodyAuthKey, storeAuthKey } = req.body || {};
+  const { authKey: bodyAuthKey, storeAuthKey, acceptRoutes: bodyAcceptRoutes } = req.body || {};
   const stream = req.query.stream === '1' || req.get('Accept')?.includes('text/event-stream');
 
   const resolveEffectiveKey = (server) => {
@@ -308,21 +319,22 @@ const tailscaleEnable = async (req, res, next) => {
 
   const resolveKeyAndPersist = async (server, effectiveKey) => {
     const expiresAt = new Date(Date.now() + TAILSCALE_KEY_STORAGE_DAYS * 24 * 60 * 60 * 1000);
+    const updates = {};
     if (storeAuthKey && effectiveKey) {
-      await server.update({
-        tailscaleAuthKeyEncrypted: encrypt(effectiveKey),
-        tailscaleAuthKeyExpiresAt: expiresAt,
-      });
+      updates.tailscaleAuthKeyEncrypted = encrypt(effectiveKey);
+      updates.tailscaleAuthKeyExpiresAt = expiresAt;
       await req.user.update({
         tailscaleAuthKeyEncrypted: encrypt(effectiveKey),
         tailscaleAuthKeyExpiresAt: expiresAt,
       });
     } else if (!storeAuthKey) {
-      await server.update({
-        tailscaleAuthKeyEncrypted: null,
-        tailscaleAuthKeyExpiresAt: null,
-      });
+      updates.tailscaleAuthKeyEncrypted = null;
+      updates.tailscaleAuthKeyExpiresAt = null;
     }
+    if (bodyAcceptRoutes !== undefined) {
+      updates.tailscaleAcceptRoutes = !!bodyAcceptRoutes;
+    }
+    if (Object.keys(updates).length) await server.update(updates);
   };
 
   if (stream) {
@@ -342,8 +354,10 @@ const tailscaleEnable = async (req, res, next) => {
         return;
       }
       const effectiveKey = resolveEffectiveKey(server);
+      const acceptRoutes = bodyAcceptRoutes !== undefined ? !!bodyAcceptRoutes : !!server.tailscaleAcceptRoutes;
       const result = await tailscaleService.enableTailscale(server, effectiveKey, {
         onProgress: (step, message, status) => send({ step, message, status }),
+        acceptRoutes,
       });
       const { tailscaleIp, imported } = result;
       await server.update({ tailscaleEnabled: true, tailscaleIp });
@@ -372,7 +386,8 @@ const tailscaleEnable = async (req, res, next) => {
     const server = await Server.findOne({ where: { id, userId: req.user.id } });
     if (!server) return res.status(404).json({ error: 'Server not found' });
     const effectiveKey = resolveEffectiveKey(server);
-    const result = await tailscaleService.enableTailscale(server, effectiveKey);
+    const acceptRoutes = bodyAcceptRoutes !== undefined ? !!bodyAcceptRoutes : !!server.tailscaleAcceptRoutes;
+    const result = await tailscaleService.enableTailscale(server, effectiveKey, { acceptRoutes });
     const { tailscaleIp, imported } = result;
     await server.update({ tailscaleEnabled: true, tailscaleIp });
     await resolveKeyAndPersist(server, effectiveKey);
@@ -460,6 +475,7 @@ const updateServerValidation = [
   body('sshAllowedIps').optional().isString().withMessage('SSH allowed IPs must be a string'),
   body('publicWwwEnabled').optional().isBoolean().withMessage('publicWwwEnabled must be a boolean'),
   body('publicHost').optional().isString().withMessage('publicHost must be a string'),
+  body('tailscaleAcceptRoutes').optional().isBoolean().withMessage('tailscaleAcceptRoutes must be a boolean'),
 ];
 
 module.exports = {

@@ -112,6 +112,12 @@ module.exports = (sequelize) => {
         allowNull: true,
         field: 'tailscale_auth_key_expires_at',
       },
+      tailscaleAcceptRoutes: {
+        type: DataTypes.BOOLEAN,
+        allowNull: false,
+        defaultValue: false,
+        field: 'tailscale_accept_routes',
+      },
       privateKeyEncrypted: {
         type: DataTypes.JSON,
         allowNull: false,

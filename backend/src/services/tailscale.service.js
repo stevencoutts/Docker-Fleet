@@ -24,11 +24,12 @@ async function getExistingTailscaleIp(server) {
  * Connects using the server's current host (not Tailscale). Auth key is not stored.
  * @param {object} server - Server model instance (with getDecryptedKey, host, port, username)
  * @param {string} [authKey] - Optional. Tailscale auth key; required only if Tailscale is not already running.
- * @param {{ onProgress?: (step: string, message: string, status: string) => void }} [options] - Optional. onProgress(step, message, status) for streaming progress.
+ * @param {{ onProgress?: (step: string, message: string, status: string) => void, acceptRoutes?: boolean }} [options] - Optional. onProgress; acceptRoutes = use --accept-routes=true for this host (default false).
  * @returns {{ tailscaleIp: string, imported?: boolean }}
  */
 async function enableTailscale(server, authKey, options = {}) {
   const onProgress = options.onProgress;
+  const acceptRoutes = options.acceptRoutes === true;
 
   // 1. Check for already running Tailscale and use it as the management connection
   if (onProgress) onProgress('checking', 'Checking for existing Tailscale on node…', 'running');
@@ -69,7 +70,8 @@ async function enableTailscale(server, authKey, options = {}) {
 
   // 5. Bring up Tailscale with auth key (avoid putting key in shell history via env). No PTY so no TTY prompts.
   if (onProgress) onProgress('joining', 'Joining Tailscale network…', 'running');
-  const upCmd = `export AUTHKEY='${key.replace(/'/g, "'\\''")}' && tailscale up --auth-key="$AUTHKEY" --accept-dns=false --accept-routes=false`;
+  const acceptRoutesFlag = acceptRoutes ? '--accept-routes=true' : '--accept-routes=false';
+  const upCmd = `export AUTHKEY='${key.replace(/'/g, "'\\''")}' && tailscale up --auth-key="$AUTHKEY" --accept-dns=false ${acceptRoutesFlag}`;
   await sshService.executeCommand(server, upCmd, { timeout: 90000, pty: false });
   if (onProgress) onProgress('joining', 'Joined network', 'ok');
 
@@ -84,6 +86,15 @@ async function enableTailscale(server, authKey, options = {}) {
   if (onProgress) onProgress('getting_ip', `Tailscale IP: ${tailscaleIp}`, 'ok');
 
   return { tailscaleIp, imported: false };
+}
+
+/**
+ * Apply accept-routes setting on a node that already has Tailscale up.
+ * @param {object} server - Server model (must have tailscaleEnabled and tailscaleAcceptRoutes)
+ */
+async function applyAcceptRoutes(server) {
+  const accept = server.tailscaleAcceptRoutes === true;
+  await sshService.executeCommand(server, `tailscale set --accept-routes=${accept}`, { timeout: 15000, pty: false, allowFailure: true });
 }
 
 /**
@@ -117,5 +128,6 @@ async function getTailscaleStatus(server) {
 module.exports = {
   enableTailscale,
   disableTailscale,
+  applyAcceptRoutes,
   getTailscaleStatus,
 };

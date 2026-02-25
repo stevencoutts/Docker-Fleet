@@ -8,7 +8,7 @@ const TAILSCALE_ENABLE_TIMEOUT_MS = 320000;
  * @param {string} serverId
  * @param {string} [authKey] - Auth key to use; if omitted and server has stored key (not expired), backend uses it.
  * @param {function} onProgress
- * @param {{ storeAuthKey?: boolean }} [options] - If true, store the auth key for 90 days (when authKey is provided).
+ * @param {{ storeAuthKey?: boolean, acceptRoutes?: boolean }} [options] - storeAuthKey: store key for 90 days; acceptRoutes: accept subnet routes from other peers (per host).
  */
 export async function tailscaleEnableWithProgress(serverId, authKey, onProgress, options = {}) {
   const token = localStorage.getItem('token');
@@ -22,6 +22,7 @@ export async function tailscaleEnableWithProgress(serverId, authKey, onProgress,
     body: JSON.stringify({
       authKey: authKey || undefined,
       storeAuthKey: options.storeAuthKey === true,
+      acceptRoutes: options.acceptRoutes === true,
     }),
   });
   if (!res.ok) {
