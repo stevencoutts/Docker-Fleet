@@ -64,13 +64,16 @@ async function enableTailscale(server, authKey, options = {}) {
     if (onProgress) onProgress('installing', 'Tailscale available', 'ok');
   }
 
-  // 4. Bring up Tailscale with auth key (avoid putting key in shell history via env). No PTY so no TTY prompts.
+  // 4. Allow the SSH user to run tailscale without sudo (avoid "checkprefs access denied").
+  await sshService.executeCommand(server, 'sudo tailscale set --operator=$USER', { timeout: 15000, pty: false, allowFailure: true });
+
+  // 5. Bring up Tailscale with auth key (avoid putting key in shell history via env). No PTY so no TTY prompts.
   if (onProgress) onProgress('joining', 'Joining Tailscale network…', 'running');
   const upCmd = `export AUTHKEY='${key.replace(/'/g, "'\\''")}' && tailscale up --auth-key="$AUTHKEY"`;
   await sshService.executeCommand(server, upCmd, { timeout: 90000, pty: false });
   if (onProgress) onProgress('joining', 'Joined network', 'ok');
 
-  // 5. Get Tailscale IPv4
+  // 6. Get Tailscale IPv4
   if (onProgress) onProgress('getting_ip', 'Getting Tailscale IP…', 'running');
   const { stdout } = await sshService.executeCommand(server, 'tailscale ip -4', { timeout: 10000 });
   const tailscaleIp = (stdout || '').trim();
