@@ -102,6 +102,16 @@ module.exports = (sequelize) => {
         allowNull: true,
         field: 'tailscale_ip',
       },
+      tailscaleAuthKeyEncrypted: {
+        type: DataTypes.JSON,
+        allowNull: true,
+        field: 'tailscale_auth_key_encrypted',
+      },
+      tailscaleAuthKeyExpiresAt: {
+        type: DataTypes.DATE,
+        allowNull: true,
+        field: 'tailscale_auth_key_expires_at',
+      },
       privateKeyEncrypted: {
         type: DataTypes.JSON,
         allowNull: false,
@@ -140,6 +150,16 @@ module.exports = (sequelize) => {
 
   Server.prototype.getDecryptedKey = function () {
     return decrypt(this.privateKeyEncrypted);
+  };
+
+  /**
+   * Returns the decrypted Tailscale auth key if stored and not expired (90-day storage).
+   * Returns null if not set or expired.
+   */
+  Server.prototype.getDecryptedTailscaleAuthKey = function () {
+    if (!this.tailscaleAuthKeyEncrypted || !this.tailscaleAuthKeyExpiresAt) return null;
+    if (new Date(this.tailscaleAuthKeyExpiresAt) <= new Date()) return null;
+    return decrypt(this.tailscaleAuthKeyEncrypted);
   };
 
   /**

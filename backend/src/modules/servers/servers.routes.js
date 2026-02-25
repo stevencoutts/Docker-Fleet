@@ -9,6 +9,7 @@ const {
   testConnection,
   tailscaleEnable,
   tailscaleDisable,
+  clearTailscaleStoredKey,
   tailscaleStatus,
   createServerValidation,
   updateServerValidation,
@@ -51,6 +52,7 @@ router.post('/:id/public-www/request-dns-cert', requestDnsCert);
 router.post('/:id/public-www/continue-dns-cert', continueDnsCert);
 router.post('/:id/tailscale/enable', tailscaleEnable);
 router.post('/:id/tailscale/disable', tailscaleDisable);
+router.delete('/:id/tailscale/stored-key', clearTailscaleStoredKey);
 router.get('/:id/tailscale/status', tailscaleStatus);
 router.get('/:id', getServerById);
 router.post('/', createServerValidation, validate, createServer);

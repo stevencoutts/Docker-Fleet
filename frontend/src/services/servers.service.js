@@ -5,8 +5,12 @@ const TAILSCALE_ENABLE_TIMEOUT_MS = 320000;
 /**
  * Enable Tailscale with streaming progress. Calls onProgress({ step, message, status }) for each step.
  * Returns { server, message, imported } or throws. Use for real-time step feedback in the UI.
+ * @param {string} serverId
+ * @param {string} [authKey] - Auth key to use; if omitted and server has stored key (not expired), backend uses it.
+ * @param {function} onProgress
+ * @param {{ storeAuthKey?: boolean }} [options] - If true, store the auth key for 90 days (when authKey is provided).
  */
-export async function tailscaleEnableWithProgress(serverId, authKey, onProgress) {
+export async function tailscaleEnableWithProgress(serverId, authKey, onProgress, options = {}) {
   const token = localStorage.getItem('token');
   const url = `${getApiUrl()}/api/v1/servers/${serverId}/tailscale/enable?stream=1`;
   const res = await fetch(url, {
@@ -15,7 +19,10 @@ export async function tailscaleEnableWithProgress(serverId, authKey, onProgress)
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify({ authKey: authKey || undefined }),
+    body: JSON.stringify({
+      authKey: authKey || undefined,
+      storeAuthKey: options.storeAuthKey === true,
+    }),
   });
   if (!res.ok) {
     const text = await res.text();
@@ -69,7 +76,8 @@ export const serversService = {
   delete: (id) => api.delete(`/api/v1/servers/${id}`),
   testConnection: (id) => api.post(`/api/v1/servers/${id}/test`),
   tailscaleEnable: (id, authKey, options = {}) =>
-    api.post(`/api/v1/servers/${id}/tailscale/enable`, { authKey }, { timeout: options.timeout ?? TAILSCALE_ENABLE_TIMEOUT_MS }),
+    api.post(`/api/v1/servers/${id}/tailscale/enable`, { authKey, storeAuthKey: options.storeAuthKey }, { timeout: options.timeout ?? TAILSCALE_ENABLE_TIMEOUT_MS }),
   tailscaleDisable: (id) => api.post(`/api/v1/servers/${id}/tailscale/disable`),
+  clearTailscaleStoredKey: (id) => api.delete(`/api/v1/servers/${id}/tailscale/stored-key`),
   tailscaleStatus: (id) => api.get(`/api/v1/servers/${id}/tailscale/status`),
 };

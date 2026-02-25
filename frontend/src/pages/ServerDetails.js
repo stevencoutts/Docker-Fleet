@@ -73,8 +73,11 @@ const ServerDetails = () => {
   const [tailscaleError, setTailscaleError] = useState('');
   const [tailscaleErrorDetails, setTailscaleErrorDetails] = useState('');
   const [tailscaleShowAuthInput, setTailscaleShowAuthInput] = useState(false);
+  const [tailscaleStoreAuthKey, setTailscaleStoreAuthKey] = useState(true);
   const [tailscaleSteps, setTailscaleSteps] = useState([]);
   const [tailscaleErrorExpanded, setTailscaleErrorExpanded] = useState(false);
+
+  const hasStoredTailscaleKey = server?.tailscaleAuthKeyExpiresAt && new Date(server.tailscaleAuthKeyExpiresAt) > new Date();
 
   const stepLabel = (step) => {
     const labels = { hostname: 'Hostname', firewall: 'Firewall', install_nginx: 'Install nginx & certbot', nginx_config: 'Nginx config', certbot: 'Certificate(s)', done: 'Done' };
@@ -935,6 +938,26 @@ const ServerDetails = () => {
               <span className="font-medium">Management address:</span>
               <code className="bg-emerald-100 dark:bg-emerald-900/40 px-1.5 py-0.5 rounded">{server.tailscaleIp}:{server.port}</code>
             </div>
+            {hasStoredTailscaleKey && (
+              <span className="text-sm text-gray-500 dark:text-gray-400 flex items-center gap-2">
+                Auth key stored until {new Date(server.tailscaleAuthKeyExpiresAt).toLocaleDateString()}.
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setTailscaleError('');
+                    try {
+                      const res = await serversService.clearTailscaleStoredKey(serverId);
+                      setServer(res.data.server);
+                    } catch (e) {
+                      setTailscaleError(e.response?.data?.error || e.message);
+                    }
+                  }}
+                  className="text-primary-600 dark:text-primary-400 hover:underline"
+                >
+                  Clear stored key
+                </button>
+              </span>
+            )}
             <button
               type="button"
               onClick={async () => {
@@ -957,6 +980,29 @@ const ServerDetails = () => {
           </div>
         ) : (
           <div>
+            {hasStoredTailscaleKey && (
+              <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
+                <span className="text-gray-600 dark:text-gray-400">
+                  Auth key stored until {new Date(server.tailscaleAuthKeyExpiresAt).toLocaleDateString()}. Enable will use it if no key is entered.
+                </span>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setTailscaleError('');
+                    try {
+                      const res = await serversService.clearTailscaleStoredKey(serverId);
+                      setServer(res.data.server);
+                    } catch (e) {
+                      setTailscaleError(e.response?.data?.error || e.message);
+                    }
+                  }}
+                  disabled={tailscaleBusy !== null}
+                  className="text-primary-600 dark:text-primary-400 hover:underline disabled:opacity-50"
+                >
+                  Clear stored key
+                </button>
+              </div>
+            )}
             {!tailscaleShowAuthInput ? (
               <button
                 type="button"
@@ -1015,14 +1061,19 @@ const ServerDetails = () => {
                         setTailscaleSteps([]);
                         setTailscaleBusy('enable');
                         try {
-                          const result = await tailscaleEnableWithProgress(serverId, tailscaleAuthKey.trim(), (data) => {
-                            setTailscaleSteps((prev) => {
-                              const idx = prev.map((s) => s.step).lastIndexOf(data.step);
-                              const next = idx >= 0 ? prev.slice(0, idx + 1) : prev;
-                              if (idx >= 0) return next.map((s) => (s.step === data.step ? { ...s, message: data.message, status: data.status } : s));
-                              return [...next, { step: data.step, message: data.message, status: data.status }];
-                            });
-                          });
+                          const result = await tailscaleEnableWithProgress(
+                            serverId,
+                            tailscaleAuthKey.trim(),
+                            (data) => {
+                              setTailscaleSteps((prev) => {
+                                const idx = prev.map((s) => s.step).lastIndexOf(data.step);
+                                const next = idx >= 0 ? prev.slice(0, idx + 1) : prev;
+                                if (idx >= 0) return next.map((s) => (s.step === data.step ? { ...s, message: data.message, status: data.status } : s));
+                                return [...next, { step: data.step, message: data.message, status: data.status }];
+                              });
+                            },
+                            { storeAuthKey: tailscaleStoreAuthKey }
+                          );
                           setServer(result.server);
                           setTailscaleAuthKey('');
                           setTailscaleShowAuthInput(false);
@@ -1050,6 +1101,15 @@ const ServerDetails = () => {
                     </button>
                   </div>
                 </div>
+                <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={tailscaleStoreAuthKey}
+                    onChange={(e) => setTailscaleStoreAuthKey(e.target.checked)}
+                    className="rounded border-gray-300 dark:border-gray-600 text-primary-600 focus:ring-primary-500"
+                  />
+                  Store auth key for 90 days (so re-enable can use it without entering again)
+                </label>
               </div>
             )}
             {tailscaleBusy === 'enable' && tailscaleSteps.length > 0 && (

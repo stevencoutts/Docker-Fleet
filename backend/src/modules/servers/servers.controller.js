@@ -4,7 +4,17 @@ const sshService = require('../../services/ssh.service');
 const pollingService = require('../../services/polling.service');
 const { configureFirewall } = require('../../services/public-www.service');
 const tailscaleService = require('../../services/tailscale.service');
+const { encrypt } = require('../../utils/encryption');
 const logger = require('../../config/logger');
+
+const TAILSCALE_KEY_STORAGE_DAYS = 90;
+
+function toServerResponse(server) {
+  const serverData = server.toJSON();
+  delete serverData.privateKeyEncrypted;
+  delete serverData.tailscaleAuthKeyEncrypted;
+  return serverData;
+}
 
 const getAllServers = async (req, res, next) => {
   try {
@@ -13,10 +23,8 @@ const getAllServers = async (req, res, next) => {
       order: [['createdAt', 'DESC']],
     });
 
-    // Never send encrypted private keys in the response for security
     const serversData = servers.map(server => {
-      const serverData = server.toJSON();
-      delete serverData.privateKeyEncrypted;
+      const serverData = toServerResponse(server);
       const lastSyncError = pollingService.getLastSyncError(server.id);
       if (lastSyncError) serverData.lastSyncError = lastSyncError;
       return serverData;
@@ -40,9 +48,7 @@ const getServerById = async (req, res, next) => {
       return res.status(404).json({ error: 'Server not found' });
     }
 
-    // Never send the encrypted private key in the response for security
-    const serverData = server.toJSON();
-    delete serverData.privateKeyEncrypted;
+    const serverData = toServerResponse(server);
     const lastSyncError = pollingService.getLastSyncError(id);
     if (lastSyncError) serverData.lastSyncError = lastSyncError;
 
@@ -126,10 +132,7 @@ const createServer = async (req, res, next) => {
     logger.info(`Server ${server.id} created by user ${req.user.id}`);
 
     // Never send the encrypted private key in the response for security
-    const serverData = server.toJSON();
-    delete serverData.privateKeyEncrypted;
-
-    res.status(201).json({ server: serverData });
+    res.status(201).json({ server: toServerResponse(server) });
   } catch (error) {
     // Never log private keys in error messages
     logger.error('Server creation error:', {
@@ -216,10 +219,7 @@ const updateServer = async (req, res, next) => {
     }
 
     // Never send the encrypted private key in the response for security
-    const serverData = server.toJSON();
-    delete serverData.privateKeyEncrypted;
-
-    res.json({ server: serverData });
+    res.json({ server: toServerResponse(server) });
   } catch (error) {
     next(error);
   }
@@ -296,8 +296,26 @@ function tailscaleInstallErrorMessage(rawMessage) {
 
 const tailscaleEnable = async (req, res, next) => {
   const { id } = req.params;
-  const { authKey } = req.body || {};
+  const { authKey: bodyAuthKey, storeAuthKey } = req.body || {};
   const stream = req.query.stream === '1' || req.get('Accept')?.includes('text/event-stream');
+
+  const resolveKeyAndPersist = async (server) => {
+    const effectiveKey = typeof bodyAuthKey === 'string' && bodyAuthKey.trim()
+      ? bodyAuthKey.trim()
+      : server.getDecryptedTailscaleAuthKey();
+    const expiresAt = new Date(Date.now() + TAILSCALE_KEY_STORAGE_DAYS * 24 * 60 * 60 * 1000);
+    if (storeAuthKey && effectiveKey) {
+      await server.update({
+        tailscaleAuthKeyEncrypted: encrypt(effectiveKey),
+        tailscaleAuthKeyExpiresAt: expiresAt,
+      });
+    } else if (!storeAuthKey) {
+      await server.update({
+        tailscaleAuthKeyEncrypted: null,
+        tailscaleAuthKeyExpiresAt: null,
+      });
+    }
+  };
 
   if (stream) {
     res.setHeader('Content-Type', 'text/event-stream');
@@ -315,14 +333,17 @@ const tailscaleEnable = async (req, res, next) => {
         res.end();
         return;
       }
-      const result = await tailscaleService.enableTailscale(server, authKey, {
+      const effectiveKey = typeof bodyAuthKey === 'string' && bodyAuthKey.trim()
+        ? bodyAuthKey.trim()
+        : server.getDecryptedTailscaleAuthKey();
+      const result = await tailscaleService.enableTailscale(server, effectiveKey, {
         onProgress: (step, message, status) => send({ step, message, status }),
       });
       const { tailscaleIp, imported } = result;
       await server.update({ tailscaleEnabled: true, tailscaleIp });
+      await resolveKeyAndPersist(server);
       sshService.disconnect(id);
-      const serverData = server.toJSON();
-      delete serverData.privateKeyEncrypted;
+      const serverData = toServerResponse(server);
       const message = imported
         ? 'Existing Tailscale detected; management will use its IP.'
         : 'Tailscale enabled; management will use Tailscale IP.';
@@ -344,12 +365,15 @@ const tailscaleEnable = async (req, res, next) => {
   try {
     const server = await Server.findOne({ where: { id, userId: req.user.id } });
     if (!server) return res.status(404).json({ error: 'Server not found' });
-    const result = await tailscaleService.enableTailscale(server, authKey);
+    const effectiveKey = typeof bodyAuthKey === 'string' && bodyAuthKey.trim()
+      ? bodyAuthKey.trim()
+      : server.getDecryptedTailscaleAuthKey();
+    const result = await tailscaleService.enableTailscale(server, effectiveKey);
     const { tailscaleIp, imported } = result;
     await server.update({ tailscaleEnabled: true, tailscaleIp });
+    await resolveKeyAndPersist(server);
     sshService.disconnect(id);
-    const serverData = server.toJSON();
-    delete serverData.privateKeyEncrypted;
+    const serverData = toServerResponse(server);
     const message = imported
       ? 'Existing Tailscale detected; management will use its IP.'
       : 'Tailscale enabled; management will use Tailscale IP.';
@@ -379,9 +403,19 @@ const tailscaleDisable = async (req, res, next) => {
     await tailscaleService.disableTailscale(server);
     await server.update({ tailscaleEnabled: false, tailscaleIp: null });
     sshService.disconnect(id);
-    const serverData = server.toJSON();
-    delete serverData.privateKeyEncrypted;
-    res.json({ server: serverData, message: 'Tailscale disabled; management will use original host.' });
+    res.json({ server: toServerResponse(server), message: 'Tailscale disabled; management will use original host.' });
+  } catch (err) {
+    next(err);
+  }
+};
+
+const clearTailscaleStoredKey = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const server = await Server.findOne({ where: { id, userId: req.user.id } });
+    if (!server) return res.status(404).json({ error: 'Server not found' });
+    await server.update({ tailscaleAuthKeyEncrypted: null, tailscaleAuthKeyExpiresAt: null });
+    res.json({ server: toServerResponse(server), message: 'Stored Tailscale auth key cleared.' });
   } catch (err) {
     next(err);
   }
@@ -433,6 +467,7 @@ module.exports = {
   testConnection,
   tailscaleEnable,
   tailscaleDisable,
+  clearTailscaleStoredKey,
   tailscaleStatus,
   serverValidation: createServerValidation, // Keep for backward compatibility
   createServerValidation,
