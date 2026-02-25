@@ -306,12 +306,33 @@ async function getHostPortToContainerMap(server) {
 }
 
 /**
+ * Build map of upstream name -> port from config (upstream X { server 127.0.0.1:PORT; }).
+ */
+function parseUpstreamPorts(configText) {
+  const map = new Map();
+  if (!configText || typeof configText !== 'string') return map;
+  const upstreamRe = /upstream\s+(\w+)\s*\{([^}]+)\}/g;
+  let m;
+  while ((m = upstreamRe.exec(configText)) !== null) {
+    const block = m[2];
+    const serverMatch = block.match(/server\s+(?:127\.0\.0\.1|localhost)(?::(\d+))?/);
+    if (serverMatch) {
+      const port = serverMatch[1] ? parseInt(serverMatch[1], 10) : 80;
+      if (port >= 1 && port <= 65535) map.set(m[1], port);
+    }
+  }
+  return map;
+}
+
+/**
  * Parse nginx config text for server blocks that proxy to localhost; return vhosts with domain(s) and target port.
  * Each item: { domains: string[], targetPort: number }.
- * Ignores server_name _ and blocks without proxy_pass to 127.0.0.1 or localhost.
+ * Skips our blocks (dockerfleet-default, dockerfleet-proxy), server_name _, and blocks without a proxy port.
+ * Supports proxy_pass http://127.0.0.1:PORT, http://localhost:PORT, $scheme://..., and proxy_pass http://upstream_name (resolved via upstream blocks).
  */
 function parseVhostsFromNginxConfig(configText) {
   if (!configText || typeof configText !== 'string') return [];
+  const upstreamPorts = parseUpstreamPorts(configText);
   const vhosts = [];
   let i = 0;
   const s = configText;
@@ -332,12 +353,24 @@ function parseVhostsFromNginxConfig(configText) {
       j++;
     }
     const block = s.slice(serverStart, j);
+    if (/dockerfleet-default|dockerfleet-proxy/.test(block)) {
+      i = j;
+      continue;
+    }
     const serverNameMatch = block.match(/server_name\s+([^;]+);/);
     const names = serverNameMatch
       ? serverNameMatch[1].split(/\s+/).map((n) => n.trim().replace(/^["']|["']$/g, '').toLowerCase()).filter((n) => n && n !== '_')
       : [];
-    const proxyPassMatch = block.match(/proxy_pass\s+https?:\/\/(?:127\.0\.0\.1|localhost)(?::(\d+))?(\/.*)?\s*;/);
-    const port = proxyPassMatch ? (proxyPassMatch[1] ? parseInt(proxyPassMatch[1], 10) : 80) : null;
+    let port = null;
+    const directMatch = block.match(/proxy_pass\s+(?:\$scheme|https?):\/\/(?:127\.0\.0\.1|localhost)(?::(\d+))?(\/.*)?\s*;/);
+    if (directMatch) {
+      port = directMatch[1] ? parseInt(directMatch[1], 10) : 80;
+    } else {
+      const upstreamMatch = block.match(/proxy_pass\s+https?:\/\/([a-zA-Z0-9_]+)\/?\s*;/);
+      if (upstreamMatch && upstreamPorts.has(upstreamMatch[1])) {
+        port = upstreamPorts.get(upstreamMatch[1]);
+      }
+    }
     if (names.length && port >= 1 && port <= 65535) {
       vhosts.push({ domains: names, targetPort: port });
     }
@@ -347,8 +380,9 @@ function parseVhostsFromNginxConfig(configText) {
 }
 
 /**
- * Check if nginx is running and has existing vhost config we should not overwrite (sites-enabled or conf.d with server blocks).
- * Returns { hasExistingVhosts: boolean, configText: string }. configText is the concatenated config from existing vhost files (excluding our dockerfleet-proxy.conf).
+ * Check if nginx is running and has existing vhost config we should not overwrite.
+ * Uses nginx -T to get full parsed config (all includes expanded) so vhosts in included files are found.
+ * Returns { hasExistingVhosts: boolean, configText: string }.
  */
 async function detectExistingNginxWithVhosts(server) {
   let configText = '';
@@ -356,15 +390,19 @@ async function detectExistingNginxWithVhosts(server) {
     const nginxRunning = await exec(server, 'systemctl is-active nginx 2>/dev/null || true', { allowFailure: true, timeout: 5000 });
     if ((nginxRunning.stdout || '').trim() !== 'active') return { hasExistingVhosts: false, configText: '' };
 
-    const ourBasename = 'dockerfleet-proxy.conf';
-    const catSites = await exec(
-      server,
-      'for f in /etc/nginx/sites-enabled/* /etc/nginx/conf.d/* 2>/dev/null; do [ -f "$f" ] && [ "$(basename "$f")" != "' +
-        ourBasename +
-        '" ] && cat "$f" 2>/dev/null; done',
-      { allowFailure: true, timeout: 15000 }
-    );
-    configText = (catSites.stdout || '').trim();
+    let dump = await exec(server, 'sudo nginx -T 2>/dev/null || true', { allowFailure: true, timeout: 15000 });
+    configText = (dump.stdout || '').trim();
+    if (!configText) {
+      const ourBasename = 'dockerfleet-proxy.conf';
+      const catSites = await exec(
+        server,
+        'for f in /etc/nginx/sites-enabled/* /etc/nginx/conf.d/* 2>/dev/null; do [ -f "$f" ] && [ "$(basename "$f")" != "' +
+          ourBasename +
+          '" ] && cat "$f" 2>/dev/null; done',
+        { allowFailure: true, timeout: 15000 }
+      );
+      configText = (catSites.stdout || '').trim();
+    }
   } catch (e) {
     logger.warn('Public WWW: detect existing nginx failed', { host: server.host, message: e.message });
     return { hasExistingVhosts: false, configText: '' };
