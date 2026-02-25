@@ -29,7 +29,7 @@ const getUserById = async (req, res, next) => {
     }
 
     const user = await User.findByPk(id, {
-      attributes: ['id', 'email', 'role', 'letsEncryptEmail', 'createdAt', 'updatedAt'],
+      attributes: ['id', 'email', 'role', 'letsEncryptEmail', 'tailscaleAuthKeyExpiresAt', 'createdAt', 'updatedAt'],
     });
 
     if (!user) {
@@ -196,12 +196,25 @@ const passwordValidation = [
     .withMessage('Password must be at least 8 characters'),
 ];
 
+const clearMyTailscaleStoredKey = async (req, res, next) => {
+  try {
+    await req.user.update({
+      tailscaleAuthKeyEncrypted: null,
+      tailscaleAuthKeyExpiresAt: null,
+    });
+    res.json({ message: 'Stored Tailscale auth key cleared. You will need to enter a key when enabling Tailscale on new servers.' });
+  } catch (err) {
+    next(err);
+  }
+};
+
 module.exports = {
   getAllUsers,
   getUserById,
   updateUser,
   updatePassword,
   deleteUser,
+  clearMyTailscaleStoredKey,
   userValidation,
   passwordValidation,
 };

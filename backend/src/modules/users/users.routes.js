@@ -7,6 +7,7 @@ const {
   updateUser,
   updatePassword,
   deleteUser,
+  clearMyTailscaleStoredKey,
   userValidation,
   passwordValidation,
 } = require('./users.controller');
@@ -16,6 +17,9 @@ router.use(authenticate);
 
 // Get all users (admin only)
 router.get('/', authorize('admin'), getAllUsers);
+
+// Current user: clear stored Tailscale auth key (used for further nodes)
+router.delete('/me/tailscale-stored-key', clearMyTailscaleStoredKey);
 
 // Get user by ID (admin or own profile)
 router.get('/:id', getUserById);

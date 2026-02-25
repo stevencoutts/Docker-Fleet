@@ -299,13 +299,21 @@ const tailscaleEnable = async (req, res, next) => {
   const { authKey: bodyAuthKey, storeAuthKey } = req.body || {};
   const stream = req.query.stream === '1' || req.get('Accept')?.includes('text/event-stream');
 
-  const resolveKeyAndPersist = async (server) => {
-    const effectiveKey = typeof bodyAuthKey === 'string' && bodyAuthKey.trim()
-      ? bodyAuthKey.trim()
-      : server.getDecryptedTailscaleAuthKey();
+  const resolveEffectiveKey = (server) => {
+    if (typeof bodyAuthKey === 'string' && bodyAuthKey.trim()) return bodyAuthKey.trim();
+    const serverKey = server.getDecryptedTailscaleAuthKey();
+    if (serverKey) return serverKey;
+    return req.user?.getDecryptedTailscaleAuthKey?.() ?? null;
+  };
+
+  const resolveKeyAndPersist = async (server, effectiveKey) => {
     const expiresAt = new Date(Date.now() + TAILSCALE_KEY_STORAGE_DAYS * 24 * 60 * 60 * 1000);
     if (storeAuthKey && effectiveKey) {
       await server.update({
+        tailscaleAuthKeyEncrypted: encrypt(effectiveKey),
+        tailscaleAuthKeyExpiresAt: expiresAt,
+      });
+      await req.user.update({
         tailscaleAuthKeyEncrypted: encrypt(effectiveKey),
         tailscaleAuthKeyExpiresAt: expiresAt,
       });
@@ -333,15 +341,13 @@ const tailscaleEnable = async (req, res, next) => {
         res.end();
         return;
       }
-      const effectiveKey = typeof bodyAuthKey === 'string' && bodyAuthKey.trim()
-        ? bodyAuthKey.trim()
-        : server.getDecryptedTailscaleAuthKey();
+      const effectiveKey = resolveEffectiveKey(server);
       const result = await tailscaleService.enableTailscale(server, effectiveKey, {
         onProgress: (step, message, status) => send({ step, message, status }),
       });
       const { tailscaleIp, imported } = result;
       await server.update({ tailscaleEnabled: true, tailscaleIp });
-      await resolveKeyAndPersist(server);
+      await resolveKeyAndPersist(server, effectiveKey);
       sshService.disconnect(id);
       const serverData = toServerResponse(server);
       const message = imported
@@ -365,13 +371,11 @@ const tailscaleEnable = async (req, res, next) => {
   try {
     const server = await Server.findOne({ where: { id, userId: req.user.id } });
     if (!server) return res.status(404).json({ error: 'Server not found' });
-    const effectiveKey = typeof bodyAuthKey === 'string' && bodyAuthKey.trim()
-      ? bodyAuthKey.trim()
-      : server.getDecryptedTailscaleAuthKey();
+    const effectiveKey = resolveEffectiveKey(server);
     const result = await tailscaleService.enableTailscale(server, effectiveKey);
     const { tailscaleIp, imported } = result;
     await server.update({ tailscaleEnabled: true, tailscaleIp });
-    await resolveKeyAndPersist(server);
+    await resolveKeyAndPersist(server, effectiveKey);
     sshService.disconnect(id);
     const serverData = toServerResponse(server);
     const message = imported

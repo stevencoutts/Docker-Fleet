@@ -1,5 +1,6 @@
 const { DataTypes } = require('sequelize');
 const bcrypt = require('bcrypt');
+const { decrypt } = require('../utils/encryption');
 
 module.exports = (sequelize) => {
   const User = sequelize.define(
@@ -33,6 +34,16 @@ module.exports = (sequelize) => {
         allowNull: true,
         field: 'lets_encrypt_email',
         validate: { isEmail: true },
+      },
+      tailscaleAuthKeyEncrypted: {
+        type: DataTypes.JSON,
+        allowNull: true,
+        field: 'tailscale_auth_key_encrypted',
+      },
+      tailscaleAuthKeyExpiresAt: {
+        type: DataTypes.DATE,
+        allowNull: true,
+        field: 'tailscale_auth_key_expires_at',
       },
       createdAt: {
         type: DataTypes.DATE,
@@ -69,9 +80,17 @@ module.exports = (sequelize) => {
     return bcrypt.compare(password, this.passwordHash);
   };
 
+  /** Returns decrypted Tailscale auth key if stored and not expired; null otherwise. Used to enable Tailscale on any server. */
+  User.prototype.getDecryptedTailscaleAuthKey = function () {
+    if (!this.tailscaleAuthKeyEncrypted || !this.tailscaleAuthKeyExpiresAt) return null;
+    if (new Date(this.tailscaleAuthKeyExpiresAt) <= new Date()) return null;
+    return decrypt(this.tailscaleAuthKeyEncrypted);
+  };
+
   User.prototype.toJSON = function () {
     const values = { ...this.get() };
     delete values.passwordHash;
+    delete values.tailscaleAuthKeyEncrypted;
     return values;
   };
 
