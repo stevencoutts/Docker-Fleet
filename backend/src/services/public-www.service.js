@@ -410,6 +410,23 @@ async function importExistingVhostsAsRoutes(serverId, server, configText, onProg
 }
 
 /**
+ * Return true if nginx is already installed on the host (active or package present).
+ * Must be called before ensureNginxAndCertbot so we know we didn't just install it.
+ */
+async function isNginxAlreadyInstalled(server) {
+  try {
+    const r = await exec(
+      server,
+      "[ \"$(systemctl is-active nginx 2>/dev/null)\" = active ] || dpkg -l nginx 2>/dev/null | grep -q '^ii'",
+      { allowFailure: true, timeout: 10000 }
+    );
+    return r.code === 0;
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
  * Ensure nginx and certbot are installed (Debian/Ubuntu). Can take several minutes on first run.
  */
 async function ensureNginxAndCertbot(server, onProgress) {
@@ -519,6 +536,7 @@ async function enablePublicWww(serverId, userId, options = {}) {
 
   try {
     await ensureHostnameResolves(server, onProgress);
+    const nginxAlreadyInstalled = await isNginxAlreadyInstalled(server);
     await ensureNginxAndCertbot(server, onProgress);
 
     const { hasExistingVhosts, configText } = await detectExistingNginxWithVhosts(server);
@@ -533,7 +551,7 @@ async function enablePublicWww(serverId, userId, options = {}) {
       };
     }
 
-    await configureFirewall(server, onProgress);
+    if (!nginxAlreadyInstalled) await configureFirewall(server, onProgress);
     await disableNginxDefaultSite(server);
     await ensureDefaultPage(server);
     await ensureDefaultSslCert(server);

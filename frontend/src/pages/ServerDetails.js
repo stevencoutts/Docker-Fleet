@@ -1293,22 +1293,6 @@ const ServerDetails = () => {
                 <>Disabled</>
               )}
             </span>
-            {!server?.publicWwwEnabled && (
-              <button
-                type="button"
-                onClick={async () => {
-                  try {
-                    const res = await serversService.update(serverId, { publicWwwEnabled: true });
-                    setServer((s) => (s ? { ...s, ...res.data.server } : s));
-                  } catch (e) {
-                    alert(e.response?.data?.error || e.message || 'Failed to update');
-                  }
-                }}
-                className="text-sm text-primary-600 dark:text-primary-400 hover:underline"
-              >
-                Host already has Public WWW? Mark as enabled
-              </button>
-            )}
             <button
             type="button"
             disabled={publicWwwLoading}
