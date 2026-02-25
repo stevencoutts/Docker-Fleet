@@ -69,7 +69,7 @@ async function enableTailscale(server, authKey, options = {}) {
 
   // 5. Bring up Tailscale with auth key (avoid putting key in shell history via env). No PTY so no TTY prompts.
   if (onProgress) onProgress('joining', 'Joining Tailscale network…', 'running');
-  const upCmd = `export AUTHKEY='${key.replace(/'/g, "'\\''")}' && tailscale up --auth-key="$AUTHKEY"`;
+  const upCmd = `export AUTHKEY='${key.replace(/'/g, "'\\''")}' && tailscale up --auth-key="$AUTHKEY" --accept-dns=false --accept-routes=false`;
   await sshService.executeCommand(server, upCmd, { timeout: 90000, pty: false });
   if (onProgress) onProgress('joining', 'Joined network', 'ok');
 
