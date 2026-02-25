@@ -1022,6 +1022,24 @@ const ServerDetails = () => {
                 </button>
               </div>
             )}
+            <label className="mb-3 flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={!!server.tailscaleAcceptRoutes}
+                onChange={async (e) => {
+                  const value = e.target.checked;
+                  setTailscaleError('');
+                  try {
+                    const res = await serversService.update(serverId, { tailscaleAcceptRoutes: value });
+                    setServer(res.data.server);
+                  } catch (err) {
+                    setTailscaleError(err.response?.data?.error || err.message);
+                  }
+                }}
+                className="rounded border-gray-300 dark:border-gray-600 text-primary-600 focus:ring-primary-500"
+              />
+              Accept subnet routes from other peers (used when you enable Tailscale)
+            </label>
             {!tailscaleShowAuthInput ? (
               <button
                 type="button"
@@ -1043,6 +1061,7 @@ const ServerDetails = () => {
                   } catch (e) {
                     if (e.requireAuthKey) {
                       setTailscaleShowAuthInput(true);
+                      setTailscaleAcceptRoutesEnable(!!server.tailscaleAcceptRoutes);
                       setTailscaleError(e.message || 'Tailscale is not running. Enter an auth key to install and join.');
                       setTailscaleErrorDetails('');
                     } else {
