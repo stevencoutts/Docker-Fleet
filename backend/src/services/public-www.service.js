@@ -519,21 +519,21 @@ async function enablePublicWww(serverId, userId, options = {}) {
 
   try {
     await ensureHostnameResolves(server, onProgress);
-    await configureFirewall(server, onProgress);
     await ensureNginxAndCertbot(server, onProgress);
 
     const { hasExistingVhosts, configText } = await detectExistingNginxWithVhosts(server);
     if (hasExistingVhosts) {
-      // Do not edit nginx config: import existing vhosts as proxy routes and leave their config untouched.
+      // Do not edit nginx or firewall: import existing vhosts as proxy routes and leave config untouched.
       const { imported } = await importExistingVhostsAsRoutes(serverId, server, configText, onProgress);
       await server.update({ publicWwwEnabled: true });
       if (onProgress) onProgress('done', 'Public WWW enabled (existing nginx left as-is, routes imported).', 'ok');
       return {
         success: true,
-        message: `Public WWW enabled. Existing nginx config was not changed. ${imported} proxy route(s) imported from current vhosts.`,
+        message: `Public WWW enabled. Existing nginx and firewall were not changed. ${imported} proxy route(s) imported from current vhosts.`,
       };
     }
 
+    await configureFirewall(server, onProgress);
     await disableNginxDefaultSite(server);
     await ensureDefaultPage(server);
     await ensureDefaultSslCert(server);
