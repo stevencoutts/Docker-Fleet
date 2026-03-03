@@ -1,9 +1,13 @@
 const db = require('../../models');
 const logger = require('../../config/logger');
 const { loadAppSettingsIntoEnv } = require('../../config/loadAppSettings');
+const sshService = require('../../services/ssh.service');
 
-const { AppSettings } = db;
+const { AppSettings, Server } = db;
 const ALLOWED_KEYS = AppSettings.ALLOWED_KEYS;
+
+const STACK_UPDATE_SERVER_ID_KEY = 'stack_update_server_id';
+const STACK_UPDATE_PATH_KEY = 'stack_update_path';
 
 /** Schema for GUI: key, label, type, placeholder, secret. */
 const KEY_SCHEMA = [
@@ -129,8 +133,99 @@ const getEnvFile = async (req, res, next) => {
   }
 };
 
+/**
+ * GET /api/v1/app-config/stack-update
+ * Returns configured server ID and path for Docker Fleet stack update (admin only).
+ */
+const getStackUpdateConfig = async (req, res, next) => {
+  try {
+    const rows = await AppSettings.findAll({
+      where: { key: [STACK_UPDATE_SERVER_ID_KEY, STACK_UPDATE_PATH_KEY] },
+    });
+    const map = {};
+    rows.forEach((r) => { map[r.key] = r.value ?? ''; });
+    res.json({
+      serverId: map[STACK_UPDATE_SERVER_ID_KEY] || '',
+      path: map[STACK_UPDATE_PATH_KEY] || '',
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * PUT /api/v1/app-config/stack-update
+ * Body: { serverId, path }. Saves which server runs Docker Fleet and the project path (admin only).
+ */
+const putStackUpdateConfig = async (req, res, next) => {
+  try {
+    const { serverId, path } = req.body || {};
+    for (const [key, value] of [
+      [STACK_UPDATE_SERVER_ID_KEY, serverId != null ? String(serverId).trim() : ''],
+      [STACK_UPDATE_PATH_KEY, path != null ? String(path).trim() : ''],
+    ]) {
+      const [row] = await AppSettings.findOrCreate({ where: { key }, defaults: { key, value } });
+      await row.update({ value });
+    }
+    logger.info('Stack update config saved via GUI');
+    res.json({ message: 'Stack update config saved.' });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * POST /api/v1/app-config/stack-update/run
+ * Runs docker compose pull && docker compose up -d on the configured server/path (admin only).
+ * Body may include { serverId, path } for this run only; otherwise reads from saved config.
+ * Server must belong to the current user.
+ */
+const postStackUpdateRun = async (req, res, next) => {
+  try {
+    let serverId = (req.body && req.body.serverId != null) ? String(req.body.serverId).trim() : '';
+    let path = (req.body && req.body.path != null) ? String(req.body.path).trim() : '';
+    if (!serverId || !path) {
+      const rows = await AppSettings.findAll({
+        where: { key: [STACK_UPDATE_SERVER_ID_KEY, STACK_UPDATE_PATH_KEY] },
+      });
+      const map = {};
+      rows.forEach((r) => { map[r.key] = (r.value || '').trim(); });
+      serverId = serverId || map[STACK_UPDATE_SERVER_ID_KEY];
+      path = path || map[STACK_UPDATE_PATH_KEY];
+    }
+    if (!serverId || !path) {
+      return res.status(400).json({
+        error: 'Configure the server and path in Stack update settings first, then run update.',
+      });
+    }
+    const server = await Server.findOne({
+      where: { id: serverId, userId: req.user.id },
+    });
+    if (!server) {
+      return res.status(404).json({ error: 'Server not found or access denied.' });
+    }
+    const safePath = path.replace(/'/g, "'\\''");
+    const command = `cd '${safePath}' && docker compose pull && docker compose up -d`;
+    const result = await sshService.executeCommand(server, command, {
+      timeout: 300000,
+      allowFailure: true,
+    });
+    res.json({
+      success: result.code === 0,
+      code: result.code,
+      stdout: result.stdout || '',
+      stderr: result.stderr || '',
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
 module.exports = {
   getAppConfig,
   putAppConfig,
   getEnvFile,
+  getStackUpdateConfig,
+  putStackUpdateConfig,
+  postStackUpdateRun,
 };

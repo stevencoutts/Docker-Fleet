@@ -12,4 +12,7 @@ export const appConfigService = {
     if (!res.ok) throw new Error(res.statusText);
     return res.text();
   },
+  getStackUpdateConfig: () => api.get('/api/v1/app-config/stack-update'),
+  putStackUpdateConfig: (data) => api.put('/api/v1/app-config/stack-update', data),
+  runStackUpdate: (body) => api.post('/api/v1/app-config/stack-update/run', body || {}, { timeout: 320000 }),
 };

@@ -29,6 +29,7 @@ function getSkipUpdateNamePatterns() {
 function matchesSkipUpdateNamePattern(containerName) {
   const name = (containerName || '').replace(/^\//, '');
   if (!name) return false;
+  if (name.startsWith('dockerfleet-')) return true;
   const patterns = getSkipUpdateNamePatterns();
   return patterns.some(suffix => name.endsWith(suffix) || name === suffix);
 }
