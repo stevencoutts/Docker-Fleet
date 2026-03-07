@@ -312,6 +312,20 @@ const AppConfig = () => {
               <div className="mt-1">{renderField(item)}</div>
             </div>
           ))}
+          <div className="pt-2 border-t border-gray-200 dark:border-gray-600">
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">Send a test message using the current SMTP settings (sends to your user email).</p>
+            <button
+              type="button"
+              onClick={handleTestEmail}
+              disabled={testEmailLoading}
+              className="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-50"
+            >
+              {testEmailLoading ? 'Sending...' : 'Test email'}
+            </button>
+            {testEmailMessage && (
+              <span className="ml-3 text-sm text-gray-600 dark:text-gray-400">{testEmailMessage}</span>
+            )}
+          </div>
         </div>
       </div>
     </div>
