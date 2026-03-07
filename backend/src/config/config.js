@@ -88,4 +88,10 @@ module.exports = {
       minDownTimeBeforeAlertMs: parseInt(process.env.MONITORING_MIN_DOWN_TIME_MS) || 0,
     };
   },
+
+  get updateCheck() {
+    const hours = parseFloat(process.env.UPDATE_CHECK_INTERVAL_HOURS) || 4;
+    const ms = Math.max(0.25, hours) * 3600 * 1000;
+    return { intervalMs: ms };
+  },
 };

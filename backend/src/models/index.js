@@ -48,6 +48,7 @@ db.ServerContainerCache = require('./ServerContainerCache')(sequelize, Sequelize
 db.ServerHostInfoCache = require('./ServerHostInfoCache')(sequelize, Sequelize);
 db.ServerProxyRoute = require('./ServerProxyRoute')(sequelize, Sequelize);
 db.AppSettings = require('./AppSettings')(sequelize, Sequelize);
+db.UpdateOverviewCache = require('./UpdateOverviewCache')(sequelize, Sequelize);
 
 // Associations
 db.Server.belongsTo(db.User, { foreignKey: 'userId', as: 'user' });
@@ -72,6 +73,8 @@ db.Server.hasOne(db.ServerHostInfoCache, { foreignKey: 'serverId', as: 'hostInfo
 db.ServerHostInfoCache.belongsTo(db.Server, { foreignKey: 'serverId', as: 'server' });
 db.Server.hasMany(db.ServerProxyRoute, { foreignKey: 'serverId', as: 'proxyRoutes' });
 db.ServerProxyRoute.belongsTo(db.Server, { foreignKey: 'serverId', as: 'server' });
+db.UpdateOverviewCache.belongsTo(db.User, { foreignKey: 'userId', as: 'user' });
+db.User.hasOne(db.UpdateOverviewCache, { foreignKey: 'userId', as: 'updateOverviewCache' });
 
 db.sequelize = sequelize;
 db.Sequelize = Sequelize;

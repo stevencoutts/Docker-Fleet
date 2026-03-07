@@ -314,6 +314,78 @@ Time: ${new Date().toLocaleString()}
 
     return await this.sendAlert(recipient, subject, html, text);
   }
+
+  async sendImageUpdatesAlert(recipient, containers) {
+    if (!containers || containers.length === 0) return { success: false, error: 'No containers' };
+    const count = containers.length;
+    const subject = `📦 DockerFleet: ${count} container${count !== 1 ? 's' : ''} have image updates available`;
+    const list = containers
+      .slice(0, 50)
+      .map((c) => `  • ${c.containerName} on ${c.serverName} (${c.imageRef || 'image'})`)
+      .join('\n');
+    const more = count > 50 ? `\n... and ${count - 50} more.` : '';
+    const text = `
+Image updates available
+
+${count} container${count !== 1 ? 's' : ''} have newer images available in the registry.
+
+${list}${more}
+
+Open DockerFleet Dashboard and run "Refresh" in the Image Updates section to see them, then update as needed.
+
+Time: ${new Date().toLocaleString()}
+    `.trim();
+
+    const rows = containers
+      .slice(0, 30)
+      .map((c) => `<tr><td>${escapeHtml(c.containerName)}</td><td>${escapeHtml(c.serverName)}</td><td>${escapeHtml(c.imageRef || '')}</td></tr>`)
+      .join('');
+    const moreRow = count > 30 ? `<tr><td colspan="3"><em>... and ${count - 30} more</em></td></tr>` : '';
+    const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .alert { background-color: #e7f3ff; border-left: 4px solid #2196F3; padding: 15px; margin: 20px 0; }
+    table { border-collapse: collapse; width: 100%; margin: 10px 0; }
+    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+    th { background: #f5f5f5; }
+    .footer { margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd; font-size: 12px; color: #666; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2 style="color: #1976D2;">📦 Image updates available</h2>
+    <div class="alert">
+      <strong>${count} container${count !== 1 ? 's' : ''}</strong> have newer images available. Open the Dashboard and run Refresh in the Image Updates section to update.
+    </div>
+    <table>
+      <thead><tr><th>Container</th><th>Server</th><th>Image</th></tr></thead>
+      <tbody>${rows}${moreRow}</tbody>
+    </table>
+    <div class="footer">
+      <p>Time: ${new Date().toLocaleString()}</p>
+      <p>DockerFleet Manager</p>
+    </div>
+  </div>
+</body>
+</html>
+    `.trim();
+
+    return await this.sendAlert(recipient, subject, html, text);
+  }
+}
+
+function escapeHtml(s) {
+  if (s == null) return '';
+  const str = String(s);
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }
 
 const emailService = new EmailService();

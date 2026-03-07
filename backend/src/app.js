@@ -26,6 +26,7 @@ const setupSocketIO = require('./websocket/socket.handler');
 const monitoringService = require('./services/monitoring.service');
 const backupSchedulerService = require('./services/backup-scheduler.service');
 const pollingService = require('./services/polling.service');
+const updateCheckService = require('./services/update-check.service');
 const db = require('./models');
 const socketConfig = require('./config/socket');
 
@@ -327,8 +328,8 @@ app.use(errorHandler);
 const gracefulShutdown = () => {
   logger.info('Shutting down gracefully...');
   
-  // Stop monitoring service
   monitoringService.stop();
+  updateCheckService.stop();
   
   server.close(() => {
     logger.info('HTTP server closed');
@@ -366,6 +367,7 @@ function listen() {
       }
       backupSchedulerService.start();
       pollingService.start();
+      updateCheckService.start();
     }, 5000);
   });
 }

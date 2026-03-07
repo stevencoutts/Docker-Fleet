@@ -11,6 +11,7 @@ const groupingRoutes = require('../modules/grouping/grouping.routes');
 const backupSchedulesRoutes = require('../modules/backup-schedules/backup-schedules.routes');
 const backupRoutes = require('../modules/backup/backup.routes');
 const appConfigRoutes = require('../modules/app-config/app-config.routes');
+const updateOverviewRoutes = require('../modules/update-overview/update-overview.routes');
 
 // Public: only auth routes (setup, login, register, refresh); /auth/me uses authenticate in its own route
 router.use('/auth', authRoutes);
@@ -18,6 +19,7 @@ router.use('/auth', authRoutes);
 // All other API routes require a valid Bearer token
 router.use(authenticate);
 router.use('/app-config', appConfigRoutes);
+router.use('/update-overview', updateOverviewRoutes);
 router.use('/backup', backupRoutes);
 router.use('/backup-schedules', backupSchedulesRoutes);
 router.use('/servers', serversRoutes);

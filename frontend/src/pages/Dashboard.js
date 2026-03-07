@@ -5,7 +5,7 @@ import { containersService } from '../services/containers.service';
 import { systemService } from '../services/system.service';
 import { useSocket } from '../context/SocketContext';
 import { useRefetchOnVisible } from '../hooks/useRefetchOnVisible';
-import { getUpdateOverviewFromStorage, removeContainerFromUpdateOverview, UPDATE_OVERVIEW_STORAGE_KEY } from '../utils/updateOverviewCache';
+import { updateOverviewService } from '../services/updateOverview.service';
 
 const defaultUpdateOverview = {
   ranOnce: false,
@@ -23,7 +23,7 @@ const Dashboard = () => {
   const [restarting, setRestarting] = useState(false);
   const [enablingAutoRestart, setEnablingAutoRestart] = useState(false);
   const [checkingUpdates, setCheckingUpdates] = useState(false);
-  const [updateOverview, setUpdateOverview] = useState(() => getUpdateOverviewFromStorage() || defaultUpdateOverview);
+  const [updateOverview, setUpdateOverview] = useState(defaultUpdateOverview);
   const [updatingFromOverview, setUpdatingFromOverview] = useState(null); // { serverId, containerId }
   const [containersVersion, setContainersVersion] = useState(0); // Version counter to trigger recalculation only when stable data updates
   const socket = useSocket();
@@ -31,13 +31,18 @@ const Dashboard = () => {
   const refreshTimeoutRef = useRef(null);
   const isRefreshingRef = useRef(false); // Track if we're currently refreshing to prevent flicker
   const stableContainersRef = useRef({}); // Store stable container data that only updates when complete
-  const hasRunInitialUpdateCheckRef = useRef(false);
-  const updateCheckIntervalRef = useRef(null);
   const serversRef = useRef(servers);
 
   useEffect(() => {
     serversRef.current = servers;
   }, [servers]);
+
+  // Load update overview from server (synced across browsers)
+  useEffect(() => {
+    updateOverviewService.getOverview()
+      .then((res) => { if (res.data && typeof res.data.ranOnce === 'boolean') setUpdateOverview(res.data); })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     fetchData(true);
@@ -85,11 +90,12 @@ const Dashboard = () => {
     };
   }, [socket]);
 
-  // Refetch when user returns to tab so data is always latest when viewed; re-sync update overview from cache (e.g. after update from ContainerDetails)
+  // Refetch when user returns to tab; sync update overview from server so all browsers see same data
   useRefetchOnVisible(() => {
     if (!isRefreshingRef.current) fetchData(false);
-    const fromStorage = getUpdateOverviewFromStorage();
-    if (fromStorage) setUpdateOverview(fromStorage);
+    updateOverviewService.getOverview().then((res) => {
+      if (res.data && typeof res.data.ranOnce === 'boolean') setUpdateOverview(res.data);
+    }).catch(() => {});
   });
 
   const fetchData = async (showLoading = false) => {
@@ -227,126 +233,22 @@ const Dashboard = () => {
   const totalStopped = useMemo(() => totalContainers - totalRunning, [totalContainers, totalRunning]);
 
   const runUpdateCheck = async () => {
-    const stableContainers = stableContainersRef.current || {};
-    const entries = Object.entries(stableContainers).filter(([, serverContainers]) =>
-      Array.isArray(serverContainers) && serverContainers.length > 0
-    );
-
-    if (entries.length === 0) {
-      setUpdateOverview({ ranOnce: true, containers: [], totalChecked: 0, errors: [] });
-      return;
-    }
-
     setCheckingUpdates(true);
-    setUpdateOverview({ ranOnce: true, containers: [], totalChecked: 0, errors: [] });
-
-    const containersWithUpdates = [];
-    const errors = [];
-    let totalChecked = 0;
-
-    const promises = [];
-
-    const serversList = serversRef.current || servers;
-    entries.forEach(([serverId, serverContainers]) => {
-      const server = serversList.find((s) => String(s.id) === String(serverId));
-      if (!server) return;
-
-      serverContainers.forEach((container) => {
-        if (container.SkipUpdate) return;
-
-        const containerId = container.ID;
-        if (!containerId) return;
-
-        totalChecked += 1;
-
-        promises.push(
-          containersService
-            .getUpdateStatus(serverId, containerId)
-            .then((res) => {
-              const status = res.data?.updateStatus || res.data || {};
-              if (status.updateAvailable) {
-                containersWithUpdates.push({
-                  serverId,
-                  serverName: server.name || 'Unknown',
-                  serverHost: server.host || 'Unknown',
-                  containerId,
-                  containerName: getContainerName(container),
-                  imageRef: status.imageRef,
-                  currentDigestShort: status.currentDigestShort,
-                  availableDigestShort: status.availableDigestShort,
-                  pinned: status.pinned,
-                  reason: status.reason,
-                });
-              }
-            })
-            .catch((error) => {
-              errors.push({
-                serverId,
-                containerId,
-                containerName: getContainerName(container),
-                error: error.response?.data?.error || error.message || 'Update check failed',
-              });
-            })
-        );
-      });
-    });
-
     try {
-      await Promise.all(promises);
+      const res = await updateOverviewService.runCheck();
+      if (res.data && typeof res.data.ranOnce === 'boolean') {
+        setUpdateOverview(res.data);
+      }
+    } catch (e) {
+      setUpdateOverview((prev) => ({ ...prev, ranOnce: true, errors: [{ error: e.response?.data?.error || e.message || 'Update check failed' }] }));
     } finally {
-      const next = {
-        ranOnce: true,
-        containers: containersWithUpdates,
-        totalChecked,
-        errors,
-        lastCheckedAt: new Date().toISOString(),
-      };
-      setUpdateOverview(next);
-      try {
-        localStorage.setItem(UPDATE_OVERVIEW_STORAGE_KEY, JSON.stringify(next));
-      } catch (e) { /* ignore */ }
       setCheckingUpdates(false);
     }
   };
 
   const handleCheckAllUpdates = () => {
-    const stableContainers = stableContainersRef.current || {};
-    const entries = Object.entries(stableContainers).filter(([, serverContainers]) =>
-      Array.isArray(serverContainers) && serverContainers.length > 0
-    );
-    if (entries.length === 0) {
-      alert('No containers are currently loaded to check for updates.');
-      return;
-    }
     runUpdateCheck();
   };
-
-  // Schedule update check every 6 hours only (no check on load – use state; user can click Refresh)
-  useEffect(() => {
-    if (containersVersion === 0) return;
-
-    const totalContainersCount = Object.values(stableContainersRef.current || {}).reduce(
-      (sum, serverContainers) => sum + (Array.isArray(serverContainers) ? serverContainers.length : 0),
-      0
-    );
-    if (totalContainersCount === 0) return;
-
-    if (!hasRunInitialUpdateCheckRef.current) {
-      hasRunInitialUpdateCheckRef.current = true;
-      const intervalMs = 6 * 60 * 60 * 1000; // 6 hours
-      updateCheckIntervalRef.current = setInterval(runUpdateCheck, intervalMs);
-    }
-  }, [containersVersion]);
-
-  // Clear update-check interval on unmount
-  useEffect(() => {
-    return () => {
-      if (updateCheckIntervalRef.current) {
-        clearInterval(updateCheckIntervalRef.current);
-        updateCheckIntervalRef.current = null;
-      }
-    };
-  }, []);
 
   if (loading) {
     return (
@@ -483,7 +385,7 @@ const Dashboard = () => {
       const res = await containersService.pullAndUpdate(item.serverId, item.containerId);
       const data = res.data || {};
       if (data.success && data.newContainerId) {
-        removeContainerFromUpdateOverview(item.serverId, item.containerId);
+        updateOverviewService.removeContainer(item.serverId, item.containerId).catch(() => {});
         setUpdateOverview((prev) => ({
           ...prev,
           containers: prev.containers.filter(
@@ -492,7 +394,7 @@ const Dashboard = () => {
         }));
         navigate(`/servers/${item.serverId}/containers/${data.newContainerId}`, { replace: true, state: { updateResult: data } });
       } else if (data.success) {
-        removeContainerFromUpdateOverview(item.serverId, item.containerId);
+        updateOverviewService.removeContainer(item.serverId, item.containerId).catch(() => {});
         setUpdateOverview((prev) => ({
           ...prev,
           containers: prev.containers.filter(
