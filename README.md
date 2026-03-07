@@ -19,6 +19,7 @@ A production-ready full-stack web application for managing Docker containers acr
 - Encrypted private key storage
 - Connection testing
 - View host system information (architecture, CPU, memory, hostname)
+- **Public WWW**: On hosts with a public IP, enable firewall (SSH, 80, 443 only), nginx reverse proxy, and Let's Encrypt; manage proxy routes (domain → container) and DNS/wildcard certs. See [docs/PUBLIC_WWW.md](docs/PUBLIC_WWW.md).
 
 ### Container Management
 - List all containers (running and stopped) with filtering
@@ -64,6 +65,10 @@ A production-ready full-stack web application for managing Docker containers acr
   - Set minimum down time threshold before alerting
 - Per-user settings stored in database with config fallback
 
+### Backup & Restore
+- Export and restore app configuration: servers (metadata only), Public WWW settings and proxy routes, backup schedules and jobs, monitoring settings, and grouping rules
+- Restore matches servers by name and host
+
 ## 🚀 Quick Start
 
 ### Prerequisites
@@ -85,7 +90,10 @@ A production-ready full-stack web application for managing Docker containers acr
    **For Docker Compose (Production):**
    - Create a `.env` file in the project root (same directory as `docker-compose.yml`)
    - Docker Compose reads environment variables from the root `.env` file
-   - Copy .env.example to the root `.env`
+   ```bash
+   cp .env.example .env
+   ```
+   (Run from the project root.)
    
    **For Local Development:**
    ```bash
@@ -160,7 +168,7 @@ A production-ready full-stack web application for managing Docker containers acr
    ```
 
 6. **Create your admin account**
-   - Access the application at http://localhost:3000
+   - Access the application at http://localhost:3020 (frontend)
    - You will be automatically redirected to the registration page if no users exist
    - Create the first administrator account (the first user automatically becomes admin)
 
@@ -573,6 +581,8 @@ You can configure monitoring settings per-user via the web interface:
 - **User Management**: Admin interface for managing users (admin only)
 - **Profile Management**: Personal settings and password management
 - **Monitoring Settings**: Per-user email alert configuration
+- **Backup & Restore**: Export/restore app configuration (servers, Public WWW, schedules, monitoring, grouping)
+- **Public WWW**: Enable firewall and nginx reverse proxy with Let's Encrypt; manage proxy routes per server
 
 ## 🔮 Future Enhancements
 
