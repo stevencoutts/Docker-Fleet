@@ -77,6 +77,8 @@ const putAppConfig = async (req, res, next) => {
       return res.status(400).json({ error: 'Body must include settings object' });
     }
     const hadEmailSettings = Object.keys(settings).some((k) => EMAIL_SETTINGS_KEYS.includes(k));
+    const keysToSave = Object.keys(settings).filter((k) => ALLOWED_KEYS.has(k));
+    logger.info(`App config PUT: saving ${keysToSave.length} keys: ${keysToSave.join(', ')}`);
     for (const [key, value] of Object.entries(settings)) {
       if (!ALLOWED_KEYS.has(key)) continue;
       const str = value == null ? '' : String(value);

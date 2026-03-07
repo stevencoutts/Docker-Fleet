@@ -55,7 +55,12 @@ const AppConfig = () => {
     try {
       setSaving(true);
       setError(null);
-      const res = await appConfigService.put(form);
+      // Build payload from schema so every key (including SMTP_*) is always sent
+      const payload = {};
+      schema.forEach((item) => {
+        payload[item.key] = form[item.key] ?? '';
+      });
+      const res = await appConfigService.put(payload);
       if (res.data?.saved) {
         setForm(res.data.saved);
         setSaved(res.data.saved);
