@@ -1,8 +1,10 @@
 const db = require('../../models');
+const config = require('../../config/config');
 const logger = require('../../config/logger');
 const { loadAppSettingsIntoEnv } = require('../../config/loadAppSettings');
 const sshService = require('../../services/ssh.service');
 const emailService = require('../../services/email.service');
+const monitoringService = require('../../services/monitoring.service');
 
 const { AppSettings, Server } = db;
 const ALLOWED_KEYS = AppSettings.ALLOWED_KEYS;
@@ -73,6 +75,7 @@ const putAppConfig = async (req, res, next) => {
     if (!settings || typeof settings !== 'object') {
       return res.status(400).json({ error: 'Body must include settings object' });
     }
+    const hadEmailSettings = Object.keys(settings).some((k) => EMAIL_SETTINGS_KEYS.includes(k));
     for (const [key, value] of Object.entries(settings)) {
       if (!ALLOWED_KEYS.has(key)) continue;
       const str = value == null ? '' : String(value);
@@ -82,7 +85,14 @@ const putAppConfig = async (req, res, next) => {
       });
       await row.update({ value: str });
     }
-    await loadAppSettingsIntoEnv(db);
+    await loadAppSettingsIntoEnv(db, true);
+    if (hadEmailSettings) {
+      emailService.initialized = false;
+      monitoringService.stop();
+      if (config.email.enabled) {
+        await monitoringService.start();
+      }
+    }
     logger.info('App config updated via GUI');
     const rows = await AppSettings.findAll();
     const saved = {};
