@@ -522,17 +522,31 @@ class DockerService {
       let portBindings = details.HostConfig?.PortBindings || null;
       const portMappings = options.portMappings;
       if (portMappings && Array.isArray(portMappings) && portMappings.length > 0) {
+        const requestedIps = [...new Set(portMappings.map((p) => (p.hostIp != null ? String(p.hostIp).trim() : '') || '0.0.0.0').filter((ip) => ip && ip !== '0.0.0.0'))];
+        let assignedIps = new Set();
+        if (requestedIps.length > 0) {
+          try {
+            const r = await sshService.executeCommand(server, "ip -4 addr show scope global 2>/dev/null | grep -oE 'inet [0-9.]+' | awk '{print $2}'", { allowFailure: true, timeout: 5000 });
+            if (r.code === 0 && r.stdout) {
+              r.stdout.trim().split(/\s+/).forEach((ip) => { if (ip) assignedIps.add(ip); });
+            }
+          } catch (e) {
+            logger.warn('Docker: could not get host IPs for port-binding fallback', { host: server.host, message: e.message });
+          }
+        }
         const bindings = {};
         for (const p of portMappings) {
           const hostPort = p.hostPort != null ? String(p.hostPort).trim() : '';
           if (!hostPort) continue;
           const key = `${p.containerPort || ''}/${p.protocol || 'tcp'}`;
           if (!key || key === '/tcp') continue;
+          const hostIp = p.hostIp != null ? String(p.hostIp).trim() || '0.0.0.0' : '0.0.0.0';
+          if (hostIp !== '0.0.0.0' && assignedIps.size > 0 && !assignedIps.has(hostIp)) {
+            logger.info('Docker: host IP not assigned (e.g. VRRP), skipping this port binding', { host: server.host, requestedIp: hostIp, port: hostPort });
+            continue;
+          }
           if (!bindings[key]) bindings[key] = [];
-          bindings[key].push({
-            HostIp: p.hostIp != null ? String(p.hostIp).trim() || '0.0.0.0' : '0.0.0.0',
-            HostPort: hostPort,
-          });
+          bindings[key].push({ HostIp: hostIp, HostPort: hostPort });
         }
         portBindings = Object.keys(bindings).length > 0 ? bindings : null;
       }

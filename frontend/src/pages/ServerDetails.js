@@ -1504,7 +1504,12 @@ const ServerDetails = () => {
                 <ul className="space-y-4 mb-4">
               {proxyRoutes.map((r) => {
                 const baseDomain = r.domain.replace(/^\*\./, '');
-                const cert = certificates.find((c) => c.name === baseDomain || (Array.isArray(c.domains) && c.domains.includes(baseDomain)));
+                const baseDomainLower = baseDomain.toLowerCase();
+                const cert = certificates.find(
+                  (c) =>
+                    c.name === baseDomainLower ||
+                    (Array.isArray(c.domains) && c.domains.some((d) => String(d).toLowerCase() === baseDomainLower))
+                );
                 return (
                   <li key={r.id} id={`route-${r.id}`} className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800/50 overflow-hidden">
                     <div className="p-4">

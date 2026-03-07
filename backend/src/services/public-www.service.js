@@ -513,16 +513,17 @@ async function ensureDefaultSslCert(server) {
 
 /**
  * List domain names that have a cert in /etc/letsencrypt/live/ (excludes README).
- * Tries ls without sudo first (works when SSH user is root), then sudo ls if empty (for non-root with sudo).
+ * Tries ls without sudo first (works when SSH user is root), then sudo ls if stdout empty (for non-root with sudo).
+ * Only uses stdout so permission-denied messages in stderr are not treated as cert names.
  */
 async function getCertDomains(server) {
-  let r = await exec(server, 'ls -1 /etc/letsencrypt/live/ 2>&1 || true', { allowFailure: true });
-  let out = ((r.stdout || '') + '\n' + (r.stderr || '')).trim();
+  let r = await exec(server, 'ls -1 /etc/letsencrypt/live/ 2>/dev/null || true', { allowFailure: true });
+  let out = (r.stdout || '').trim();
   if (!out) {
-    r = await exec(server, 'sudo ls -1 /etc/letsencrypt/live/ 2>&1 || true', { allowFailure: true });
-    out = ((r.stdout || '') + '\n' + (r.stderr || '')).trim();
+    r = await exec(server, 'sudo ls -1 /etc/letsencrypt/live/ 2>/dev/null || true', { allowFailure: true });
+    out = (r.stdout || '').trim();
   }
-  const names = out ? out.split(/\n/).map((n) => n.trim()).filter((n) => n && n !== 'README') : [];
+  const names = out ? out.split(/\n/).map((n) => n.trim()).filter((n) => n && n !== 'README' && n.includes('.')) : [];
   return new Set(names);
 }
 
@@ -787,17 +788,23 @@ async function listCertificates(serverId, userId) {
     const cert = { name, domains: [name], expiryDate: null, validDays: null };
     const path = `/etc/letsencrypt/live/${name}`;
     for (const certFile of ['fullchain.pem', 'cert.pem']) {
-      const r = await exec(server, `openssl x509 -enddate -noout -in '${path}/${certFile}' 2>&1 || sudo openssl x509 -enddate -noout -in '${path}/${certFile}' 2>&1 || true`, { allowFailure: true, timeout: 5000 });
-      const out = ((r.stdout || '') + '\n' + (r.stderr || '')).trim();
-      const m = out.match(/notAfter=(.+)/);
-      if (m) {
-        cert.expiryDate = m[1].trim();
+      const enddateR = await exec(server, `openssl x509 -enddate -noout -in '${path}/${certFile}' 2>/dev/null || sudo openssl x509 -enddate -noout -in '${path}/${certFile}' 2>/dev/null || true`, { allowFailure: true, timeout: 5000 });
+      const enddateOut = (enddateR.stdout || '').trim();
+      const enddateM = enddateOut.match(/notAfter=(.+)/);
+      if (enddateM) {
+        cert.expiryDate = enddateM[1].trim();
         try {
           const d = new Date(cert.expiryDate);
           if (!Number.isNaN(d.getTime())) cert.validDays = Math.max(0, Math.ceil((d - Date.now()) / (24 * 60 * 60 * 1000)));
         } catch (e) { /* ignore */ }
-        break;
       }
+      const sanR = await exec(server, `openssl x509 -noout -ext subjectAltName -in '${path}/${certFile}' 2>/dev/null || sudo openssl x509 -noout -ext subjectAltName -in '${path}/${certFile}' 2>/dev/null || true`, { allowFailure: true, timeout: 5000 });
+      const sanOut = (sanR.stdout || '').trim();
+      const dnsNames = [];
+      const dnsMatches = sanOut.matchAll(/DNS:([^,\s]+)/g);
+      for (const match of dnsMatches) dnsNames.push(match[1].toLowerCase());
+      if (dnsNames.length > 0) cert.domains = [...new Set([name, ...dnsNames])];
+      break;
     }
     certificates.push(cert);
   }
