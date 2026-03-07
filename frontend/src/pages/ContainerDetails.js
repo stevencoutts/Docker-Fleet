@@ -1665,7 +1665,6 @@ const ContainerDetails = () => {
                       ))}
                     </div>
                   )}
-                </div>
               </div>
 
               {/* Mounted storage – always show */}
