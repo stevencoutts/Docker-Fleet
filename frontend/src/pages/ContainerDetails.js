@@ -133,6 +133,7 @@ const ContainerDetails = () => {
   const [recreateLoading, setRecreateLoading] = useState(false);
   const [lastRecreateResult, setLastRecreateResult] = useState(null);
   const [editingPortMappings, setEditingPortMappings] = useState(null);
+  const [addingNewPortMappings, setAddingNewPortMappings] = useState(false);
   const [portMappingsRecreateLoading, setPortMappingsRecreateLoading] = useState(false);
   const maxHistoryPoints = 30;
 
@@ -1451,20 +1452,24 @@ const ContainerDetails = () => {
                 );
               })()}
 
-              {/* Ports Section */}
-              {ports.length > 0 && (
-                <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="flex items-center gap-2">
-                      <svg className="w-5 h-5 text-primary-600 dark:text-primary-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-                      </svg>
-                      <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Port Mappings</h3>
-                    </div>
-                    {!editingPortMappings && (
-                      <button
-                        type="button"
-                        onClick={() => {
+              {/* Ports Section – always show */}
+              <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <svg className="w-5 h-5 text-primary-600 dark:text-primary-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                    </svg>
+                    <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Port Mappings</h3>
+                  </div>
+                  {!editingPortMappings && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (ports.length === 0) {
+                          setAddingNewPortMappings(true);
+                          setEditingPortMappings([{ containerPortNum: '', protocol: 'tcp', hostIp: '0.0.0.0', hostPort: '' }]);
+                        } else {
+                          setAddingNewPortMappings(false);
                           const byKey = {};
                           ports.forEach((p) => {
                             const key = `${p.container.split('/')[0]}/${p.protocol || 'tcp'}`;
@@ -1491,75 +1496,119 @@ const ContainerDetails = () => {
                             hostIp: o.hostIps.length > 0 ? o.hostIps.join(', ') : (o.hostPort ? '0.0.0.0' : ''),
                             hostPort: o.hostPort,
                           })));
-                        }}
-                        className="text-sm font-medium text-primary-600 dark:text-primary-400 hover:underline"
+                        }
+                      }}
+                      className="text-sm font-medium text-primary-600 dark:text-primary-400 hover:underline"
+                    >
+                      {ports.length === 0 ? 'Add port mappings' : 'Edit port mappings'}
+                    </button>
+                  )}
+                </div>
+                {editingPortMappings ? (
+                  <>
+                    <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">
+                      {addingNewPortMappings
+                        ? 'Add container port, host bindings and host port. Recreating the container will apply the new mappings.'
+                        : 'Change host bindings (one or more IPs, e.g. 127.0.0.1 or 127.0.0.1, 0.0.0.0) and host port. Recreating the container will apply the new mappings.'}
+                    </p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
+                      {editingPortMappings.map((p, idx) => (
+                        <div key={idx} className="bg-gray-50 dark:bg-gray-900/50 rounded-lg p-4 border border-gray-200 dark:border-gray-600">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Container</span>
+                            {addingNewPortMappings ? (
+                              <select
+                                value={p.protocol || 'tcp'}
+                                onChange={(e) => setEditingPortMappings((prev) => prev.map((x, i) => (i === idx ? { ...x, protocol: e.target.value } : x)))}
+                                className="px-2 py-0.5 text-xs font-medium rounded bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-200 border-0"
+                              >
+                                <option value="tcp">TCP</option>
+                                <option value="udp">UDP</option>
+                              </select>
+                            ) : (
+                              <span className="px-2 py-0.5 text-xs font-medium rounded bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-200">{p.protocol.toUpperCase()}</span>
+                            )}
+                          </div>
+                          {addingNewPortMappings ? (
+                            <>
+                              <label className="block text-xs text-gray-500 dark:text-gray-400 mb-1">Container port</label>
+                              <input
+                                type="text"
+                                value={p.containerPortNum || ''}
+                                onChange={(e) => setEditingPortMappings((prev) => prev.map((x, i) => (i === idx ? { ...x, containerPortNum: e.target.value } : x)))}
+                                placeholder="e.g. 80"
+                                className="w-full rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 px-2 py-1.5 text-sm font-mono mb-2"
+                              />
+                            </>
+                          ) : (
+                            <p className="text-sm font-mono font-semibold text-gray-900 dark:text-gray-100 mb-2">{p.containerPortNum}</p>
+                          )}
+                          <div className="space-y-2">
+                            <label className="block text-xs text-gray-500 dark:text-gray-400">Host bindings (comma-separated IPs)</label>
+                            <input
+                              type="text"
+                              value={p.hostIp}
+                              onChange={(e) => setEditingPortMappings((prev) => prev.map((x, i) => (i === idx ? { ...x, hostIp: e.target.value || '0.0.0.0' } : x)))}
+                              placeholder="127.0.0.1, 0.0.0.0"
+                              className="w-full rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 px-2 py-1.5 text-sm font-mono"
+                            />
+                            <label className="block text-xs text-gray-500 dark:text-gray-400">Host port (empty = not mapped)</label>
+                            <input
+                              type="text"
+                              value={p.hostPort}
+                              onChange={(e) => setEditingPortMappings((prev) => prev.map((x, i) => (i === idx ? { ...x, hostPort: e.target.value } : x)))}
+                              placeholder="e.g. 8083"
+                              className="w-full rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 px-2 py-1.5 text-sm font-mono"
+                            />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    {addingNewPortMappings && (
+                      <button
+                        type="button"
+                        onClick={() => setEditingPortMappings((prev) => [...prev, { containerPortNum: '', protocol: 'tcp', hostIp: '0.0.0.0', hostPort: '' }])}
+                        className="mb-4 px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-200 dark:bg-gray-600 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-500"
                       >
-                        Edit port mappings
+                        Add another mapping
                       </button>
                     )}
-                  </div>
-                  {editingPortMappings ? (
-                    <>
-                      <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">Change host bindings (one or more IPs, e.g. 127.0.0.1 or 127.0.0.1, 0.0.0.0) and host port. Recreating the container will apply the new mappings.</p>
-                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
-                        {editingPortMappings.map((p, idx) => (
-                          <div key={idx} className="bg-gray-50 dark:bg-gray-900/50 rounded-lg p-4 border border-gray-200 dark:border-gray-600">
-                            <div className="flex items-center justify-between mb-2">
-                              <span className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">Container</span>
-                              <span className="px-2 py-0.5 text-xs font-medium rounded bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-200">{p.protocol.toUpperCase()}</span>
-                            </div>
-                            <p className="text-sm font-mono font-semibold text-gray-900 dark:text-gray-100 mb-2">{p.containerPortNum}</p>
-                            <div className="space-y-2">
-                              <label className="block text-xs text-gray-500 dark:text-gray-400">Host bindings (comma-separated IPs)</label>
-                              <input
-                                type="text"
-                                value={p.hostIp}
-                                onChange={(e) => setEditingPortMappings((prev) => prev.map((x, i) => (i === idx ? { ...x, hostIp: e.target.value || '0.0.0.0' } : x)))}
-                                placeholder="127.0.0.1, 0.0.0.0"
-                                className="w-full rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 px-2 py-1.5 text-sm font-mono"
-                              />
-                              <label className="block text-xs text-gray-500 dark:text-gray-400">Host port (empty = not mapped)</label>
-                              <input
-                                type="text"
-                                value={p.hostPort}
-                                onChange={(e) => setEditingPortMappings((prev) => prev.map((x, i) => (i === idx ? { ...x, hostPort: e.target.value } : x)))}
-                                placeholder="e.g. 8083"
-                                className="w-full rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 px-2 py-1.5 text-sm font-mono"
-                              />
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setEditingPortMappings(null)}
-                          className="px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-200 dark:bg-gray-600 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-500"
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          type="button"
-                          disabled={portMappingsRecreateLoading}
-                          onClick={async () => {
-                            const portMappings = [];
-                            for (const p of editingPortMappings) {
-                              const hostPort = p.hostPort != null ? String(p.hostPort).trim() : '';
-                              if (!hostPort) continue;
-                              const ips = (p.hostIp || '0.0.0.0')
-                                .split(',')
-                                .map((s) => s.trim())
-                                .filter(Boolean);
-                              const hostIps = ips.length > 0 ? ips : ['0.0.0.0'];
-                              for (const hostIp of hostIps) {
-                                portMappings.push({
-                                  containerPort: p.containerPortNum,
-                                  protocol: p.protocol,
-                                  hostIp: hostIp || '0.0.0.0',
-                                  hostPort,
-                                });
-                              }
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => { setEditingPortMappings(null); setAddingNewPortMappings(false); }}
+                        className="px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-200 dark:bg-gray-600 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-500"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        disabled={portMappingsRecreateLoading}
+                        onClick={async () => {
+                          const portMappings = [];
+                          for (const p of editingPortMappings) {
+                            const hostPort = p.hostPort != null ? String(p.hostPort).trim() : '';
+                            const containerPort = (p.containerPortNum != null ? String(p.containerPortNum).trim() : '');
+                            if (!hostPort) continue;
+                            if (addingNewPortMappings && !containerPort) continue;
+                            const ips = (p.hostIp || '0.0.0.0')
+                              .split(',')
+                              .map((s) => s.trim())
+                              .filter(Boolean);
+                            const hostIps = ips.length > 0 ? ips : ['0.0.0.0'];
+                            for (const hostIp of hostIps) {
+                              portMappings.push({
+                                containerPort: containerPort || p.containerPortNum,
+                                protocol: p.protocol || 'tcp',
+                                hostIp: hostIp || '0.0.0.0',
+                                hostPort,
+                              });
                             }
+                          }
+                          if (portMappings.length === 0) {
+                            setLastRecreateResult({ success: false, error: 'Add at least one mapping with container port and host port.', inProgress: false });
+                            return;
+                          }
                             setPortMappingsRecreateLoading(true);
                             setLastRecreateResult({ inProgress: true, steps: [] });
                             const progressHandler = (payload) => {
@@ -1572,6 +1621,7 @@ const ContainerDetails = () => {
                               const data = res.data || {};
                               setLastRecreateResult(data);
                               setEditingPortMappings(null);
+                              setAddingNewPortMappings(false);
                               if (data.success && data.newContainerId) {
                                 navigate(`/servers/${serverId}/containers/${data.newContainerId}`, { replace: true, state: { recreateResult: data } });
                               }
@@ -1588,6 +1638,8 @@ const ContainerDetails = () => {
                         </button>
                       </div>
                     </>
+                  ) : ports.length === 0 ? (
+                    <p className="text-sm text-gray-500 dark:text-gray-400">No port mappings. Click <strong>Add port mappings</strong> above to expose container ports on the host.</p>
                   ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                       {ports.map((port, idx) => (
@@ -1614,7 +1666,7 @@ const ContainerDetails = () => {
                     </div>
                   )}
                 </div>
-              )}
+              </div>
 
               {/* Mounted storage – always show */}
               <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
