@@ -15,4 +15,5 @@ export const appConfigService = {
   getStackUpdateConfig: () => api.get('/api/v1/app-config/stack-update'),
   putStackUpdateConfig: (data) => api.put('/api/v1/app-config/stack-update', data),
   runStackUpdate: (body) => api.post('/api/v1/app-config/stack-update/run', body || {}, { timeout: 320000 }),
+  sendTestEmail: (settings) => api.post('/api/v1/app-config/test-email', settings || {}, { timeout: 15000 }),
 };

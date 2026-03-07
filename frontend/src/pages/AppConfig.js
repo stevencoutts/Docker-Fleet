@@ -16,6 +16,8 @@ const AppConfig = () => {
   const [stackUpdateSaving, setStackUpdateSaving] = useState(false);
   const [stackUpdateRunning, setStackUpdateRunning] = useState(false);
   const [stackUpdateResult, setStackUpdateResult] = useState(null);
+  const [testEmailLoading, setTestEmailLoading] = useState(false);
+  const [testEmailMessage, setTestEmailMessage] = useState(null);
 
   const fetchConfig = async () => {
     try {
@@ -87,6 +89,25 @@ const AppConfig = () => {
       setError(err.response?.data?.error || 'Failed to save stack update config');
     } finally {
       setStackUpdateSaving(false);
+    }
+  };
+
+  const handleTestEmail = async () => {
+    try {
+      setTestEmailLoading(true);
+      setTestEmailMessage(null);
+      setError(null);
+      const res = await appConfigService.sendTestEmail(form);
+      setTestEmailMessage(res.data?.message || 'Test email sent.');
+      setSuccess(res.data?.message || 'Test email sent.');
+      setTimeout(() => setSuccess(null), 5000);
+      setTimeout(() => setTestEmailMessage(null), 8000);
+    } catch (err) {
+      const msg = err.response?.data?.error || err.message || 'Failed to send test email';
+      setTestEmailMessage(msg);
+      setError(msg);
+    } finally {
+      setTestEmailLoading(false);
     }
   };
 
@@ -178,13 +199,21 @@ const AppConfig = () => {
             Manage app settings. Saved values are applied immediately. Download .env to use with Docker Compose.
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           <button
             type="button"
             onClick={handleDownloadEnv}
             className="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600"
           >
             Download .env
+          </button>
+          <button
+            type="button"
+            onClick={handleTestEmail}
+            disabled={testEmailLoading}
+            className="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 disabled:opacity-50"
+          >
+            {testEmailLoading ? 'Sending...' : 'Test email'}
           </button>
           <button
             type="button"

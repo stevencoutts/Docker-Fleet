@@ -2,9 +2,22 @@ const db = require('../../models');
 const logger = require('../../config/logger');
 const { loadAppSettingsIntoEnv } = require('../../config/loadAppSettings');
 const sshService = require('../../services/ssh.service');
+const emailService = require('../../services/email.service');
 
 const { AppSettings, Server } = db;
 const ALLOWED_KEYS = AppSettings.ALLOWED_KEYS;
+
+const EMAIL_SETTINGS_KEYS = [
+  'EMAIL_ENABLED',
+  'EMAIL_FROM_ADDRESS',
+  'EMAIL_FROM_NAME',
+  'SMTP_HOST',
+  'SMTP_PORT',
+  'SMTP_SECURE',
+  'SMTP_USER',
+  'SMTP_PASSWORD',
+  'SMTP_REJECT_UNAUTHORIZED',
+];
 
 const STACK_UPDATE_SERVER_ID_KEY = 'stack_update_server_id';
 const STACK_UPDATE_PATH_KEY = 'stack_update_path';
@@ -221,6 +234,48 @@ const postStackUpdateRun = async (req, res, next) => {
   }
 };
 
+/**
+ * POST /api/v1/app-config/test-email
+ * Sends a test email (admin only). Uses body settings for this request only (so form can be tested without saving).
+ * Body: optional email field overrides (EMAIL_ENABLED, EMAIL_FROM_ADDRESS, ... SMTP_*); optional { to } (default: current user email).
+ */
+const postTestEmail = async (req, res, next) => {
+  try {
+    const to = (req.body && req.body.to && String(req.body.to).trim()) || req.user?.email;
+    if (!to) {
+      return res.status(400).json({ error: 'No recipient: provide body.to or ensure your user has an email.' });
+    }
+    const body = req.body || {};
+    const overrides = {};
+    EMAIL_SETTINGS_KEYS.forEach((key) => {
+      if (body[key] !== undefined && body[key] !== null) overrides[key] = String(body[key]);
+    });
+    const rows = await AppSettings.findAll({ where: { key: EMAIL_SETTINGS_KEYS } });
+    const saved = {};
+    rows.forEach((r) => { saved[r.key] = r.value ?? ''; });
+    EMAIL_SETTINGS_KEYS.forEach((key) => {
+      process.env[key] = overrides[key] !== undefined ? overrides[key] : (saved[key] ?? '');
+    });
+    await emailService.initialize();
+    if (!emailService.initialized) {
+      return res.status(400).json({
+        error: 'Email not configured or SMTP check failed. Enable email, set SMTP host/port/user/password.',
+      });
+    }
+    const subject = 'DockerFleet test email';
+    const text = 'If you received this, email is configured correctly.';
+    const html = '<p>If you received this, email is configured correctly.</p>';
+    const result = await emailService.sendAlert(to, subject, html, text);
+    if (result.success) {
+      res.json({ success: true, message: `Test email sent to ${to}.` });
+    } else {
+      res.status(500).json({ success: false, error: result.error || 'Failed to send' });
+    }
+  } catch (err) {
+    next(err);
+  }
+};
+
 module.exports = {
   getAppConfig,
   putAppConfig,
@@ -228,4 +283,5 @@ module.exports = {
   getStackUpdateConfig,
   putStackUpdateConfig,
   postStackUpdateRun,
+  postTestEmail,
 };

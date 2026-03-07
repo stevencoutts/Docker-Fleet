@@ -1465,19 +1465,32 @@ const ContainerDetails = () => {
                       <button
                         type="button"
                         onClick={() => {
-                          setEditingPortMappings(ports.map((p) => {
+                          const byKey = {};
+                          ports.forEach((p) => {
+                            const key = `${p.container.split('/')[0]}/${p.protocol || 'tcp'}`;
                             const isMapped = p.host !== 'Not mapped';
                             const lastColon = p.host.lastIndexOf(':');
                             const hostIp = isMapped && lastColon >= 0 ? (p.host.slice(0, lastColon) || '0.0.0.0') : '0.0.0.0';
                             const hostPort = isMapped && lastColon >= 0 ? p.host.slice(lastColon + 1) : '';
-                            return {
-                              container: p.container,
-                              containerPortNum: p.container.split('/')[0],
-                              protocol: p.protocol || 'tcp',
-                              hostIp: isMapped ? hostIp : '0.0.0.0',
-                              hostPort: isMapped ? hostPort : '',
-                            };
-                          }));
+                            if (!byKey[key]) {
+                              byKey[key] = {
+                                container: p.container,
+                                containerPortNum: p.container.split('/')[0],
+                                protocol: p.protocol || 'tcp',
+                                hostIps: [],
+                                hostPort: '',
+                              };
+                            }
+                            if (isMapped) {
+                              if (!byKey[key].hostIps.includes(hostIp)) byKey[key].hostIps.push(hostIp);
+                              if (!byKey[key].hostPort) byKey[key].hostPort = hostPort;
+                            }
+                          });
+                          setEditingPortMappings(Object.values(byKey).map((o) => ({
+                            ...o,
+                            hostIp: o.hostIps.length > 0 ? o.hostIps.join(', ') : (o.hostPort ? '0.0.0.0' : ''),
+                            hostPort: o.hostPort,
+                          })));
                         }}
                         className="text-sm font-medium text-primary-600 dark:text-primary-400 hover:underline"
                       >
@@ -1487,7 +1500,7 @@ const ContainerDetails = () => {
                   </div>
                   {editingPortMappings ? (
                     <>
-                      <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">Change host binding (e.g. 127.0.0.1 to expose only locally) and host port. Recreating the container will apply the new mappings.</p>
+                      <p className="text-sm text-gray-600 dark:text-gray-400 mb-3">Change host bindings (one or more IPs, e.g. 127.0.0.1 or 127.0.0.1, 0.0.0.0) and host port. Recreating the container will apply the new mappings.</p>
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
                         {editingPortMappings.map((p, idx) => (
                           <div key={idx} className="bg-gray-50 dark:bg-gray-900/50 rounded-lg p-4 border border-gray-200 dark:border-gray-600">
@@ -1497,12 +1510,12 @@ const ContainerDetails = () => {
                             </div>
                             <p className="text-sm font-mono font-semibold text-gray-900 dark:text-gray-100 mb-2">{p.containerPortNum}</p>
                             <div className="space-y-2">
-                              <label className="block text-xs text-gray-500 dark:text-gray-400">Host binding</label>
+                              <label className="block text-xs text-gray-500 dark:text-gray-400">Host bindings (comma-separated IPs)</label>
                               <input
                                 type="text"
                                 value={p.hostIp}
                                 onChange={(e) => setEditingPortMappings((prev) => prev.map((x, i) => (i === idx ? { ...x, hostIp: e.target.value || '0.0.0.0' } : x)))}
-                                placeholder="0.0.0.0 or 127.0.0.1"
+                                placeholder="127.0.0.1, 0.0.0.0"
                                 className="w-full rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 px-2 py-1.5 text-sm font-mono"
                               />
                               <label className="block text-xs text-gray-500 dark:text-gray-400">Host port (empty = not mapped)</label>
@@ -1529,14 +1542,24 @@ const ContainerDetails = () => {
                           type="button"
                           disabled={portMappingsRecreateLoading}
                           onClick={async () => {
-                            const portMappings = editingPortMappings
-                              .filter((p) => p.hostPort != null && String(p.hostPort).trim() !== '')
-                              .map((p) => ({
-                                containerPort: p.containerPortNum,
-                                protocol: p.protocol,
-                                hostIp: (p.hostIp || '0.0.0.0').trim() || '0.0.0.0',
-                                hostPort: String(p.hostPort).trim(),
-                              }));
+                            const portMappings = [];
+                            for (const p of editingPortMappings) {
+                              const hostPort = p.hostPort != null ? String(p.hostPort).trim() : '';
+                              if (!hostPort) continue;
+                              const ips = (p.hostIp || '0.0.0.0')
+                                .split(',')
+                                .map((s) => s.trim())
+                                .filter(Boolean);
+                              const hostIps = ips.length > 0 ? ips : ['0.0.0.0'];
+                              for (const hostIp of hostIps) {
+                                portMappings.push({
+                                  containerPort: p.containerPortNum,
+                                  protocol: p.protocol,
+                                  hostIp: hostIp || '0.0.0.0',
+                                  hostPort,
+                                });
+                              }
+                            }
                             setPortMappingsRecreateLoading(true);
                             setLastRecreateResult({ inProgress: true, steps: [] });
                             const progressHandler = (payload) => {
