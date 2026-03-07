@@ -122,15 +122,16 @@ class MonitoringService {
       const noAutoRestartCooldownMs = userSettings?.noAutoRestartCooldownMs ?? this.noAutoRestartCooldownMs;
       const minDownTimeBeforeAlertMs = userSettings?.minDownTimeBeforeAlertMs ?? this.minDownTimeBeforeAlertMs;
       
-      logger.info(`Checking containers for user ${user.email} on server ${server.name}`);
+      logger.info(`Checking containers for user ${user.email} on server ${server.name} (alertOnNoAutoRestart=${alertOnNoAutoRestart})`);
 
       for (const container of containers) {
         const containerId = container.ID || container.Id || '';
         if (!containerId) continue;
 
         const containerName = (container.Names || '').replace(/^\//, '') || 'unknown';
-        const restartPolicy = container.RestartPolicy || container.restartPolicy || 'no';
-        const hasAutoRestart = restartPolicy !== 'no' && restartPolicy !== '';
+        const rawPolicy = container.RestartPolicy || container.restartPolicy || 'no';
+        const restartPolicy = String(rawPolicy).toLowerCase().trim() || 'no';
+        const hasAutoRestart = !['no', '', 'none'].includes(restartPolicy);
         
         // Check if container is running
         const status = container.Status || container['.Status'] || '';
@@ -298,9 +299,9 @@ class MonitoringService {
         this.noAutoRestartStates.set(stateKey, {
           lastAlert: new Date(),
         });
-        logger.info(`No auto-restart alert sent for container ${container.ID?.substring(0, 12)} on server ${server.name}`);
+        logger.info(`No auto-restart alert sent to ${recipient} for container ${container.ID?.substring(0, 12)} on server ${server.name}`);
       } else {
-        logger.error(`Failed to send no auto-restart alert: ${result.error}`);
+        logger.error(`Failed to send no auto-restart alert to ${recipient}: ${result.error}`);
       }
     } catch (error) {
       logger.error('Error sending no auto-restart alert:', error);
