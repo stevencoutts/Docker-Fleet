@@ -35,7 +35,9 @@ const AppConfig = () => {
       setServers(serversRes.data?.servers ?? []);
       setError(null);
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to load app configuration');
+      const msg = err.response?.data?.error || err.message || 'Failed to load app configuration';
+      const status = err.response?.status;
+      setError(status === 403 ? 'Access denied. Only admins can view app configuration.' : status === 401 ? 'Please sign in again.' : msg);
     } finally {
       setLoading(false);
     }
@@ -237,8 +239,15 @@ const AppConfig = () => {
       )}
 
       {error && (
-        <div className="mb-4 rounded-md bg-red-50 dark:bg-red-900/20 p-4">
+        <div className="mb-4 rounded-md bg-red-50 dark:bg-red-900/20 p-4 flex flex-wrap items-center justify-between gap-2">
           <p className="text-sm text-red-800 dark:text-red-200">{error}</p>
+          <button
+            type="button"
+            onClick={() => { setError(null); fetchConfig(); }}
+            className="shrink-0 inline-flex items-center px-3 py-1.5 border border-red-300 dark:border-red-700 rounded-md text-sm font-medium text-red-700 dark:text-red-200 bg-white dark:bg-gray-800 hover:bg-red-50 dark:hover:bg-red-900/20"
+          >
+            Retry
+          </button>
         </div>
       )}
 
