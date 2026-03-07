@@ -15,6 +15,7 @@ const MonitoringSettings = () => {
     noAutoRestartCooldownMs: 43200000, // 12 hours
     minDownTimeBeforeAlertMs: 0,
   });
+  const [monitoringRunning, setMonitoringRunning] = useState(false);
 
   const fetchSettings = async () => {
     try {
@@ -23,6 +24,7 @@ const MonitoringSettings = () => {
       if (response.settings) {
         setSettings(response.settings);
       }
+      setMonitoringRunning(response.monitoringRunning === true);
       setError(null);
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to fetch monitoring settings');
@@ -91,6 +93,14 @@ const MonitoringSettings = () => {
         <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Email Alert Settings</h1>
         <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">Configure when and how often you receive email alerts</p>
       </div>
+
+      {!monitoringRunning && (
+        <div className="mb-4 rounded-md bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 p-4">
+          <p className="text-sm text-amber-800 dark:text-amber-200">
+            <strong>Email alerts are not running.</strong> Alerts (e.g. containers without auto-restart) are only sent when the monitoring service is running. Enable <strong>Email</strong> in App configuration and click <strong>Save</strong> there to start it. After a backend restart, start it again by opening App configuration and saving.
+          </p>
+        </div>
+      )}
 
       {error && (
         <div className="mb-4 rounded-md bg-red-50 dark:bg-red-900/20 p-4">

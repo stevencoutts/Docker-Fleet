@@ -359,6 +359,8 @@ function listen() {
   server.listen(PORT, () => {
     logger.info(`Server running on port ${PORT} in ${config.env} mode`);
     setTimeout(async () => {
+      // Re-apply DB app settings so EMAIL_ENABLED (and SMTP) from UI save apply after restart
+      await loadAppSettings(db, true);
       if (config.email && config.email.enabled) {
         await monitoringService.start();
       }

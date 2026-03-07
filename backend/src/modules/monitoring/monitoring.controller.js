@@ -2,6 +2,7 @@ const { body } = require('express-validator');
 const { MonitoringSettings, User } = require('../../models');
 const logger = require('../../config/logger');
 const config = require('../../config/config');
+const monitoringService = require('../../services/monitoring.service');
 
 // Get monitoring settings for current user
 const getMonitoringSettings = async (req, res, next) => {
@@ -23,7 +24,8 @@ const getMonitoringSettings = async (req, res, next) => {
       });
     }
 
-    res.json({ settings });
+    const monitoringRunning = monitoringService.isRunning;
+    res.json({ settings, monitoringRunning });
   } catch (error) {
     logger.error('Error fetching monitoring settings:', error);
     next(error);
