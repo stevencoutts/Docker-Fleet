@@ -79,15 +79,22 @@ const putAppConfig = async (req, res, next) => {
     const hadEmailSettings = Object.keys(settings).some((k) => EMAIL_SETTINGS_KEYS.includes(k));
     const keysToSave = Object.keys(settings).filter((k) => ALLOWED_KEYS.has(k));
     logger.info(`App config PUT: saving ${keysToSave.length} keys: ${keysToSave.join(', ')}`);
-    for (const [key, value] of Object.entries(settings)) {
-      if (!ALLOWED_KEYS.has(key)) continue;
-      const str = value == null ? '' : String(value);
-      const [row] = await AppSettings.findOrCreate({
-        where: { key: key },
-        defaults: { key: key, value: str },
-      });
-      await row.update({ value: str });
-    }
+
+    const saved = {};
+    await db.sequelize.transaction(async (transaction) => {
+      for (const [key, value] of Object.entries(settings)) {
+        if (!ALLOWED_KEYS.has(key)) continue;
+        const str = value == null ? '' : String(value);
+        saved[key] = str;
+        const [row] = await AppSettings.findOrCreate({
+          where: { key: key },
+          defaults: { key: key, value: str },
+          transaction,
+        });
+        await row.update({ value: str }, { transaction });
+      }
+    });
+
     await loadAppSettingsIntoEnv(db, true);
     if (hadEmailSettings) {
       emailService.initialized = false;
@@ -97,11 +104,6 @@ const putAppConfig = async (req, res, next) => {
       }
     }
     logger.info('App config updated via GUI');
-    const rows = await AppSettings.findAll();
-    const saved = {};
-    rows.forEach((r) => {
-      if (ALLOWED_KEYS.has(r.key)) saved[r.key] = r.value ?? '';
-    });
     res.json({ saved, message: 'Settings saved and applied.' });
   } catch (err) {
     next(err);

@@ -61,13 +61,12 @@ const AppConfig = () => {
         payload[item.key] = form[item.key] ?? '';
       });
       const res = await appConfigService.put(payload);
-      if (res.data?.saved) {
-        setForm(res.data.saved);
-        setSaved(res.data.saved);
-      }
+      const saved = res.data?.saved || {};
+      setForm((prev) => ({ ...prev, ...payload, ...saved }));
+      setSaved((prev) => ({ ...prev, ...payload, ...saved }));
       setSuccess('Settings saved and applied.');
       setTimeout(() => setSuccess(null), 4000);
-      fetchConfig();
+      // Do not refetch after save so we don't overwrite with stale/cached GET
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to save');
     } finally {
