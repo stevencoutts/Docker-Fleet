@@ -1,6 +1,8 @@
 // Only load .env file in development - in production, use environment variables from Docker
 if (process.env.NODE_ENV !== 'production') {
-  require('dotenv').config();
+  const path = require('path');
+  const rootEnv = path.resolve(__dirname, '../../..', '.env');
+  require('dotenv').config({ path: rootEnv });
 }
 
 // Getters so config reflects process.env at read time (allows AppSettings to merge in after DB load).

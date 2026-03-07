@@ -87,20 +87,13 @@ A production-ready full-stack web application for managing Docker containers acr
 
 2. **Set up environment variables**
    
-   **For Docker Compose (Production):**
-   - Create a `.env` file in the project root (same directory as `docker-compose.yml`)
-   - Docker Compose reads environment variables from the root `.env` file
+   Use a **single** `.env` file in the project root (same directory as `docker-compose.yml`) for both Docker Compose and local development.
    ```bash
    cp .env.example .env
    ```
    (Run from the project root.)
    
-   **For Local Development:**
-   ```bash
-   cp .env.example .env
-   ```
-   
-   Edit your `.env` file(s) and update the following:
+   Edit `.env` and update the following:
    - `JWT_SECRET`: Generate a strong secret key
    - `JWT_REFRESH_SECRET`: Generate another strong secret key
    - `ENCRYPTION_KEY`: A 32-character key for encrypting SSH keys
@@ -145,11 +138,8 @@ A production-ready full-stack web application for managing Docker containers acr
    npm install
    ```
 
-3. **Set up environment variables**
-   ```bash
-   cp env.example .env
-   # Edit .env with your configuration
-   ```
+3. **Environment variables**  
+   The backend loads the root `.env` (see step 2 above). Ensure you have created and edited the root `.env` before starting the backend.
 
 4. **Start PostgreSQL** (or use Docker)
    ```bash
@@ -411,11 +401,9 @@ docker-compose exec backend npm run migrate
 
 ### Important Notes
 
-- **Docker Compose**: Environment variables must be set in a root `.env` file (same directory as `docker-compose.yml`)
-- **Local Development**: Environment variables are loaded from `backend/.env`
-- The backend only loads `backend/.env` in non-production mode to avoid conflicts with Docker Compose environment variables
+- **Single file**: All environment variables go in the **root** `.env` file (same directory as `docker-compose.yml`). Docker Compose and the backend (when run locally) both use this file.
 
-### Backend (.env)
+### Root .env
 
 | Variable | Description | Default |
 |----------|-------------|---------|
@@ -467,7 +455,7 @@ docker-compose exec backend npm run migrate
 
 ### Database Issues
 - Ensure PostgreSQL is running and accessible
-- Check database credentials in `.env`
+- Check database credentials in the root `.env`
 - Verify migrations have run: `npm run migrate`
 
 ### Container Issues
@@ -481,9 +469,9 @@ The application can send email alerts when containers with auto-restart enabled 
 
 ### Setup
 
-**Important**: When using Docker Compose, environment variables must be set in a root `.env` file (same directory as `docker-compose.yml`), not just in `backend/.env`. The backend only loads `backend/.env` in development mode.
+**Important**: Set all variables in the **root** `.env` file (same directory as `docker-compose.yml`). This file is used by both Docker Compose and the backend when run locally.
 
-1. **Create/Edit root `.env` file** (for Docker Compose):
+1. **Create/Edit root `.env` file**:
    ```bash
    # In project root directory
    EMAIL_ENABLED=true
@@ -495,8 +483,6 @@ The application can send email alerts when containers with auto-restart enabled 
    SMTP_USER=your-email@gmail.com
    SMTP_PASSWORD=your-app-password
    ```
-
-   **For local development**, edit `backend/.env` instead.
 
 2. **Configure SMTP settings**:
    
