@@ -1,7 +1,7 @@
 import api, { getApiUrl } from './api';
 
 export const appConfigService = {
-  get: () => api.get('/api/v1/app-config'),
+  get: () => api.get('/api/v1/app-config', { params: { _t: Date.now() }, headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' } }),
   put: (settings) => api.put('/api/v1/app-config', { settings }),
   getEnvFile: async () => {
     const token = localStorage.getItem('token');

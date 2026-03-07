@@ -53,7 +53,11 @@ const AppConfig = () => {
     try {
       setSaving(true);
       setError(null);
-      await appConfigService.put(form);
+      const res = await appConfigService.put(form);
+      if (res.data?.saved) {
+        setForm(res.data.saved);
+        setSaved(res.data.saved);
+      }
       setSuccess('Settings saved and applied.');
       setTimeout(() => setSuccess(null), 4000);
       fetchConfig();

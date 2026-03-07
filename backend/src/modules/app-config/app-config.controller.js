@@ -53,8 +53,9 @@ const getAppConfig = async (req, res, next) => {
     const rows = await AppSettings.findAll();
     const saved = {};
     rows.forEach((r) => {
-      if (ALLOWED_KEYS.has(r.key)) saved[r.key] = r.value ?? '';
+      if (r.key && ALLOWED_KEYS.has(r.key)) saved[r.key] = r.value ?? '';
     });
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
     res.json({
       schema: KEY_SCHEMA,
       saved,
