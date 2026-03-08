@@ -9,6 +9,9 @@ export const backupSchedulesService = {
   /** Create one job with many entries (same schedule for all) */
   createBulk: (body) =>
     api.post('/api/v1/backup-schedules/bulk', body),
+  /** Update a job's container entries (replace all). Body: { entries: [{ serverId, containerName }, ...] } */
+  updateJobEntries: (jobId, body) =>
+    api.put(`/api/v1/backup-schedules/${jobId}/entries`, body),
   /** Delete a backup job and all its entries */
   deleteJob: (jobId) =>
     api.delete(`/api/v1/backup-schedules/${jobId}`),

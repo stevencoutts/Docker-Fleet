@@ -34,6 +34,12 @@ const BulkBackupSchedules = () => {
   const [existingJobs, setExistingJobs] = useState([]);
   const [loadingExisting, setLoadingExisting] = useState(false);
   const [deletingJobId, setDeletingJobId] = useState(null);
+  const [editingJob, setEditingJob] = useState(null);
+  const [editSelected, setEditSelected] = useState(new Set());
+  const [editContainersByServer, setEditContainersByServer] = useState({});
+  const [editServersInEdit, setEditServersInEdit] = useState(new Set());
+  const [editLoadingServers, setEditLoadingServers] = useState(new Set());
+  const [editSaving, setEditSaving] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -64,6 +70,83 @@ const BulkBackupSchedules = () => {
       });
     }
   }, []);
+
+  const fetchEditContainers = useCallback(async (serverId) => {
+    setEditLoadingServers((prev) => new Set(prev).add(serverId));
+    try {
+      const res = await containersService.getAll(serverId, { all: 'true' });
+      const list = res.data.containers || [];
+      setEditContainersByServer((prev) => ({ ...prev, [serverId]: list }));
+    } catch {
+      setEditContainersByServer((prev) => ({ ...prev, [serverId]: [] }));
+    } finally {
+      setEditLoadingServers((prev) => {
+        const next = new Set(prev);
+        next.delete(serverId);
+        return next;
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!editingJob?.entries?.length) return;
+    const serverIds = [...new Set(editingJob.entries.map((e) => e.serverId).filter(Boolean))];
+    serverIds.forEach((serverId) => {
+      if (!editContainersByServer[serverId] && !editLoadingServers.has(serverId)) {
+        fetchEditContainers(serverId);
+      }
+    });
+  }, [editingJob?.id, editContainersByServer, editLoadingServers, fetchEditContainers]);
+
+  const openEditJob = (job) => {
+    const entries = job.entries || [];
+    setEditingJob(job);
+    setEditSelected(new Set(entries.map((e) => `${e.serverId}|${e.containerName}`)));
+    setEditContainersByServer({});
+    setEditLoadingServers(new Set());
+    setEditServersInEdit(new Set(entries.map((e) => e.serverId)));
+  };
+
+  const closeEditJob = () => {
+    setEditingJob(null);
+    setEditSelected(new Set());
+    setEditContainersByServer({});
+    setEditServersInEdit(new Set());
+  };
+
+  const editToggleTarget = (serverId, containerName) => {
+    const key = `${serverId}|${containerName}`;
+    setEditSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const editAddServer = (serverId) => {
+    if (!serverId || editServersInEdit.has(serverId)) return;
+    setEditServersInEdit((prev) => new Set(prev).add(serverId));
+    fetchEditContainers(serverId);
+  };
+
+  const handleSaveEditJob = async () => {
+    if (!editingJob || editSelected.size === 0) return;
+    setEditSaving(true);
+    try {
+      const entries = Array.from(editSelected).map((key) => {
+        const [serverId, containerName] = key.split('|');
+        return { serverId, containerName };
+      });
+      await backupSchedulesService.updateJobEntries(editingJob.id, { entries });
+      await fetchJobs();
+      closeEditJob();
+    } catch (err) {
+      alert(err.response?.data?.error || err.message || 'Failed to update job');
+    } finally {
+      setEditSaving(false);
+    }
+  };
 
   useEffect(() => {
     selectedServerIds.forEach((serverId) => {
@@ -220,14 +303,23 @@ const BulkBackupSchedules = () => {
                     <span className="text-sm text-gray-500 dark:text-gray-400">Keep last {job.retention} · Next run {formatDate(job.nextRunAt)}</span>
                     {job.name && <span className="text-sm text-gray-500 dark:text-gray-400">({job.name})</span>}
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => handleDeleteJob(job)}
-                    disabled={deletingJobId === job.id}
-                    className="px-3 py-1.5 text-sm font-medium text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/20 rounded-md hover:bg-red-100 dark:hover:bg-red-900/30 disabled:opacity-50"
-                  >
-                    {deletingJobId === job.id ? 'Deleting…' : 'Delete job'}
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => openEditJob(job)}
+                      className="px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-200 bg-gray-100 dark:bg-gray-700 rounded-md hover:bg-gray-200 dark:hover:bg-gray-600"
+                    >
+                      Edit containers
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteJob(job)}
+                      disabled={deletingJobId === job.id}
+                      className="px-3 py-1.5 text-sm font-medium text-red-700 dark:text-red-300 bg-red-50 dark:bg-red-900/20 rounded-md hover:bg-red-100 dark:hover:bg-red-900/30 disabled:opacity-50"
+                    >
+                      {deletingJobId === job.id ? 'Deleting…' : 'Delete job'}
+                    </button>
+                  </div>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
@@ -263,6 +355,107 @@ const BulkBackupSchedules = () => {
           )}
         </div>
       </section>
+
+      {/* Edit job containers modal */}
+      {editingJob && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Edit job containers</h3>
+              <button
+                type="button"
+                onClick={closeEditJob}
+                className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+              >
+                <span className="sr-only">Close</span>
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <p className="px-6 py-2 text-sm text-gray-600 dark:text-gray-400">
+              {scheduleSummary(editingJob)} · Check or uncheck containers to include in this backup job.
+            </p>
+            <div className="px-6 pb-4 flex-1 min-h-0 overflow-auto space-y-4">
+              {Array.from(editServersInEdit).map((serverId) => {
+                const server = servers.find((s) => s.id === serverId);
+                const list = editContainersByServer[serverId];
+                const loading = editLoadingServers.has(serverId);
+                return (
+                  <div key={serverId} className="border border-gray-200 dark:border-gray-600 rounded-lg p-3">
+                    <div className="font-medium text-gray-900 dark:text-gray-100 mb-2">
+                      {server?.name || server?.host || serverId}
+                      {loading && <span className="ml-2 text-xs text-gray-500">Loading…</span>}
+                    </div>
+                    {loading && <p className="text-sm text-gray-500">Loading containers…</p>}
+                    {!loading && list && (
+                      <ul className="list-none space-y-1.5">
+                        {list.map((c) => {
+                          const name = getContainerName(c);
+                          const key = `${serverId}|${name}`;
+                          const checked = editSelected.has(key);
+                          return (
+                            <li key={key}>
+                              <label className="inline-flex items-center gap-2 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() => editToggleTarget(serverId, name)}
+                                  className="rounded border-gray-300 dark:border-gray-600 text-primary-600 focus:ring-primary-500"
+                                />
+                                <span className="text-sm font-mono text-gray-800 dark:text-gray-200">{name}</span>
+                              </label>
+                            </li>
+                          );
+                        })}
+                        {list.length === 0 && <li className="text-sm text-gray-500">No containers</li>}
+                      </ul>
+                    )}
+                  </div>
+                );
+              })}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Add from another server</label>
+                <select
+                  value=""
+                  onChange={(e) => { editAddServer(e.target.value || null); e.target.value = ''; }}
+                  className="block w-full max-w-xs rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 px-3 py-2 text-sm"
+                >
+                  <option value="">— Select server —</option>
+                  {servers.filter((s) => !editServersInEdit.has(s.id)).map((s) => (
+                    <option key={s.id} value={s.id}>{s.name || s.host}</option>
+                  ))}
+                  {servers.filter((s) => !editServersInEdit.has(s.id)).length === 0 && (
+                    <option value="" disabled>All servers added</option>
+                  )}
+                </select>
+              </div>
+            </div>
+            <div className="px-6 py-4 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between gap-4">
+              <span className="text-sm text-gray-500 dark:text-gray-400">
+                {editSelected.size} container(s) selected
+              </span>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={closeEditJob}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-200 dark:bg-gray-700 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveEditJob}
+                  disabled={editSaving || editSelected.size === 0}
+                  className="px-4 py-2 text-sm font-medium text-white bg-primary-600 dark:bg-primary-500 rounded-lg hover:bg-primary-700 dark:hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {editSaving ? 'Saving…' : 'Save'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Bulk create */}
       <section className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">

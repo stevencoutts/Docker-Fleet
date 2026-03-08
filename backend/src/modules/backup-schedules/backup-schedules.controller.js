@@ -183,6 +183,49 @@ const updateJob = async (req, res, next) => {
 };
 
 /**
+ * Update a backup job's container entries (replace all).
+ * PUT /api/v1/backup-schedules/:jobId/entries
+ * Body: { entries: [{ serverId, containerName }, ...] }
+ */
+const updateJobEntries = async (req, res, next) => {
+  try {
+    const { jobId } = req.params;
+    const { entries } = req.body;
+    const job = await BackupJob.findOne({
+      where: { id: jobId, userId: req.user.id },
+      include: [{ model: BackupJobEntry, as: 'entries' }],
+    });
+    if (!job) {
+      return res.status(404).json({ error: 'Backup job not found' });
+    }
+    if (!Array.isArray(entries)) {
+      return res.status(400).json({ error: 'entries must be an array of { serverId, containerName }' });
+    }
+    const serverIds = [...new Set((await Server.findAll({ where: { userId: req.user.id }, attributes: ['id'] })).map((s) => s.id))];
+    const entriesToSet = [];
+    for (const e of entries) {
+      const serverId = e?.serverId ?? e?.server_id;
+      const containerName = typeof e?.containerName !== 'undefined' ? String(e.containerName).trim() : String(e?.container_name || '').trim();
+      if (!serverId || !containerName) continue;
+      if (!serverIds.includes(serverId)) continue;
+      entriesToSet.push({ serverId, containerName });
+    }
+    await BackupJobEntry.destroy({ where: { backupJobId: jobId } });
+    for (const { serverId, containerName } of entriesToSet) {
+      await BackupJobEntry.create({ backupJobId: jobId, serverId, containerName });
+    }
+    const updated = await BackupJob.findByPk(jobId, {
+      include: [
+        { model: BackupJobEntry, as: 'entries', include: [{ model: Server, as: 'server', attributes: ['id', 'name', 'host'] }] },
+      ],
+    });
+    res.json({ job: updated });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
  * Delete a backup job (and all its entries).
  * DELETE /api/v1/backup-schedules/:jobId
  */
@@ -206,5 +249,6 @@ module.exports = {
   listJobs,
   createJob,
   updateJob,
+  updateJobEntries,
   deleteJob,
 };
