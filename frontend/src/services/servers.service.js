@@ -81,4 +81,7 @@ export const serversService = {
   tailscaleDisable: (id) => api.post(`/api/v1/servers/${id}/tailscale/disable`),
   clearTailscaleStoredKey: (id) => api.delete(`/api/v1/servers/${id}/tailscale/stored-key`),
   tailscaleStatus: (id) => api.get(`/api/v1/servers/${id}/tailscale/status`),
+  /** Deploy from pasted docker-compose.yml. Body: { composeYaml: string, projectName?: string }. Returns { success, code, stdout, stderr }. */
+  composeUp: (id, body) =>
+    api.post(`/api/v1/servers/${id}/compose/up`, body, { timeout: 320000 }),
 };

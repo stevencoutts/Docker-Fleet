@@ -289,6 +289,7 @@ dockerfleet-manager/  # or your project directory name
 - `PUT /api/v1/servers/:id` - Update server
 - `DELETE /api/v1/servers/:id` - Delete server
 - `POST /api/v1/servers/:id/test` - Test connection
+- `POST /api/v1/servers/:id/compose/up` - Deploy from pasted docker-compose.yml (body: `{ composeYaml, projectName? }`; runs `docker compose -f - up -d` on the host)
 
 ### Containers
 - `GET /api/v1/servers/:serverId/containers` - List containers

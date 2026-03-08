@@ -40,6 +40,12 @@ const ServerDetails = () => {
   const [deployPullFirst, setDeployPullFirst] = useState(true);
   const [deployLoading, setDeployLoading] = useState(false);
   const [deployError, setDeployError] = useState('');
+  const [composeModalOpen, setComposeModalOpen] = useState(false);
+  const [composeYaml, setComposeYaml] = useState('');
+  const [composeProjectName, setComposeProjectName] = useState('');
+  const [composeLoading, setComposeLoading] = useState(false);
+  const [composeError, setComposeError] = useState('');
+  const [composeResult, setComposeResult] = useState(null); // { success, stdout, stderr }
   const [proxyRoutes, setProxyRoutes] = useState([]);
   const [proxyRoutesLoading, setProxyRoutesLoading] = useState(false);
   const [publicWwwLoading, setPublicWwwLoading] = useState(false);
@@ -736,6 +742,21 @@ const ServerDetails = () => {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
               </svg>
               Deploy container
+            </button>
+            <button
+              onClick={() => {
+                setComposeError('');
+                setComposeResult(null);
+                setComposeYaml('');
+                setComposeProjectName('');
+                setComposeModalOpen(true);
+              }}
+              className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors flex items-center gap-2"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              Deploy from compose
             </button>
             <Link
               to={`/servers/${serverId}/edit`}
@@ -2384,6 +2405,114 @@ const ServerDetails = () => {
                 type="button"
                 onClick={() => !deployLoading && setDeployModalOpen(false)}
                 disabled={deployLoading}
+                className="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Deploy from compose modal */}
+      {composeModalOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl p-6 max-w-2xl w-full mx-4 max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between mb-4 shrink-0">
+              <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Deploy from docker-compose.yml</h3>
+              <button
+                type="button"
+                onClick={() => !composeLoading && setComposeModalOpen(false)}
+                className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 disabled:opacity-50"
+              >
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <p className="text-sm text-gray-600 dark:text-gray-400 mb-3 shrink-0">
+              Paste your docker-compose.yml below. The stack will be deployed on this host with <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">docker compose -f - up -d</code>.
+            </p>
+            {composeError && (
+              <div className="mb-3 rounded-md bg-red-50 dark:bg-red-900/20 p-3 text-sm text-red-800 dark:text-red-200 shrink-0">
+                {composeError}
+              </div>
+            )}
+            <div className="space-y-3 shrink-0">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Compose YAML *</label>
+                <textarea
+                  value={composeYaml}
+                  onChange={(e) => setComposeYaml(e.target.value)}
+                  placeholder={'version: "3"\nservices:\n  app:\n    image: nginx:alpine\n    ports:\n      - "8080:80"\n'}
+                  disabled={composeLoading}
+                  rows={12}
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 font-mono text-sm focus:ring-2 focus:ring-primary-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Project name (optional)</label>
+                <input
+                  type="text"
+                  value={composeProjectName}
+                  onChange={(e) => setComposeProjectName(e.target.value)}
+                  placeholder="e.g. myapp (letters, numbers, hyphen, underscore)"
+                  disabled={composeLoading}
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-primary-500"
+                />
+              </div>
+            </div>
+            {composeResult && (
+              <div className="mt-3 rounded-lg border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-900/50 p-3 overflow-auto max-h-40 shrink min-h-0">
+                <pre className="text-xs text-gray-800 dark:text-gray-200 whitespace-pre-wrap font-mono">
+                  {composeResult.stdout || '(no output)'}
+                  {composeResult.stderr ? `\n${composeResult.stderr}` : ''}
+                </pre>
+              </div>
+            )}
+            <div className="flex gap-3 mt-4 shrink-0">
+              <button
+                type="button"
+                onClick={async () => {
+                  const yaml = composeYaml.trim();
+                  if (!yaml) {
+                    setComposeError('Paste your docker-compose.yml content above.');
+                    return;
+                  }
+                  setComposeError('');
+                  setComposeResult(null);
+                  setComposeLoading(true);
+                  try {
+                    const res = await serversService.composeUp(serverId, {
+                      composeYaml: yaml,
+                      projectName: composeProjectName.trim() || undefined,
+                    });
+                    setComposeResult({
+                      success: res.data.success,
+                      stdout: res.data.stdout || '',
+                      stderr: res.data.stderr || '',
+                    });
+                    if (res.data.success) {
+                      fetchData(false);
+                    } else {
+                      setComposeError(res.data.stderr || res.data.stdout || 'Compose up failed.');
+                    }
+                  } catch (err) {
+                    setComposeError(err.response?.data?.error || err.message || 'Deploy failed');
+                    setComposeResult(null);
+                  } finally {
+                    setComposeLoading(false);
+                  }
+                }}
+                disabled={composeLoading}
+                className="flex-1 px-4 py-2 bg-primary-600 dark:bg-primary-500 text-white rounded-lg hover:bg-primary-700 dark:hover:bg-primary-600 font-medium disabled:opacity-50"
+              >
+                {composeLoading ? 'Deploying…' : 'Deploy'}
+              </button>
+              <button
+                type="button"
+                onClick={() => !composeLoading && setComposeModalOpen(false)}
+                disabled={composeLoading}
                 className="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50"
               >
                 Cancel
