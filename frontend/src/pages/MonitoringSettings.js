@@ -14,6 +14,9 @@ const MonitoringSettings = () => {
     alertCooldownMs: 43200000, // 12 hours
     noAutoRestartCooldownMs: 43200000, // 12 hours
     minDownTimeBeforeAlertMs: 0,
+    alertOnUpdateAvailable: true,
+    updateAlertCooldownMs: 43200000, // 12 hours
+    minContainersWithUpdatesBeforeAlert: 1,
   });
   const [monitoringRunning, setMonitoringRunning] = useState(false);
 
@@ -179,6 +182,26 @@ const MonitoringSettings = () => {
                   <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary-300 dark:peer-focus:ring-primary-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-primary-600"></div>
                 </label>
               </div>
+
+              <div className="flex items-center justify-between p-4 border border-gray-200 dark:border-gray-700 rounded-lg">
+                <div className="flex-1">
+                  <label className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                    Alert when image updates are available
+                  </label>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    Receive alerts when one or more containers have a newer image available
+                  </p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={settings.alertOnUpdateAvailable}
+                    onChange={(e) => handleChange('alertOnUpdateAvailable', e.target.checked)}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary-300 dark:peer-focus:ring-primary-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-primary-600"></div>
+                </label>
+              </div>
             </div>
           </div>
 
@@ -222,6 +245,23 @@ const MonitoringSettings = () => {
                   Alerts for containers without auto-restart will only be resent after this period (default: 12 hours)
                 </p>
               </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Update Available Alert Cooldown (hours)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.1"
+                  value={formatMsToHours(settings.updateAlertCooldownMs)}
+                  onChange={(e) => handleChange('updateAlertCooldownMs', hoursToMs(e.target.value))}
+                  className="block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                />
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  Alerts for available image updates will only be resent after this period (default: 12 hours)
+                </p>
+              </div>
             </div>
           </div>
 
@@ -243,6 +283,23 @@ const MonitoringSettings = () => {
                 />
                 <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
                   Wait this long before sending the first alert when a container goes down (0 = alert immediately)
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Minimum Containers With Updates Before Alert
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={settings.minContainersWithUpdatesBeforeAlert ?? 1}
+                  onChange={(e) => handleChange('minContainersWithUpdatesBeforeAlert', Math.max(0, parseInt(e.target.value, 10) || 1))}
+                  className="block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-primary-500 focus:border-primary-500"
+                />
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  Only send an update alert when at least this many containers have updates available (1 = alert for any)
                 </p>
               </div>
             </div>

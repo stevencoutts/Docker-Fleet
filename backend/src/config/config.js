@@ -88,6 +88,9 @@ module.exports = {
       alertOnContainerRecovery: process.env.MONITORING_ALERT_ON_CONTAINER_RECOVERY !== 'false',
       alertOnNoAutoRestart: process.env.MONITORING_ALERT_ON_NO_AUTO_RESTART !== 'false',
       minDownTimeBeforeAlertMs: parseInt(process.env.MONITORING_MIN_DOWN_TIME_MS) || 0,
+      alertOnUpdateAvailable: process.env.MONITORING_ALERT_ON_UPDATE_AVAILABLE !== 'false',
+      updateAlertCooldownMs: parseInt(process.env.MONITORING_UPDATE_ALERT_COOLDOWN_MS) || 43200000,
+      minContainersWithUpdatesBeforeAlert: Math.max(0, parseInt(process.env.MONITORING_MIN_CONTAINERS_WITH_UPDATES_BEFORE_ALERT) || 1),
     };
   },
 

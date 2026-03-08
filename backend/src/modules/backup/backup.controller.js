@@ -60,6 +60,9 @@ const exportData = async (req, res, next) => {
         'alertCooldownMs',
         'noAutoRestartCooldownMs',
         'minDownTimeBeforeAlertMs',
+        'alertOnUpdateAvailable',
+        'updateAlertCooldownMs',
+        'minContainersWithUpdatesBeforeAlert',
       ],
     });
 
@@ -118,6 +121,9 @@ const exportData = async (req, res, next) => {
             alertCooldownMs: monitoringSettings.alertCooldownMs,
             noAutoRestartCooldownMs: monitoringSettings.noAutoRestartCooldownMs,
             minDownTimeBeforeAlertMs: monitoringSettings.minDownTimeBeforeAlertMs,
+            alertOnUpdateAvailable: monitoringSettings.alertOnUpdateAvailable,
+            updateAlertCooldownMs: monitoringSettings.updateAlertCooldownMs,
+            minContainersWithUpdatesBeforeAlert: monitoringSettings.minContainersWithUpdatesBeforeAlert,
           }
         : null,
       containerGroupingRules: groupingRules.map((r) => ({
@@ -297,6 +303,9 @@ const importData = async (req, res, next) => {
           alertCooldownMs: 43200000,
           noAutoRestartCooldownMs: 43200000,
           minDownTimeBeforeAlertMs: 0,
+          alertOnUpdateAvailable: true,
+          updateAlertCooldownMs: 43200000,
+          minContainersWithUpdatesBeforeAlert: 1,
         },
       });
       await existing.update({
@@ -306,6 +315,9 @@ const importData = async (req, res, next) => {
         alertCooldownMs: Math.max(0, parseInt(ms.alertCooldownMs, 10) || 43200000),
         noAutoRestartCooldownMs: Math.max(0, parseInt(ms.noAutoRestartCooldownMs, 10) || 43200000),
         minDownTimeBeforeAlertMs: Math.max(0, parseInt(ms.minDownTimeBeforeAlertMs, 10) || 0),
+        alertOnUpdateAvailable: ms.alertOnUpdateAvailable !== false,
+        updateAlertCooldownMs: Math.max(0, parseInt(ms.updateAlertCooldownMs, 10) || 43200000),
+        minContainersWithUpdatesBeforeAlert: Math.max(0, parseInt(ms.minContainersWithUpdatesBeforeAlert, 10) || 1),
       });
       restored.monitoringSettings = true;
     }

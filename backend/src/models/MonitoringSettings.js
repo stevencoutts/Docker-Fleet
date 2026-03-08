@@ -67,6 +67,32 @@ module.exports = (sequelize) => {
           min: 0,
         },
       },
+      // Update alerts
+      alertOnUpdateAvailable: {
+        type: DataTypes.BOOLEAN,
+        defaultValue: true,
+        allowNull: false,
+        field: 'alert_on_update_available',
+      },
+      updateAlertCooldownMs: {
+        type: DataTypes.INTEGER,
+        defaultValue: 43200000, // 12 hours
+        allowNull: false,
+        field: 'update_alert_cooldown_ms',
+        validate: { min: 0 },
+      },
+      minContainersWithUpdatesBeforeAlert: {
+        type: DataTypes.INTEGER,
+        defaultValue: 1,
+        allowNull: false,
+        field: 'min_containers_with_updates_before_alert',
+        validate: { min: 0 },
+      },
+      lastUpdateAlertSentAt: {
+        type: DataTypes.DATE,
+        allowNull: true,
+        field: 'last_update_alert_sent_at',
+      },
       createdAt: {
         type: DataTypes.DATE,
         allowNull: false,

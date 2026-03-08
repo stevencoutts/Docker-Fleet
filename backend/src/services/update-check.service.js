@@ -1,4 +1,4 @@
-const { Server, UpdateOverviewCache, User } = require('../models');
+const { Server, UpdateOverviewCache, User, MonitoringSettings } = require('../models');
 const dockerService = require('./docker.service');
 const emailService = require('./email.service');
 const config = require('../config/config');
@@ -115,14 +115,34 @@ function start() {
       for (const userId of userIds) {
         try {
           const payload = await runCheckForUser(userId);
-          if (payload.containers && payload.containers.length > 0) {
-            const user = await User.findByPk(userId);
-            if (user && user.email) {
-              const result = await emailService.sendImageUpdatesAlert(user.email, payload.containers);
-              if (result.success) {
-                logger.info(`Image updates alert sent to ${user.email} (${payload.containers.length} containers)`);
-              }
-            }
+          if (!payload.containers || payload.containers.length === 0) continue;
+
+          const [monitoring] = await MonitoringSettings.findOrCreate({
+            where: { userId },
+            defaults: {
+              userId,
+              alertOnUpdateAvailable: true,
+              updateAlertCooldownMs: 43200000,
+              minContainersWithUpdatesBeforeAlert: 1,
+            },
+          });
+
+          if (!monitoring.alertOnUpdateAvailable) continue;
+          if (payload.containers.length < (monitoring.minContainersWithUpdatesBeforeAlert || 1)) continue;
+
+          const cooldownMs = monitoring.updateAlertCooldownMs ?? 43200000;
+          if (monitoring.lastUpdateAlertSentAt) {
+            const elapsed = Date.now() - new Date(monitoring.lastUpdateAlertSentAt).getTime();
+            if (elapsed < cooldownMs) continue;
+          }
+
+          const user = await User.findByPk(userId);
+          if (!user || !user.email) continue;
+
+          const result = await emailService.sendImageUpdatesAlert(user.email, payload.containers);
+          if (result.success) {
+            await monitoring.update({ lastUpdateAlertSentAt: new Date() });
+            logger.info(`Image updates alert sent to ${user.email} (${payload.containers.length} containers)`);
           }
         } catch (e) {
           logger.error(`Update check for user ${userId}:`, e.message);

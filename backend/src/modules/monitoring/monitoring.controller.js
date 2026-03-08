@@ -21,6 +21,9 @@ const getMonitoringSettings = async (req, res, next) => {
         alertCooldownMs: config.monitoring.alertCooldownMs,
         noAutoRestartCooldownMs: config.monitoring.noAutoRestartCooldownMs,
         minDownTimeBeforeAlertMs: config.monitoring.minDownTimeBeforeAlertMs,
+        alertOnUpdateAvailable: config.monitoring.alertOnUpdateAvailable,
+        updateAlertCooldownMs: config.monitoring.updateAlertCooldownMs,
+        minContainersWithUpdatesBeforeAlert: config.monitoring.minContainersWithUpdatesBeforeAlert,
       });
     }
 
@@ -42,6 +45,9 @@ const updateMonitoringSettings = async (req, res, next) => {
       alertCooldownMs,
       noAutoRestartCooldownMs,
       minDownTimeBeforeAlertMs,
+      alertOnUpdateAvailable,
+      updateAlertCooldownMs,
+      minContainersWithUpdatesBeforeAlert,
     } = req.body;
 
     let settings = await MonitoringSettings.findOne({
@@ -58,6 +64,9 @@ const updateMonitoringSettings = async (req, res, next) => {
         alertCooldownMs: alertCooldownMs !== undefined ? alertCooldownMs : config.monitoring.alertCooldownMs,
         noAutoRestartCooldownMs: noAutoRestartCooldownMs !== undefined ? noAutoRestartCooldownMs : config.monitoring.noAutoRestartCooldownMs,
         minDownTimeBeforeAlertMs: minDownTimeBeforeAlertMs !== undefined ? minDownTimeBeforeAlertMs : config.monitoring.minDownTimeBeforeAlertMs,
+        alertOnUpdateAvailable: alertOnUpdateAvailable !== undefined ? alertOnUpdateAvailable : config.monitoring.alertOnUpdateAvailable,
+        updateAlertCooldownMs: updateAlertCooldownMs !== undefined ? updateAlertCooldownMs : config.monitoring.updateAlertCooldownMs,
+        minContainersWithUpdatesBeforeAlert: minContainersWithUpdatesBeforeAlert !== undefined ? minContainersWithUpdatesBeforeAlert : config.monitoring.minContainersWithUpdatesBeforeAlert,
       });
     } else {
       // Update existing settings
@@ -67,6 +76,9 @@ const updateMonitoringSettings = async (req, res, next) => {
       if (alertCooldownMs !== undefined) settings.alertCooldownMs = alertCooldownMs;
       if (noAutoRestartCooldownMs !== undefined) settings.noAutoRestartCooldownMs = noAutoRestartCooldownMs;
       if (minDownTimeBeforeAlertMs !== undefined) settings.minDownTimeBeforeAlertMs = minDownTimeBeforeAlertMs;
+      if (alertOnUpdateAvailable !== undefined) settings.alertOnUpdateAvailable = alertOnUpdateAvailable;
+      if (updateAlertCooldownMs !== undefined) settings.updateAlertCooldownMs = updateAlertCooldownMs;
+      if (minContainersWithUpdatesBeforeAlert !== undefined) settings.minContainersWithUpdatesBeforeAlert = minContainersWithUpdatesBeforeAlert;
 
       await settings.save();
     }
@@ -89,6 +101,9 @@ const monitoringSettingsValidation = [
   body('alertCooldownMs').optional().isInt({ min: 0 }).withMessage('alertCooldownMs must be a non-negative integer'),
   body('noAutoRestartCooldownMs').optional().isInt({ min: 0 }).withMessage('noAutoRestartCooldownMs must be a non-negative integer'),
   body('minDownTimeBeforeAlertMs').optional().isInt({ min: 0 }).withMessage('minDownTimeBeforeAlertMs must be a non-negative integer'),
+  body('alertOnUpdateAvailable').optional().isBoolean().withMessage('alertOnUpdateAvailable must be a boolean'),
+  body('updateAlertCooldownMs').optional().isInt({ min: 0 }).withMessage('updateAlertCooldownMs must be a non-negative integer'),
+  body('minContainersWithUpdatesBeforeAlert').optional().isInt({ min: 0 }).withMessage('minContainersWithUpdatesBeforeAlert must be a non-negative integer'),
 ];
 
 module.exports = {

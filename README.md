@@ -438,6 +438,9 @@ docker-compose exec backend npm run migrate
 | `MONITORING_ALERT_ON_CONTAINER_RECOVERY` | Enable recovery alerts | `true` |
 | `MONITORING_ALERT_ON_NO_AUTO_RESTART` | Enable no auto-restart alerts | `true` |
 | `MONITORING_MIN_DOWN_TIME_MS` | Min down time before alert | `0` (immediate) |
+| `MONITORING_ALERT_ON_UPDATE_AVAILABLE` | Enable email when image updates available | `true` |
+| `MONITORING_UPDATE_ALERT_COOLDOWN_MS` | Update alert cooldown (ms) | `43200000` (12 hours) |
+| `MONITORING_MIN_CONTAINERS_WITH_UPDATES_BEFORE_ALERT` | Min containers with updates before alert | `1` |
 
 ### Frontend
 
@@ -530,6 +533,9 @@ The application can send email alerts when containers with auto-restart enabled 
 - `MONITORING_ALERT_ON_CONTAINER_RECOVERY`: Enable/disable recovery alerts (default: `true`)
 - `MONITORING_ALERT_ON_NO_AUTO_RESTART`: Enable/disable no auto-restart alerts (default: `true`)
 - `MONITORING_MIN_DOWN_TIME_MS`: Minimum time container must be down before first alert (default: 0 = immediate)
+- `MONITORING_ALERT_ON_UPDATE_AVAILABLE`: Enable/disable email when image updates are available (default: `true`)
+- `MONITORING_UPDATE_ALERT_COOLDOWN_MS`: Cooldown before resending update-available alerts (default: 12 hours)
+- `MONITORING_MIN_CONTAINERS_WITH_UPDATES_BEFORE_ALERT`: Only alert when at least this many containers have updates (default: 1)
 
 #### Web UI Configuration
 
