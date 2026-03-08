@@ -1,5 +1,5 @@
-# Build stage
-FROM node:18-alpine AS builder
+# Build stage (Node 20+ for global crypto required by serialize-javascript / react-scripts deps)
+FROM node:20-alpine AS builder
 
 WORKDIR /app
 
