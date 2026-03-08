@@ -2517,12 +2517,15 @@ const ServerDetails = () => {
                           composeYaml: yaml,
                           projectName: composeProjectName.trim() || undefined,
                         });
+                        const out = (res.data.stdout || '') + '\n' + (res.data.stderr || '');
+                        const looksStarted = /Container\s+\S+\s+Started/i.test(out);
+                        const success = res.data.success === true || looksStarted;
                         setComposeResult({
-                          success: res.data.success,
+                          success,
                           stdout: res.data.stdout || '',
                           stderr: res.data.stderr || '',
                         });
-                        if (res.data.success) {
+                        if (success) {
                           fetchData(false);
                         } else {
                           setComposeError(res.data.stderr || res.data.stdout || 'Compose up failed.');

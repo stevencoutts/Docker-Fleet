@@ -521,11 +521,17 @@ const composeUp = async (req, res, next) => {
       allowFailure: true,
     });
 
+    const stdout = result.stdout || '';
+    const stderr = result.stderr || '';
+    const out = stdout + '\n' + stderr;
+    // Consider success if exit code 0 or if output shows container(s) started (some compose versions exit non-zero despite success)
+    const success = result.code === 0 || /Container\s+\S+\s+Started/i.test(out);
+
     res.json({
-      success: result.code === 0,
+      success,
       code: result.code,
-      stdout: result.stdout || '',
-      stderr: result.stderr || '',
+      stdout,
+      stderr,
     });
   } catch (error) {
     logger.error('Compose up failed:', error);
