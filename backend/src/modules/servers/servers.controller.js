@@ -512,7 +512,8 @@ const composeUp = async (req, res, next) => {
     const projectFlag = safeProject
       ? `-p '${String(safeProject).replace(/'/g, "'\\''")}'`
       : '';
-    const command = `docker compose ${projectFlag} -f - up -d`.replace(/\s+/g, ' ').trim();
+    // Use API 1.41 so older daemons (max 1.41) work; newer daemons accept older client versions
+    const command = `DOCKER_API_VERSION=1.41 docker compose ${projectFlag} -f - up -d`.replace(/\s+/g, ' ').trim();
     const stdinData = Buffer.from(yaml, 'utf8');
 
     const result = await sshService.executeCommandWithStdin(server, command, stdinData, {
