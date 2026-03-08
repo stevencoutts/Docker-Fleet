@@ -204,7 +204,7 @@ const putStackUpdateConfig = async (req, res, next) => {
 
 /**
  * POST /api/v1/app-config/stack-update/run
- * Runs docker compose pull && docker compose up -d on the configured server/path (admin only).
+ * Runs git pull, then docker compose pull && docker compose up -d on the configured server/path (admin only).
  * Body may include { serverId, path } for this run only; otherwise reads from saved config.
  * Server must belong to the current user.
  */
@@ -233,7 +233,7 @@ const postStackUpdateRun = async (req, res, next) => {
       return res.status(404).json({ error: 'Server not found or access denied.' });
     }
     const safePath = path.replace(/'/g, "'\\''");
-    const command = `cd '${safePath}' && docker compose pull && docker compose up -d`;
+    const command = `cd '${safePath}' && git pull && docker compose pull && docker compose up -d`;
     const result = await sshService.executeCommand(server, command, {
       timeout: 300000,
       allowFailure: true,

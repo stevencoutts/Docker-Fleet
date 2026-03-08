@@ -2,6 +2,16 @@ import React, { useState, useEffect } from 'react';
 import { appConfigService } from '../services/appConfig.service';
 import { serversService } from '../services/servers.service';
 
+/** Strip ANSI escape sequences (colors, cursor movement, etc.) so terminal output is readable in the UI */
+function stripAnsi(str) {
+  if (typeof str !== 'string') return '';
+  return str
+    .replace(/\u001b\[[0-9;]*[a-zA-Z]/g, '')
+    .replace(/\u001b\[?[0-9;]*[a-zA-Z]/g, '')
+    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '')
+    .replace(/\u001b\].*?(\u001b\\)|[\u0007]/g, '');
+}
+
 const AppConfig = () => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -265,7 +275,7 @@ const AppConfig = () => {
         <div className="px-4 py-5 sm:p-6">
           <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-1">Docker Fleet stack update</h2>
           <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-            Run <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">docker compose pull &amp;&amp; docker compose up -d</code> on the server where this app runs. Configure that server and the project path, then run update. Brief downtime is expected.
+            Run <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">git pull</code>, then <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">docker compose pull &amp;&amp; docker compose up -d</code> on the server where this app runs. Configure that server and the project path, then run update. Brief downtime is expected.
           </p>
           <div className="flex flex-wrap items-end gap-4">
             <div className="min-w-0">
@@ -311,8 +321,15 @@ const AppConfig = () => {
             </div>
           </div>
           {stackUpdateResult && (
-            <div className={`mt-4 rounded-md p-4 text-sm font-mono whitespace-pre-wrap ${stackUpdateResult.success ? 'bg-green-50 dark:bg-green-900/20 text-green-800 dark:text-green-200' : 'bg-red-50 dark:bg-red-900/20 text-red-800 dark:text-red-200'}`}>
-              {(stackUpdateResult.stdout || stackUpdateResult.stderr || '').trim() || (stackUpdateResult.success ? 'Done.' : 'Command failed.')}
+            <div className={`mt-4 rounded-md p-4 text-sm font-mono whitespace-pre-wrap overflow-auto max-h-80 ${stackUpdateResult.success ? 'bg-green-50 dark:bg-green-900/20 text-green-800 dark:text-green-200' : 'bg-red-50 dark:bg-red-900/20 text-red-800 dark:text-red-200'}`}>
+              {(() => {
+                const out = [stackUpdateResult.stdout, stackUpdateResult.stderr].filter(Boolean).join('\n');
+                const clean = stripAnsi(out).trim();
+                const summary = stackUpdateResult.success
+                  ? '\n\n✓ Docker Fleet stack updated successfully.'
+                  : `\n\n✗ Update failed${stackUpdateResult.code != null && stackUpdateResult.code !== 0 ? ` (exit code ${stackUpdateResult.code})` : ''}.`;
+                return (clean || (stackUpdateResult.success ? 'Done.' : 'Command failed.')) + summary;
+              })()}
             </div>
           )}
         </div>
