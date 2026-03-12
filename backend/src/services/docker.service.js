@@ -480,6 +480,7 @@ class DockerService {
   /**
    * Recreate the container with the same image and settings (mounts, ports, env, etc.) without pulling.
    * Use to fix missing mounts or refresh the container when there is no image update.
+   * If options.imageName is provided, pull that image and use it instead (e.g. migrate overseerr -> seerr).
    */
   async recreateContainer(server, containerId, options = {}) {
     const steps = [];
@@ -489,17 +490,34 @@ class DockerService {
     };
     try {
       const details = await this.getContainerDetails(server, containerId);
-      const imageRef = details.Config?.Image || details.Image || '';
+      let imageRef = details.Config?.Image || details.Image || '';
       const name = (details.Name || '').replace(/^\//, '');
-      if (!imageRef) {
-        addStep('Validate container', false, 'No image reference');
-        return { success: false, error: 'Could not get container image', steps };
-      }
       if (!name) {
         addStep('Validate container', false, 'No container name');
         return { success: false, error: 'Could not get container name', steps };
       }
-      addStep('Validate container', true, `"${name}" using ${imageRef}`);
+      const newImageName = options.imageName != null ? String(options.imageName).trim() : '';
+      if (newImageName) {
+        try {
+          validateImageName(newImageName);
+        } catch (e) {
+          addStep('Validate image', false, e.message || 'Invalid image name');
+          return { success: false, error: e.message || 'Invalid image name', steps };
+        }
+        addStep('Validate container', true, `"${name}" → ${newImageName}`);
+        const pullResult = await this.pullImage(server, newImageName);
+        addStep('Pull image', pullResult.success, pullResult.success ? newImageName : (pullResult.message || 'Pull failed'));
+        if (!pullResult.success) {
+          return { success: false, error: pullResult.message || 'Image pull failed', steps };
+        }
+        imageRef = newImageName;
+      } else {
+        if (!imageRef) {
+          addStep('Validate container', false, 'No image reference');
+          return { success: false, error: 'Could not get container image', steps };
+        }
+        addStep('Validate container', true, `"${name}" using ${imageRef}`);
+      }
 
       const tempName = `${name}-new-${Date.now()}`;
 

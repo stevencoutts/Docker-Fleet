@@ -132,6 +132,8 @@ const ContainerDetails = () => {
   const [lastUpdateResult, setLastUpdateResult] = useState(null);
   const [recreateLoading, setRecreateLoading] = useState(false);
   const [lastRecreateResult, setLastRecreateResult] = useState(null);
+  const [changeImageName, setChangeImageName] = useState('');
+  const [changeImageLoading, setChangeImageLoading] = useState(false);
   const [editingPortMappings, setEditingPortMappings] = useState(null);
   const [addingNewPortMappings, setAddingNewPortMappings] = useState(false);
   const [portMappingsRecreateLoading, setPortMappingsRecreateLoading] = useState(false);
@@ -1133,6 +1135,46 @@ const ContainerDetails = () => {
                       <svg className="w-6 h-6 text-purple-600 dark:text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                       </svg>
+                    </div>
+                  </div>
+                  <div className="mt-3 pt-3 border-t border-purple-200 dark:border-purple-700">
+                    <p className="text-xs font-medium text-purple-700 dark:text-purple-300 mb-2">Change image (e.g. migrate to a new image name)</p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <input
+                        type="text"
+                        value={changeImageName}
+                        onChange={(e) => setChangeImageName(e.target.value)}
+                        placeholder="e.g. sctx/seerr:latest"
+                        disabled={changeImageLoading || recreateLoading}
+                        className="flex-1 min-w-[180px] px-3 py-1.5 text-sm border border-purple-300 dark:border-purple-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-500 focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+                      />
+                      <button
+                        type="button"
+                        disabled={changeImageLoading || recreateLoading || !changeImageName.trim()}
+                        onClick={async () => {
+                          const newImage = changeImageName.trim();
+                          if (!newImage) return;
+                          if (!window.confirm(`Recreate this container using image "${newImage}"? The current container will be replaced; name, ports, mounts and env will be preserved.`)) return;
+                          setChangeImageLoading(true);
+                          try {
+                            const res = await containersService.recreate(serverId, containerId, { imageName: newImage }, 360000);
+                            const data = res.data;
+                            if (data?.newContainerId) {
+                              navigate(`/servers/${serverId}/containers/${data.newContainerId}`, { replace: true, state: { recreateResult: data } });
+                            } else {
+                              fetchContainer();
+                              setChangeImageName('');
+                            }
+                          } catch (err) {
+                            alert(err.response?.data?.error || err.message || 'Recreate failed');
+                          } finally {
+                            setChangeImageLoading(false);
+                          }
+                        }}
+                        className="px-3 py-1.5 text-sm font-medium text-white bg-purple-600 dark:bg-purple-500 rounded-md hover:bg-purple-700 dark:hover:bg-purple-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {changeImageLoading ? 'Recreating…' : 'Recreate with new image'}
+                      </button>
                     </div>
                   </div>
                 </div>

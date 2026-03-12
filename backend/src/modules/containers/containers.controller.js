@@ -147,6 +147,7 @@ const recreateContainer = async (req, res, next) => {
     const { serverId, containerId } = req.params;
     const socketIO = require('../../config/socket').getIO();
     const portMappings = req.body?.portMappings;
+    const imageName = req.body?.imageName != null ? String(req.body.imageName).trim() : '';
 
     const server = await Server.findOne({
       where: { id: serverId, userId: req.user.id },
@@ -159,7 +160,7 @@ const recreateContainer = async (req, res, next) => {
     const onStep = (step, success, detail) => {
       if (socketIO) socketIO.emit('container:update:progress', { serverId, containerId, step, success, detail });
     };
-    const result = await dockerService.recreateContainer(server, containerId, { onStep, portMappings });
+    const result = await dockerService.recreateContainer(server, containerId, { onStep, portMappings, imageName: imageName || undefined });
 
     if (socketIO && result.success) {
       socketIO.emit('container:status:changed', {
