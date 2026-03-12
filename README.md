@@ -451,6 +451,13 @@ docker-compose exec backend npm run migrate
 
 ## 🚨 Troubleshooting
 
+### Docker build fails: "network is unreachable" or "failed to resolve source metadata"
+If the build fails when pulling base images (e.g. `nginx:alpine`, `node:20-alpine`) with an error mentioning IPv6 (e.g. `dial tcp [2606:...]:443: connect: network is unreachable`), your host or network has no working IPv6 route to the registry. This often happens on hosts with **Tailscale** enabled, because the system may prefer IPv6 for outbound connections.
+
+- **Tailscale**: There is no `tailscale up` flag to disable IPv6. To avoid IPv6 being used for registry pulls, disable IPv6 at the system level on the build host (e.g. temporarily: `sudo sysctl -w net.ipv6.conf.all.disable_ipv6=1`; or persistently in `/etc/sysctl.d/99-disable-ipv6.conf`: `net.ipv6.conf.all.disable_ipv6=1`). Then retry the build.
+- **Prefer IPv4 for Docker**: Ensure the Docker daemon can reach the registry over IPv4 (e.g. use a registry mirror that is IPv4-only, or build on a network that has IPv6).
+- **Build elsewhere**: Run `docker-compose build` on a host that has IPv6 (e.g. many VPS and cloud builders do), then push the built images and pull them on the target host.
+
 ### Connection Issues
 - Verify SSH key is correct and has proper permissions
 - Check firewall rules allow SSH access

@@ -69,6 +69,7 @@ async function enableTailscale(server, authKey, options = {}) {
   await sshService.executeCommand(server, 'sudo tailscale set --operator=$USER', { timeout: 15000, pty: false, allowFailure: true });
 
   // 5. Bring up Tailscale with auth key (avoid putting key in shell history via env). No PTY so no TTY prompts.
+  // Note: Tailscale has no --disable-ipv6 flag. If Docker builds fail with "network is unreachable" (IPv6), disable IPv6 at system level (e.g. sysctl net.ipv6.conf.all.disable_ipv6=1) or build elsewhere.
   if (onProgress) onProgress('joining', 'Joining Tailscale network…', 'running');
   const acceptRoutesFlag = acceptRoutes ? '--accept-routes=true' : '--accept-routes=false';
   const upCmd = `export AUTHKEY='${key.replace(/'/g, "'\\''")}' && tailscale up --auth-key="$AUTHKEY" --accept-dns=false ${acceptRoutesFlag}`;

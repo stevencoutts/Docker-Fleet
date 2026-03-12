@@ -1162,7 +1162,7 @@ const ContainerDetails = () => {
                             if (data?.newContainerId) {
                               navigate(`/servers/${serverId}/containers/${data.newContainerId}`, { replace: true, state: { recreateResult: data } });
                             } else {
-                              fetchContainer();
+                              fetchContainerDetails();
                               setChangeImageName('');
                             }
                           } catch (err) {
