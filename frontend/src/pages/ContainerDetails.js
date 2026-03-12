@@ -1158,9 +1158,11 @@ const ContainerDetails = () => {
                           setChangeImageLoading(true);
                           try {
                             const res = await containersService.recreate(serverId, containerId, { imageName: newImage }, 360000);
-                            const data = res.data;
-                            if (data?.newContainerId) {
+                            const data = res.data || {};
+                            if (data.newContainerId) {
                               navigate(`/servers/${serverId}/containers/${data.newContainerId}`, { replace: true, state: { recreateResult: data } });
+                            } else if (data.success === false && data.error) {
+                              alert(data.error);
                             } else {
                               fetchContainerDetails();
                               setChangeImageName('');
@@ -1419,9 +1421,7 @@ const ContainerDetails = () => {
                     )}
                     {/* Recreate container - same image & settings, e.g. to fix mounts */}
                     <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-600">
-                      <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
-                        Recreate this container with the <strong>same</strong> image and settings (e.g. to restore or fix mounts). This does <strong>not</strong> change the image. To use a different image (e.g. migrate overseerr → seerr), use <strong>Recreate with new image</strong> in the Image card above. To get a newer version of the current image, use <strong>Pull and update</strong> above.
-                      </p>
+                      <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">Recreate with the same image and settings (e.g. restore or fix mounts). No image pull.</p>
                       <button
                         type="button"
                         onClick={async () => {
