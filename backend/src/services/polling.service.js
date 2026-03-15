@@ -72,6 +72,14 @@ async function syncServer(server) {
       io.emit('server:containers:updated', { serverId });
       io.emit('server:hostinfo:updated', { serverId });
     }
+
+    // When we're on Tailscale fallback, disconnect after this sync so the next poll (~30s) tries
+    // the Tailscale IP again and we can clear "Tailscale unreachable" once it's back.
+    if (server.tailscaleEnabled && server.tailscaleIp && sshService.isConnectedViaFallback(serverId)) {
+      try {
+        sshService.disconnect(serverId);
+      } catch (e) { /* ignore */ }
+    }
   } catch (err) {
     const msg = err.message || String(err);
     logger.error(`Polling: sync failed for server ${serverId}:`, msg);
