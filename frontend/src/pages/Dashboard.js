@@ -897,7 +897,7 @@ const Dashboard = () => {
                         )}
                         {server.tailscaleEnabled && server.tailscaleIp && hostInfos[server.id]?.tailscaleUnreachable && (
                           <span className="text-xs font-medium text-amber-600 dark:text-amber-400 shrink-0" title="Connected via fallback IP; Tailscale is not reachable on this node">
-                            Tailscale not working
+                            Tailscale unreachable
                           </span>
                         )}
                         {(server.publicHost || hostInfos[server.id]?.publicIp) && (
