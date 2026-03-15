@@ -13,6 +13,7 @@ const AddServer = () => {
     username: '',
     privateKey: '',
     publicHost: '',
+    provisionDockerfleet: true,
   });
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -33,6 +34,7 @@ const AddServer = () => {
             username: server.username || '',
             privateKey: '', // Don't pre-fill private key for security
             publicHost: server.publicHost || '',
+            provisionDockerfleet: true,
           });
         })
         .catch(error => {
@@ -46,9 +48,10 @@ const AddServer = () => {
   }, [serverId, isEditMode]);
 
   const handleChange = (e) => {
+    const { name, value, type, checked } = e.target;
     setFormData({
       ...formData,
-      [e.target.name]: e.target.value,
+      [name]: type === 'checkbox' ? checked : value,
     });
   };
 
@@ -93,8 +96,17 @@ const AddServer = () => {
         await serversService.update(serverId, updateData);
         navigate(`/servers/${serverId}`);
       } else {
-        // Create new server
-        const response = await serversService.create(formData);
+        // Create new server (include provisionDockerfleet for optional dockerfleet user provisioning)
+        const createPayload = {
+          name: formData.name,
+          host: formData.host,
+          port: formData.port,
+          username: formData.username,
+          privateKey: formData.privateKey,
+          publicHost: formData.publicHost?.trim() || '',
+          provisionDockerfleet: !!formData.provisionDockerfleet,
+        };
+        const response = await serversService.create(createPayload);
         navigate(`/servers/${response.data.server.id}`);
       }
     } catch (error) {
@@ -245,6 +257,27 @@ const AddServer = () => {
               </p>
             )}
           </div>
+
+          {!isEditMode && (
+            <div className="flex items-start gap-3 rounded-lg border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/50 p-4">
+              <input
+                type="checkbox"
+                id="provisionDockerfleet"
+                name="provisionDockerfleet"
+                checked={!!formData.provisionDockerfleet}
+                onChange={handleChange}
+                className="mt-1 h-4 w-4 rounded border-gray-300 dark:border-gray-600 text-primary-600 focus:ring-primary-500"
+              />
+              <div>
+                <label htmlFor="provisionDockerfleet" className="text-sm font-medium text-gray-700 dark:text-gray-300 cursor-pointer">
+                  Provision dockerfleet user (recommended)
+                </label>
+                <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                  Create a dedicated <code className="bg-gray-200 dark:bg-gray-700 px-1 rounded">dockerfleet</code> user on the server with Docker access and switch to it for SSH. Requires your SSH user to have sudo. If unchecked, the server will use the username you entered above.
+                </p>
+              </div>
+            </div>
+          )}
 
           <div className="flex items-center justify-between pt-4">
             <button

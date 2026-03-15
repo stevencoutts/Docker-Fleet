@@ -83,8 +83,11 @@ const ServerDetails = () => {
   const [tailscaleAcceptRoutesEnable, setTailscaleAcceptRoutesEnable] = useState(false);
   const [tailscaleSteps, setTailscaleSteps] = useState([]);
   const [tailscaleErrorExpanded, setTailscaleErrorExpanded] = useState(false);
+  const [provisionDockerfleetLoading, setProvisionDockerfleetLoading] = useState(false);
+  const [provisionDockerfleetError, setProvisionDockerfleetError] = useState('');
 
   const hasStoredTailscaleKey = server?.tailscaleAuthKeyExpiresAt && new Date(server.tailscaleAuthKeyExpiresAt) > new Date();
+  const isDockerfleetUser = server?.username && String(server.username).trim().toLowerCase() === 'dockerfleet';
 
   const stepLabel = (step) => {
     const labels = { hostname: 'Hostname', firewall: 'Firewall', install_nginx: 'Install nginx & certbot', nginx_config: 'Nginx config', certbot: 'Certificate(s)', done: 'Done' };
@@ -924,6 +927,40 @@ const ServerDetails = () => {
               <dd className="mt-1 text-sm text-gray-900 dark:text-gray-100">{hostInfo.dockerVersion || 'Unknown'}</dd>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Provision dockerfleet user (retrospective): show when not already using dockerfleet */}
+      {!isDockerfleetUser && server && (
+        <div className="mb-6 bg-white dark:bg-gray-800 shadow dark:shadow-gray-700 rounded-lg p-6 border border-gray-200 dark:border-gray-700">
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2">Provision dockerfleet user</h2>
+          <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+            Create a dedicated <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">dockerfleet</code> user on this server with Docker access and switch SSH to use it. Requires the current SSH user to have sudo. The same private key will be used.
+          </p>
+          {provisionDockerfleetError && (
+            <div className="mb-4 p-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-sm text-red-700 dark:text-red-300">
+              {provisionDockerfleetError}
+            </div>
+          )}
+          <button
+            type="button"
+            disabled={provisionDockerfleetLoading}
+            onClick={async () => {
+              setProvisionDockerfleetError('');
+              setProvisionDockerfleetLoading(true);
+              try {
+                const res = await serversService.provisionDockerfleet(serverId);
+                if (res.data?.server) setServer(res.data.server);
+              } catch (e) {
+                setProvisionDockerfleetError(e.response?.data?.details || e.response?.data?.error || e.message || 'Provisioning failed');
+              } finally {
+                setProvisionDockerfleetLoading(false);
+              }
+            }}
+            className="px-3 py-1.5 text-sm font-medium text-white bg-primary-600 dark:bg-primary-500 rounded-lg hover:bg-primary-700 dark:hover:bg-primary-600 disabled:opacity-50"
+          >
+            {provisionDockerfleetLoading ? 'Provisioning…' : 'Provision dockerfleet user'}
+          </button>
         </div>
       )}
 

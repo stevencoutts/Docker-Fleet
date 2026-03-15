@@ -4,6 +4,7 @@ const sshService = require('../../services/ssh.service');
 const pollingService = require('../../services/polling.service');
 const { configureFirewall } = require('../../services/public-www.service');
 const tailscaleService = require('../../services/tailscale.service');
+const dockerfleetProvision = require('../../services/dockerfleet-provision.service');
 const { encrypt } = require('../../utils/encryption');
 const logger = require('../../config/logger');
 
@@ -119,12 +120,25 @@ const createServer = async (req, res, next) => {
       });
     }
 
+    let effectiveUsername = username;
+    const provisionDockerfleet = req.body.provisionDockerfleet === true || req.body.provisionDockerfleet === 'true';
+    if (provisionDockerfleet) {
+      const provisionResult = await dockerfleetProvision.provisionDockerfleetUser(testServer);
+      if (!provisionResult.success) {
+        return res.status(400).json({
+          error: 'Dockerfleet user provisioning failed',
+          details: provisionResult.error || 'Ensure the SSH user has sudo and Docker is installed on the host.',
+        });
+      }
+      effectiveUsername = dockerfleetProvision.DOCKERFLEET_USER;
+    }
+
     const server = await Server.create({
       userId: req.user.id,
       name,
       host,
       port: port || 22,
-      username,
+      username: effectiveUsername,
       privateKeyEncrypted: privateKey,
       publicHost: publicHost && String(publicHost).trim() ? String(publicHost).trim() : null,
     });
@@ -284,6 +298,44 @@ const testConnection = async (req, res, next) => {
         details: error.message,
       });
     }
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Retrospective provisioning: create dockerfleet user on the server and switch this server to use it.
+ * Requires current SSH user to have sudo. Same private key is used for dockerfleet.
+ */
+const provisionDockerfleet = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const server = await Server.findOne({
+      where: { id, userId: req.user.id },
+    });
+    if (!server) {
+      return res.status(404).json({ error: 'Server not found' });
+    }
+    if (dockerfleetProvision.isDockerfleetUser(server)) {
+      return res.status(400).json({
+        error: 'Server is already using the dockerfleet user',
+      });
+    }
+    const result = await dockerfleetProvision.provisionDockerfleetUser(server);
+    if (!result.success) {
+      return res.status(400).json({
+        error: 'Dockerfleet user provisioning failed',
+        details: result.error || 'Ensure the SSH user has sudo and Docker is installed on the host.',
+      });
+    }
+    await server.update({ username: dockerfleetProvision.DOCKERFLEET_USER });
+    sshService.disconnect(id);
+    const serverData = toServerResponse(server);
+    res.json({
+      success: true,
+      message: 'Dockerfleet user provisioned; server will use it for SSH from now on.',
+      server: serverData,
+    });
   } catch (error) {
     next(error);
   }
@@ -463,6 +515,7 @@ const createServerValidation = [
   body('port').optional().isInt({ min: 1, max: 65535 }),
   body('username').notEmpty().withMessage('Username is required'),
   body('privateKey').notEmpty().withMessage('Private key is required'),
+  body('provisionDockerfleet').optional().isBoolean().withMessage('provisionDockerfleet must be a boolean'),
 ];
 
 // Validation rules for updating a server (private key is optional)
@@ -546,6 +599,7 @@ module.exports = {
   updateServer,
   deleteServer,
   testConnection,
+  provisionDockerfleet,
   tailscaleEnable,
   tailscaleDisable,
   clearTailscaleStoredKey,

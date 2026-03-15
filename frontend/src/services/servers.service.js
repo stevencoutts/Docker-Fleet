@@ -76,6 +76,8 @@ export const serversService = {
   update: (id, data) => api.put(`/api/v1/servers/${id}`, data),
   delete: (id) => api.delete(`/api/v1/servers/${id}`),
   testConnection: (id) => api.post(`/api/v1/servers/${id}/test`),
+  /** Create dockerfleet user on server and switch this server to use it (retrospective). Returns { success, server, message }. */
+  provisionDockerfleet: (id) => api.post(`/api/v1/servers/${id}/provision-dockerfleet`),
   tailscaleEnable: (id, authKey, options = {}) =>
     api.post(`/api/v1/servers/${id}/tailscale/enable`, { authKey, storeAuthKey: options.storeAuthKey }, { timeout: options.timeout ?? TAILSCALE_ENABLE_TIMEOUT_MS }),
   tailscaleDisable: (id) => api.post(`/api/v1/servers/${id}/tailscale/disable`),

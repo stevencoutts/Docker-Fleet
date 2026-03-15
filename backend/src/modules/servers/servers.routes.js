@@ -7,6 +7,7 @@ const {
   updateServer,
   deleteServer,
   testConnection,
+  provisionDockerfleet,
   tailscaleEnable,
   tailscaleDisable,
   clearTailscaleStoredKey,
@@ -60,6 +61,7 @@ router.post('/', createServerValidation, validate, createServer);
 router.put('/:id', updateServerValidation, validate, updateServer);
 router.delete('/:id', deleteServer);
 router.post('/:id/test', testConnection);
+router.post('/:id/provision-dockerfleet', provisionDockerfleet);
 router.post('/:id/compose/up', composeUp);
 
 module.exports = router;
