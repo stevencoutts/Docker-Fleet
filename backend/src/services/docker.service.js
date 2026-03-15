@@ -1461,9 +1461,14 @@ class DockerService {
       results.dockerVersion = 'Unknown';
     }
 
-    // CPU usage - simplified
+    // CPU usage: sample /proc/stat twice (1s apart) and compute from deltas so we get recent usage,
+    // not average-since-boot (which can look low when load is high).
     try {
-      const cpuUsageResult = await sshService.executeCommand(server, "grep '^cpu ' /proc/stat | awk '{usage=($2+$4)*100/($2+$4+$5)} END {print usage}'", { allowFailure: true });
+      const cpuUsageResult = await sshService.executeCommand(
+        server,
+        "(grep '^cpu ' /proc/stat; sleep 1; grep '^cpu ' /proc/stat) | awk 'NR==1{for(i=2;i<=NF;i++) t1+=$i; i1=$5} NR==2{for(i=2;i<=NF;i++) t2+=$i; i2=$5; dt=t2-t1; di=i2-i1; if(dt>0) printf \"%.1f\", (dt-di)/dt*100; else print 0}'",
+        { allowFailure: true, timeout: 15000 }
+      );
       if (cpuUsageResult && cpuUsageResult.stdout) {
         const cpuUsage = parseFloat(cpuUsageResult.stdout.trim());
         results.cpuUsage = !isNaN(cpuUsage) ? `${cpuUsage.toFixed(1)}%` : 'Unknown';
