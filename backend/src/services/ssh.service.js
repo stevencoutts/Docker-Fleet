@@ -34,6 +34,7 @@ class SSHService {
             ssh,
             isConnected: true,
             serverId: server.id,
+            isFallback: !!isFallback,
           });
           logger.info(`SSH connection established to ${host}:${server.port}${isFallback ? ' (fallback from Tailscale IP)' : ''}`);
           resolve(ssh);
@@ -236,6 +237,16 @@ class SSHService {
         });
       });
     });
+  }
+
+  /**
+   * Returns true if the current connection for this server was established via fallback
+   * (Tailscale IP was unreachable, so we connected to server.host). Used to report "Tailscale not working" in the UI.
+   */
+  isConnectedViaFallback(serverId) {
+    const connectionKey = `${serverId}`;
+    const connection = this.connections.get(connectionKey);
+    return !!(connection && connection.isConnected && connection.isFallback);
   }
 
   disconnect(serverId) {

@@ -53,10 +53,13 @@ async function syncServer(server) {
 
     // Host info
     try {
-      const hostInfo = await dockerService.getHostInfo(server);
+      const hostInfo = await dockerService.getHostInfo(server) || {};
+      if (server.tailscaleEnabled && server.tailscaleIp) {
+        hostInfo.tailscaleUnreachable = sshService.isConnectedViaFallback(serverId);
+      }
       await ServerHostInfoCache.upsert({
         serverId,
-        hostInfo: hostInfo || {},
+        hostInfo,
         updatedAt: now,
       });
     } catch (hostErr) {
