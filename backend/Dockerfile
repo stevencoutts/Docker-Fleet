@@ -3,6 +3,9 @@ FROM node:18-alpine
 # Create app directory
 WORKDIR /app
 
+# OpenSSH client for dockerfleet provisioning (ssh-keygen -y to derive public key from private)
+RUN apk add --no-cache openssh-client
+
 # Create non-root user
 RUN addgroup -g 1001 -S nodejs && \
     adduser -S nodejs -u 1001
