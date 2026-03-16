@@ -14,15 +14,38 @@ const DOCKERFLEET_USER = 'dockerfleet';
 /**
  * Derive SSH public key from private key using ssh-keygen. Uses a temp file (mode 0600).
  * @param {string} privateKeyPem - PEM private key content
- * @returns {string} - Single line public key (e.g. "ssh-ed25519 AAAA... comment")
+ * @returns {{ publicKey: string } | { error: string }}
  */
 function getPublicKeyFromPrivate(privateKeyPem) {
   const tmpDir = os.tmpdir();
   const tmpFile = path.join(tmpDir, `dockerfleet-key-${process.pid}-${Date.now()}`);
   try {
-    fs.writeFileSync(tmpFile, privateKeyPem.trim(), { mode: 0o600 });
-    const pub = execSync(`ssh-keygen -y -f "${tmpFile}"`, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
-    return (pub || '').trim();
+    const trimmed = (privateKeyPem || '').trim();
+    if (!trimmed || !trimmed.includes('-----BEGIN')) {
+      return { error: 'Private key is empty or invalid (missing PEM header).' };
+    }
+    fs.writeFileSync(tmpFile, trimmed, { mode: 0o600 });
+    const pub = execSync(`ssh-keygen -y -f "${tmpFile}"`, {
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      maxBuffer: 1024 * 10,
+    });
+    const out = (pub || '').trim();
+    if (out && (out.startsWith('ssh-ed25519 ') || out.startsWith('ssh-rsa ') || out.startsWith('ecdsa-sha2-'))) {
+      return { publicKey: out };
+    }
+    return { error: 'Could not derive public key (unexpected ssh-keygen output).' };
+  } catch (e) {
+    const stderr = (e.stderr && (typeof e.stderr === 'string' ? e.stderr : String(e.stderr))) || '';
+    const msg = (e.message || '').toLowerCase();
+    if (/passphrase|decrypt|bad passphrase/i.test(stderr) || /passphrase|decrypt/i.test(msg)) {
+      return { error: 'This key is passphrase-protected. Use a private key without a passphrase for dockerfleet provisioning (e.g. generate one with ssh-keygen -t ed25519 -N "" -f key).' };
+    }
+    if (/no such file|not found|command not found/i.test(stderr + msg)) {
+      return { error: 'ssh-keygen not found. Install OpenSSH (e.g. openssh-client) on the server where Docker Fleet runs.' };
+    }
+    const detail = stderr.trim() || e.message || 'Unknown error';
+    return { error: `Could not derive public key: ${detail}` };
   } finally {
     try {
       fs.unlinkSync(tmpFile);
@@ -48,18 +71,12 @@ function shellEscapeSingle(s) {
  * @returns {{ success: true } | { success: false, error: string }}
  */
 async function provisionDockerfleetUser(server) {
-  let publicKey;
-  try {
-    publicKey = getPublicKeyFromPrivate(server.getDecryptedKey());
-  } catch (e) {
-    logger.warn('Dockerfleet provision: failed to derive public key', { message: e.message });
-    return { success: false, error: 'Could not derive public key from private key. Ensure the key is a valid OpenSSH format.' };
+  const keyResult = getPublicKeyFromPrivate(server.getDecryptedKey());
+  if (keyResult.error) {
+    logger.warn('Dockerfleet provision: failed to derive public key', { message: keyResult.error });
+    return { success: false, error: keyResult.error };
   }
-  if (!publicKey || !publicKey.startsWith('ssh-')) {
-    return { success: false, error: 'Invalid or unsupported key format.' };
-  }
-
-  const authLine = publicKey.replace(/'/g, "'\"'\"'");
+  const publicKey = keyResult.publicKey;
   const homeDir = `/home/${DOCKERFLEET_USER}`;
   const sshDir = `${homeDir}/.ssh`;
   const authKeysPath = `${sshDir}/authorized_keys`;
