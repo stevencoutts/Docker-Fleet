@@ -20,11 +20,17 @@ function getPublicKeyFromPrivate(privateKeyPem) {
   const tmpDir = os.tmpdir();
   const tmpFile = path.join(tmpDir, `dockerfleet-key-${process.pid}-${Date.now()}`);
   try {
-    const trimmed = (privateKeyPem || '').trim();
-    if (!trimmed || !trimmed.includes('-----BEGIN')) {
+    // Normalize: trim and fix line endings (CRLF/CR can cause "error in libcrypto" with ssh-keygen)
+    const normalized = (privateKeyPem || '')
+      .trim()
+      .replace(/\r\n/g, '\n')
+      .replace(/\r/g, '\n');
+    if (!normalized || !normalized.includes('-----BEGIN')) {
       return { error: 'Private key is empty or invalid (missing PEM header).' };
     }
-    fs.writeFileSync(tmpFile, trimmed, { mode: 0o600 });
+    // Ensure file ends with single newline (some ssh-keygen/libcrypto expect it)
+    const toWrite = normalized.endsWith('\n') ? normalized : normalized + '\n';
+    fs.writeFileSync(tmpFile, toWrite, { mode: 0o600 });
     const pub = execSync(`ssh-keygen -y -f "${tmpFile}"`, {
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -43,6 +49,11 @@ function getPublicKeyFromPrivate(privateKeyPem) {
     }
     if (/no such file|not found|command not found/i.test(stderr + msg)) {
       return { error: 'ssh-keygen not found. Install OpenSSH (e.g. openssh-client) on the server where Docker Fleet runs.' };
+    }
+    if (/error in libcrypto|libcrypto/i.test(stderr + msg)) {
+      return {
+        error: 'Could not read the private key (libcrypto error). Try re-pasting the key, ensure no extra spaces or line breaks in the middle of lines, or use a key generated with: ssh-keygen -t ed25519 -N "" -f key',
+      };
     }
     const detail = stderr.trim() || e.message || 'Unknown error';
     return { error: `Could not derive public key: ${detail}` };
