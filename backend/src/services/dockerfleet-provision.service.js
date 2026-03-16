@@ -78,6 +78,7 @@ function shellEscapeSingle(s) {
  * - Creates user dockerfleet if missing (with home dir, bash)
  * - Adds dockerfleet to docker group (if group exists)
  * - Sets up ~dockerfleet/.ssh/authorized_keys with the public key from server's private key
+ * - Adds passwordless sudo for dockerfleet via /etc/sudoers.d/dockerfleet (for Tailscale install etc.)
  * @param {object} server - Server model (host, port, username, getDecryptedKey())
  * @returns {{ success: true } | { success: false, error: string }}
  */
@@ -92,8 +93,9 @@ async function provisionDockerfleetUser(server) {
   const sshDir = `${homeDir}/.ssh`;
   const authKeysPath = `${sshDir}/authorized_keys`;
 
-  // Run provisioning script: create user, add to docker group, set up SSH key.
+  // Run provisioning script: create user, add to docker group, set up SSH key, passwordless sudo.
   // Use sudo for all privileged operations. Idempotent where possible.
+  const sudoersDropIn = `/etc/sudoers.d/${DOCKERFLEET_USER}`;
   const script = [
     `id ${DOCKERFLEET_USER} >/dev/null 2>&1 || sudo useradd -m -s /bin/bash ${DOCKERFLEET_USER}`,
     `getent group docker >/dev/null 2>&1 && sudo usermod -aG docker ${DOCKERFLEET_USER} || true`,
@@ -102,6 +104,8 @@ async function provisionDockerfleetUser(server) {
     `sudo chown -R ${DOCKERFLEET_USER}:${DOCKERFLEET_USER} ${sshDir}`,
     `sudo chmod 700 ${sshDir}`,
     `sudo chmod 600 ${authKeysPath}`,
+    `echo '${DOCKERFLEET_USER} ALL=(ALL) NOPASSWD: ALL' | sudo tee ${sudoersDropIn} >/dev/null`,
+    `sudo chmod 440 ${sudoersDropIn}`,
   ].join(' && ');
 
   try {

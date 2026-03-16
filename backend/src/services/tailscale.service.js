@@ -56,6 +56,16 @@ async function enableTailscale(server, authKey, options = {}) {
     await sshService.executeCommand(server, installScript, { timeout: 600000, pty: false });
     if (onProgress) onProgress('installing', 'Tailscale installed', 'ok');
   } catch (installErr) {
+    const msg = (installErr.message || '').toLowerCase();
+    if (/sudo.*password|terminal is required to read the password|askpass/i.test(msg)) {
+      const user = (server.username || 'your_user').trim() || 'your_user';
+      const err = new Error(
+        `Your SSH user (${user}) needs passwordless sudo to install Tailscale. On the server run: sudo visudo and add: ${user} ALL=(ALL) NOPASSWD: ALL Then try Enable Tailscale again.`
+      );
+      err.code = 'TAILSCALE_SUDO_REQUIRED';
+      if (onProgress) onProgress('installing', 'Sudo password required', 'fail');
+      throw err;
+    }
     // If install failed/timed out but tailscale is now available (e.g. install finished late), continue
     const check = await getExistingTailscaleIp(server);
     if (!check) {

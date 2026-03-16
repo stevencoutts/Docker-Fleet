@@ -970,6 +970,9 @@ const ServerDetails = () => {
         <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
           When enabled, the app uses this node&apos;s Tailscale IP for SSH and management. If Tailscale is already running on the node, it will be used automatically; otherwise you can install and join with an auth key from the Tailscale admin console.
         </p>
+        <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
+          To install Tailscale on this node, your SSH user (<code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">{server?.username || '…'}</code>) must have passwordless sudo. On the server run <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">sudo visudo</code> and add: <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">{server?.username || 'user'} ALL=(ALL) NOPASSWD: ALL</code>
+        </p>
         {tailscaleError && (
           <div className="mb-4 p-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-sm text-red-700 dark:text-red-300">
             <p className="font-medium">{tailscaleError}</p>
