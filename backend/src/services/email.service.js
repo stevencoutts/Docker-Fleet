@@ -376,6 +376,80 @@ Time: ${new Date().toLocaleString()}
 
     return await this.sendAlert(recipient, subject, html, text);
   }
+
+  async sendCertificateExpiryAlert(recipient, server, expiringCerts, { renewed, renewError }) {
+    if (!expiringCerts || expiringCerts.length === 0) return { success: false, error: 'No expiring certs' };
+    const serverName = server.name || server.host || 'Unknown Server';
+    const count = expiringCerts.length;
+
+    const statusLine = renewed
+      ? 'We have automatically renewed the certificate(s) and reloaded nginx.'
+      : renewError
+        ? `Auto-renewal failed: ${escapeHtml(renewError)}. Please renew manually via the Domains tab.`
+        : 'Please renew manually via the Domains tab.';
+
+    const subject = renewed
+      ? `✅ Certificate(s) renewed on ${serverName}`
+      : `⚠️ Certificate(s) expiring soon on ${serverName}`;
+
+    const list = expiringCerts
+      .map((c) => `  • ${c.name} (${(c.domains || []).join(', ')}) – ${c.validDays ?? '?'} days left`)
+      .join('\n');
+
+    const text = `
+Certificate ${renewed ? 'Renewal' : 'Expiry'} Alert
+
+Server: ${serverName} (${server.host})
+${count} certificate(s) ${renewed ? 'were' : 'are'} expiring within 30 days:
+
+${list}
+
+${statusLine}
+
+Time: ${new Date().toLocaleString()}
+    `.trim();
+
+    const rows = expiringCerts
+      .map((c) => `<tr><td>${escapeHtml(c.name)}</td><td>${escapeHtml((c.domains || []).join(', '))}</td><td>${c.validDays ?? '?'} days</td></tr>`)
+      .join('');
+
+    const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .alert { background-color: ${renewed ? '#e8f5e9' : '#fff3e0'}; border-left: 4px solid ${renewed ? '#4caf50' : '#ff9800'}; padding: 15px; margin: 20px 0; }
+    table { border-collapse: collapse; width: 100%; margin: 10px 0; }
+    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+    th { background: #f5f5f5; }
+    .footer { margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd; font-size: 12px; color: #666; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2 style="color: ${renewed ? '#2e7d32' : '#e65100'};">${renewed ? '✅' : '⚠️'} Certificate ${renewed ? 'Renewal' : 'Expiry'} Alert</h2>
+    <div class="alert">
+      <strong>Server:</strong> ${escapeHtml(serverName)} (${escapeHtml(server.host || '')})<br>
+      ${count} certificate(s) ${renewed ? 'were' : 'are'} expiring within 30 days.<br><br>
+      ${escapeHtml(statusLine)}
+    </div>
+    <table>
+      <thead><tr><th>Certificate</th><th>Domains</th><th>Valid</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <div class="footer">
+      <p>Time: ${new Date().toLocaleString()}</p>
+      <p>DockerFleet Manager</p>
+    </div>
+  </div>
+</body>
+</html>
+    `.trim();
+
+    return await this.sendAlert(recipient, subject, html, text);
+  }
 }
 
 function escapeHtml(s) {

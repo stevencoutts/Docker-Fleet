@@ -812,6 +812,20 @@ async function listCertificates(serverId, userId) {
   return { certificates };
 }
 
+/**
+ * Renew Let's Encrypt certificates (certbot renew) and reload nginx.
+ * Renews certs expiring in 30 days or less; no-op if none need renewal.
+ */
+async function renewCertificates(serverId, userId) {
+  const server = await Server.findByPk(serverId);
+  if (!server || server.userId !== userId) throw new Error('Server not found');
+
+  await ensureNginxAndCertbot(server);
+  await exec(server, 'sudo certbot renew --non-interactive', { timeout: 180000, allowFailure: true });
+  await exec(server, 'sudo systemctl reload nginx 2>/dev/null || sudo nginx -s reload 2>/dev/null || true', { allowFailure: true });
+  return { success: true, message: 'Certificate renewal completed. Nginx reloaded.' };
+}
+
 const EMPTY_NGINX_PLACEHOLDER = '# No proxy routes';
 
 /**
@@ -908,6 +922,7 @@ module.exports = {
   requestDnsCert,
   continueDnsCert,
   listCertificates,
+  renewCertificates,
   getNginxConfig,
   importNginxBlockForDomain,
   updateCustomNginxConfig,

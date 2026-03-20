@@ -27,6 +27,7 @@ const monitoringService = require('./services/monitoring.service');
 const backupSchedulerService = require('./services/backup-scheduler.service');
 const pollingService = require('./services/polling.service');
 const updateCheckService = require('./services/update-check.service');
+const certificateExpiryService = require('./services/certificate-expiry.service');
 const db = require('./models');
 const socketConfig = require('./config/socket');
 
@@ -368,6 +369,9 @@ function listen() {
       backupSchedulerService.start();
       pollingService.start();
       updateCheckService.start();
+      if (config.email && config.email.enabled) {
+        certificateExpiryService.start();
+      }
     }, 5000);
   });
 }

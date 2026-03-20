@@ -99,4 +99,12 @@ module.exports = {
     const ms = Math.max(0.25, hours) * 3600 * 1000;
     return { intervalMs: ms };
   },
+
+  get certExpiryCheck() {
+    const hours = parseFloat(process.env.CERT_EXPIRY_CHECK_INTERVAL_HOURS) || 24;
+    const ms = Math.max(1, hours) * 3600 * 1000;
+    const alertCooldownMs = parseInt(process.env.CERT_EXPIRY_ALERT_COOLDOWN_MS, 10) || 7 * 24 * 3600 * 1000;
+    const enabled = process.env.CERT_EXPIRY_ALERTS_ENABLED !== 'false';
+    return { intervalMs: ms, alertCooldownMs, enabled };
+  },
 };

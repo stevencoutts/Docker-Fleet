@@ -168,6 +168,17 @@ async function listCertificates(req, res, next) {
   }
 }
 
+async function renewCertificates(req, res, next) {
+  try {
+    const { id: serverId } = req.params;
+    const result = await publicWwwService.renewCertificates(serverId, req.user.id);
+    res.json(result);
+  } catch (error) {
+    if (error.message === 'Server not found') return res.status(404).json({ error: error.message });
+    next(error);
+  }
+}
+
 async function getNginxConfig(req, res, next) {
   try {
     const { id: serverId } = req.params;
@@ -217,6 +228,7 @@ module.exports = {
   requestDnsCert,
   continueDnsCert,
   listCertificates,
+  renewCertificates,
   getNginxConfig,
   getImportNginxBlock,
   updateCustomNginxConfig,

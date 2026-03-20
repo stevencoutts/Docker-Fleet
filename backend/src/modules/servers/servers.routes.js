@@ -28,6 +28,7 @@ const {
   requestDnsCert,
   continueDnsCert,
   listCertificates,
+  renewCertificates,
   getNginxConfig,
   getImportNginxBlock,
   updateCustomNginxConfig,
@@ -47,6 +48,7 @@ router.post('/:id/public-www/enable', enablePublicWww);
 router.post('/:id/public-www/disable', disablePublicWww);
 router.post('/:id/public-www/sync', syncPublicWww);
 router.get('/:id/public-www/certificates', listCertificates);
+router.post('/:id/public-www/renew-certificates', renewCertificates);
 router.get('/:id/public-www/nginx-config', getNginxConfig);
 router.get('/:id/public-www/nginx-import', getImportNginxBlock);
 router.put('/:id/public-www/custom-nginx-config', updateCustomNginxConfig);

@@ -442,6 +442,9 @@ docker-compose exec backend npm run migrate
 | `MONITORING_ALERT_ON_UPDATE_AVAILABLE` | Enable email when image updates available | `true` |
 | `MONITORING_UPDATE_ALERT_COOLDOWN_MS` | Update alert cooldown (ms) | `43200000` (12 hours) |
 | `MONITORING_MIN_CONTAINERS_WITH_UPDATES_BEFORE_ALERT` | Min containers with updates before alert | `1` |
+| `CERT_EXPIRY_CHECK_INTERVAL_HOURS` | Certificate expiry check interval (hours) | `24` |
+| `CERT_EXPIRY_ALERT_COOLDOWN_MS` | Cooldown between cert expiry alerts per server (ms) | `604800000` (7 days) |
+| `CERT_EXPIRY_ALERTS_ENABLED` | Enable certificate expiry email alerts and auto-renew | `true` |
 
 ### Frontend
 
@@ -544,6 +547,19 @@ The application can send email alerts when containers with auto-restart enabled 
 - `MONITORING_ALERT_ON_UPDATE_AVAILABLE`: Enable/disable email when image updates are available (default: `true`)
 - `MONITORING_UPDATE_ALERT_COOLDOWN_MS`: Cooldown before resending update-available alerts (default: 12 hours)
 - `MONITORING_MIN_CONTAINERS_WITH_UPDATES_BEFORE_ALERT`: Only alert when at least this many containers have updates (default: 1)
+
+#### Certificate Expiry Alerts
+
+When Public WWW is enabled, the app checks Let's Encrypt certificates daily. If any cert has fewer than 30 days validity:
+
+- **Auto-renew**: Runs `certbot renew` automatically (Let's Encrypt renews certs expiring in 30 days or less)
+- **Email alert**: Sends an email to the server owner with the result (success or failure). Cooldown: 7 days per server to avoid spam.
+
+Environment variables:
+
+- `CERT_EXPIRY_CHECK_INTERVAL_HOURS`: How often to check certificates (default: 24 hours)
+- `CERT_EXPIRY_ALERT_COOLDOWN_MS`: Minimum time between cert expiry alerts per server (default: 7 days)
+- `CERT_EXPIRY_ALERTS_ENABLED`: Set to `false` to disable cert expiry checks and alerts (default: `true`)
 
 #### Web UI Configuration
 

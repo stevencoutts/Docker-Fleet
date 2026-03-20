@@ -68,6 +68,7 @@ const ServerDetails = () => {
   const [letsEncryptEmailSaving, setLetsEncryptEmailSaving] = useState(false);
   const [certificates, setCertificates] = useState([]);
   const [certsLoading, setCertsLoading] = useState(false);
+  const [renewCertificatesLoading, setRenewCertificatesLoading] = useState(false);
   const [nginxConfigView, setNginxConfigView] = useState(null);
   const [nginxConfigLoading, setNginxConfigLoading] = useState(false);
   const [sshAllowedIps, setSshAllowedIps] = useState('');
@@ -1547,18 +1548,45 @@ const ServerDetails = () => {
               </span>
             )}
             {server?.publicWwwEnabled && publicWwwDomainsOpen && (
-              <button
-                type="button"
-                disabled={certsLoading}
-                onClick={(e) => { e.stopPropagation(); fetchCertificates(); }}
-                className="ml-2 text-xs font-medium text-primary-600 dark:text-primary-400 hover:underline disabled:opacity-50"
-              >
-                {certsLoading ? 'Refreshing…' : 'Refresh certs'}
-              </button>
+              <span className="ml-2 flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={renewCertificatesLoading || certsLoading}
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    setRenewCertificatesLoading(true);
+                    try {
+                      await publicWwwService.renewCertificates(serverId);
+                      await fetchCertificates();
+                      alert('Certificates renewed and nginx reloaded.');
+                    } catch (err) {
+                      alert(err.response?.data?.error || err.message || 'Renew failed');
+                    } finally {
+                      setRenewCertificatesLoading(false);
+                    }
+                  }}
+                  className="text-xs font-medium text-primary-600 dark:text-primary-400 hover:underline disabled:opacity-50"
+                >
+                  {renewCertificatesLoading ? 'Renewing…' : 'Renew certificates'}
+                </button>
+                <button
+                  type="button"
+                  disabled={certsLoading}
+                  onClick={(e) => { e.stopPropagation(); fetchCertificates(); }}
+                  className="text-xs font-medium text-gray-700 dark:text-gray-300 hover:underline disabled:opacity-50"
+                >
+                  {certsLoading ? 'Refreshing…' : 'Refresh certs'}
+                </button>
+              </span>
             )}
           </button>
           {publicWwwDomainsOpen && (
             <>
+          {certificates.some((c) => c.validDays != null && c.validDays < 30) && (
+            <div className="mb-4 p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-sm text-amber-800 dark:text-amber-200">
+              <strong>Certificate expiry:</strong> {certificates.filter((c) => c.validDays != null && c.validDays < 30).map((c) => `${c.name} (${c.validDays <= 0 ? 'expired' : `${c.validDays} days`})`).join(', ')}. Use <strong>Renew certificates</strong> to renew via certbot.
+            </div>
+          )}
           <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">Certificate, proxy route, and nginx config per domain.</p>
           {proxyRoutesLoading ? (
             <p className="text-sm text-gray-500">Loading…</p>
@@ -1612,7 +1640,11 @@ const ServerDetails = () => {
                           {cert ? (
                             <span className="text-gray-700 dark:text-gray-300">
                               {cert.expiryDate != null ? cert.expiryDate : cert.name}
-                              {cert.validDays != null && <span className="ml-1 text-green-600 dark:text-green-400">({cert.validDays} days)</span>}
+                              {cert.validDays != null && (
+                                <span className={`ml-1 ${cert.validDays <= 0 ? 'text-red-600 dark:text-red-400 font-medium' : cert.validDays < 30 ? 'text-amber-600 dark:text-amber-400' : 'text-green-600 dark:text-green-400'}`}>
+                                  ({cert.validDays <= 0 ? 'expired' : `${cert.validDays} days`})
+                                </span>
+                              )}
                             </span>
                           ) : (
                             <>
