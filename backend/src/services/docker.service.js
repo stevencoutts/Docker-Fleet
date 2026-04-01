@@ -34,6 +34,12 @@ function matchesSkipUpdateNamePattern(containerName) {
   return patterns.some(suffix => name.endsWith(suffix) || name === suffix);
 }
 
+/** Engine API version for curl→/var/run/docker.sock on remote hosts. Older daemons cap at 1.41; newer accept older clients. */
+function getDockerRemoteApiVersion() {
+  const v = (process.env.DOCKER_REMOTE_API_VERSION || '1.41').trim();
+  return /^1\.\d+$/.test(v) ? v : '1.41';
+}
+
 class DockerService {
   async listContainers(server, all = false) {
     // Use a simpler format that's more reliable
@@ -379,7 +385,7 @@ class DockerService {
       const payload = JSON.stringify(createBody);
       const b64 = Buffer.from(payload, 'utf8').toString('base64');
 
-      const createCmd = `echo ${b64} | base64 -d > /tmp/dockerfleet-create.json && curl -s -X POST --unix-socket /var/run/docker.sock -H "Content-Type: application/json" -d @/tmp/dockerfleet-create.json "http://localhost/v1.44/containers/create?name=${tempName}"`;
+      const createCmd = `echo ${b64} | base64 -d > /tmp/dockerfleet-create.json && curl -s -X POST --unix-socket /var/run/docker.sock -H "Content-Type: application/json" -d @/tmp/dockerfleet-create.json "http://localhost/v${getDockerRemoteApiVersion()}/containers/create?name=${tempName}"`;
       const createResult = await sshService.executeCommand(server, createCmd, { allowFailure: true, timeout: 15000 });
       await sshService.executeCommand(server, 'rm -f /tmp/dockerfleet-create.json', { allowFailure: true });
 
@@ -590,7 +596,7 @@ class DockerService {
       const payload = JSON.stringify(createBody);
       const b64 = Buffer.from(payload, 'utf8').toString('base64');
 
-      const createCmd = `echo ${b64} | base64 -d > /tmp/dockerfleet-create.json && curl -s -X POST --unix-socket /var/run/docker.sock -H "Content-Type: application/json" -d @/tmp/dockerfleet-create.json "http://localhost/v1.44/containers/create?name=${tempName}"`;
+      const createCmd = `echo ${b64} | base64 -d > /tmp/dockerfleet-create.json && curl -s -X POST --unix-socket /var/run/docker.sock -H "Content-Type: application/json" -d @/tmp/dockerfleet-create.json "http://localhost/v${getDockerRemoteApiVersion()}/containers/create?name=${tempName}"`;
       const createResult = await sshService.executeCommand(server, createCmd, { allowFailure: true, timeout: 15000 });
       await sshService.executeCommand(server, 'rm -f /tmp/dockerfleet-create.json', { allowFailure: true });
 
