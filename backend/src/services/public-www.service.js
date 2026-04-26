@@ -821,6 +821,28 @@ async function renewCertificates(serverId, userId) {
   if (!server || server.userId !== userId) throw new Error('Server not found');
 
   await ensureNginxAndCertbot(server);
+
+  // Manual DNS certificates (authenticator=manual) cannot be auto-renewed without a DNS plugin/API.
+  // Our DNS flow is interactive and uses a temporary hook, so "certbot renew" will fail/hang.
+  try {
+    const manual = await exec(
+      server,
+      "sudo sh -c \"grep -R '^authenticator = manual' -n /etc/letsencrypt/renewal 2>/dev/null | head -20 || true\"",
+      { allowFailure: true, timeout: 15000, logLabel: 'certbot_manual_check' }
+    );
+    const manualOut = (manual.stdout || '').trim();
+    if (manualOut) {
+      throw new Error(
+        'This server has certificate(s) issued with DNS/manual validation (authenticator=manual). ' +
+        'Those cannot be renewed automatically with the current setup.\n\n' +
+        'Use the “Get certificate (DNS validation)” flow again to re-issue the certificate when it is near expiry.'
+      );
+    }
+  } catch (e) {
+    // If we threw intentionally above, surface it; otherwise ignore hint failures.
+    if (e && e.message && e.message.includes('authenticator=manual')) throw e;
+  }
+
   const renew = await exec(server, 'sudo certbot renew --non-interactive', { timeout: 240000, allowFailure: true, logLabel: 'certbot_renew' });
   const out = `${renew.stdout || ''}\n${renew.stderr || ''}`.trim();
 
@@ -838,32 +860,11 @@ async function renewCertificates(serverId, userId) {
     lower.includes('no certificates found') ||
     lower.includes('no renewals attempted');
 
-  // A common reason for "renew doesn't work" is manual DNS certificates.
-  // Surface a hint when renewal configs use manual authenticator.
-  let manualHint = null;
-  try {
-    const manual = await exec(
-      server,
-      "sudo sh -c \"grep -R '^authenticator = manual' -n /etc/letsencrypt/renewal 2>/dev/null | head -20 || true\"",
-      { allowFailure: true, timeout: 15000, logLabel: 'certbot_manual_check' }
-    );
-    const manualOut = (manual.stdout || '').trim();
-    if (manualOut) {
-      manualHint =
-        'Note: some certificates were issued with DNS/manual validation (authenticator=manual). ' +
-        'Those cannot auto-renew without a DNS plugin or configured renewal hooks. ' +
-        'Use the DNS certificate flow again to re-issue if needed.';
-    }
-  } catch (e) {
-    // ignore hint failures
-  }
-
   return {
     success: true,
     renewed: !noop,
     message: noop ? 'No renewals were attempted (certificates may not be due yet).' : 'Certificate renewal completed.',
     details: out ? out.slice(-4000) : undefined,
-    manualHint: manualHint || undefined,
   };
 }
 
