@@ -10,6 +10,9 @@ const IMAGE_NAME_REGEX = /^[a-zA-Z0-9][a-zA-Z0-9_.\-/:]*$/;
 const IMAGE_NAME_MAX_LEN = 255;
 // Docker tag: alphanumeric, . - _
 const TAG_REGEX = /^[a-zA-Z0-9_.\-]{1,128}$/;
+// Docker container name: alphanumeric start, then alphanumeric + _ . -
+// (Docker allows more in some contexts, but we keep it strict for safety.)
+const CONTAINER_NAME_REGEX = /^[a-zA-Z0-9][a-zA-Z0-9_.\-]{0,254}$/;
 // Port: single port or hostPort:containerPort
 const PORT_REGEX = /^\d{1,5}$|^\d{1,5}:\d{1,5}$/;
 const ALLOWED_SHELLS = ['/bin/sh', '/bin/bash'];
@@ -83,6 +86,16 @@ function validatePortMapping(port) {
 }
 
 /**
+ * Validate Docker container name.
+ */
+function validateContainerName(name) {
+  if (typeof name !== 'string' || !name.trim()) throwInvalid('Container name is required', name);
+  const trimmed = name.trim();
+  if (!CONTAINER_NAME_REGEX.test(trimmed)) throwInvalid('Invalid container name format', name);
+  return trimmed;
+}
+
+/**
  * Validate a file path for export (must be under /tmp, safe chars, end .tar).
  */
 function validateExportPath(path) {
@@ -108,10 +121,12 @@ module.exports = {
   validateImageName,
   validateTag,
   validatePortMapping,
+  validateContainerName,
   validateExportPath,
   escapeSingleQuoted,
   DOCKER_ID_REGEX,
   IMAGE_NAME_REGEX,
   TAG_REGEX,
   PORT_REGEX,
+  CONTAINER_NAME_REGEX,
 };

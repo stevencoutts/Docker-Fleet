@@ -11,6 +11,7 @@ const {
   startContainer,
   stopContainer,
   restartContainer,
+  renameContainer,
   removeContainer,
   getContainerStats,
   updateRestartPolicy,
@@ -42,6 +43,7 @@ router.post('/:serverId/containers/deploy', deployContainer);
 router.post('/:serverId/containers/:containerId/start', startContainer);
 router.post('/:serverId/containers/:containerId/stop', stopContainer);
 router.post('/:serverId/containers/:containerId/restart', restartContainer);
+router.put('/:serverId/containers/:containerId/rename', renameContainer);
 router.delete('/:serverId/containers/:containerId', removeContainer);
 
 module.exports = router;

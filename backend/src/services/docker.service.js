@@ -11,6 +11,7 @@ const {
   validateExportPath,
   escapeSingleQuoted,
   DOCKER_ID_REGEX,
+  validateContainerName,
 } = require('../utils/shellSafe');
 
 function filterValidContainerIds(ids) {
@@ -41,6 +42,45 @@ function getDockerRemoteApiVersion() {
 }
 
 class DockerService {
+  getContainerShmLabelBytes(details) {
+    const raw = details?.Config?.Labels?.['dockerfleet.shmSize'] ?? details?.Config?.Labels?.['dockerfleet.shm_size'];
+    return this.parseBytes(raw);
+  }
+
+  parseBytes(value) {
+    if (value == null) return null;
+    if (typeof value === 'number' && Number.isFinite(value) && value >= 0) return Math.floor(value);
+    const raw = String(value).trim();
+    if (!raw) return null;
+
+    if (/^\d+$/.test(raw)) return parseInt(raw, 10);
+
+    const m = raw.match(/^([\d.]+)\s*([a-zA-Z]+)$/);
+    if (!m) return null;
+    const num = parseFloat(m[1]);
+    if (!Number.isFinite(num) || num < 0) return null;
+
+    const unit = m[2].toLowerCase();
+    const table = {
+      b: 1,
+      k: 1024,
+      kb: 1024,
+      kib: 1024,
+      m: 1024 * 1024,
+      mb: 1024 * 1024,
+      mib: 1024 * 1024,
+      g: 1024 * 1024 * 1024,
+      gb: 1024 * 1024 * 1024,
+      gib: 1024 * 1024 * 1024,
+      t: 1024 * 1024 * 1024 * 1024,
+      tb: 1024 * 1024 * 1024 * 1024,
+      tib: 1024 * 1024 * 1024 * 1024,
+    };
+    const mult = table[unit];
+    if (!mult) return null;
+    return Math.round(num * mult);
+  }
+
   async listContainers(server, all = false) {
     // Use a simpler format that's more reliable
     const command = `docker ps ${all ? '-a' : ''} --format '{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}'`;
@@ -347,6 +387,17 @@ class DockerService {
 
       const tempName = `${name}-new-${Date.now()}`;
 
+      // SHM: allow override, else prefer persisted label, else preserve existing HostConfig.ShmSize
+      const requestedShm = this.parseBytes(options.shmSize);
+      const labeledShm = this.getContainerShmLabelBytes(details);
+      const existingShm = details.HostConfig?.ShmSize != null ? Number(details.HostConfig.ShmSize) : null;
+      const shmSize = requestedShm != null
+        ? requestedShm
+        : (labeledShm != null ? labeledShm : (Number.isFinite(existingShm) && existingShm > 0 ? existingShm : null));
+
+      const labels = { ...(details.Config?.Labels || {}) };
+      if (requestedShm != null) labels['dockerfleet.shmSize'] = String(requestedShm);
+
       // Preserve mounts: prefer HostConfig.Binds; fallback to building from top-level Mounts (bind mounts store config/settings)
       let binds = details.HostConfig?.Binds;
       if (!binds || !Array.isArray(binds) || binds.length === 0) {
@@ -370,7 +421,7 @@ class DockerService {
         Entrypoint: details.Config?.Entrypoint || null,
         Env: details.Config?.Env || null,
         WorkingDir: details.Config?.WorkingDir || null,
-        Labels: details.Config?.Labels || null,
+        Labels: labels,
         Hostname: details.Config?.Hostname || null,
         HostConfig: {
           Binds: binds,
@@ -380,6 +431,7 @@ class DockerService {
           Mounts: details.HostConfig?.Mounts || null,
           Links: details.HostConfig?.Links || null,
           ExtraHosts: details.HostConfig?.ExtraHosts || null,
+          ShmSize: shmSize != null ? shmSize : undefined,
         },
       };
       const payload = JSON.stringify(createBody);
@@ -527,6 +579,17 @@ class DockerService {
 
       const tempName = `${name}-new-${Date.now()}`;
 
+      // SHM: allow override, else prefer persisted label, else preserve existing HostConfig.ShmSize
+      const requestedShm = this.parseBytes(options.shmSize);
+      const labeledShm = this.getContainerShmLabelBytes(details);
+      const existingShm = details.HostConfig?.ShmSize != null ? Number(details.HostConfig.ShmSize) : null;
+      const shmSize = requestedShm != null
+        ? requestedShm
+        : (labeledShm != null ? labeledShm : (Number.isFinite(existingShm) && existingShm > 0 ? existingShm : null));
+
+      const labels = { ...(details.Config?.Labels || {}) };
+      if (requestedShm != null) labels['dockerfleet.shmSize'] = String(requestedShm);
+
       let binds = details.HostConfig?.Binds;
       if (!binds || !Array.isArray(binds) || binds.length === 0) {
         const topMounts = details.Mounts;
@@ -581,7 +644,7 @@ class DockerService {
         Entrypoint: details.Config?.Entrypoint || null,
         Env: details.Config?.Env || null,
         WorkingDir: details.Config?.WorkingDir || null,
-        Labels: details.Config?.Labels || null,
+        Labels: labels,
         Hostname: details.Config?.Hostname || null,
         HostConfig: {
           Binds: binds,
@@ -591,6 +654,7 @@ class DockerService {
           Mounts: details.HostConfig?.Mounts || null,
           Links: details.HostConfig?.Links || null,
           ExtraHosts: details.HostConfig?.ExtraHosts || null,
+          ShmSize: shmSize != null ? shmSize : undefined,
         },
       };
       const payload = JSON.stringify(createBody);
@@ -723,6 +787,17 @@ class DockerService {
     const command = `docker restart ${safeId}`;
     const result = await sshService.executeCommand(server, command);
     return { success: result.code === 0, message: result.stdout || result.stderr };
+  }
+
+  async renameContainer(server, containerId, newName) {
+    const safeId = validateContainerId(containerId);
+    const safeName = validateContainerName(newName);
+    const result = await sshService.executeCommand(server, `docker rename ${safeId} ${escapeSingleQuoted(safeName)}`, { allowFailure: true });
+    if (result.code !== 0) {
+      const msg = (result.stderr || result.stdout || '').trim() || 'Rename failed';
+      return { success: false, message: msg };
+    }
+    return { success: true, message: `Renamed to "${safeName}"`, name: safeName };
   }
 
   async removeContainer(server, containerId, force = false) {
@@ -1596,6 +1671,10 @@ class DockerService {
     if (containerName) {
       command += ` --name ${escape(containerName)}`;
     }
+    const shmBytes = this.parseBytes(options.shmSize);
+    if (shmBytes != null) {
+      command += ` --shm-size=${shmBytes}`;
+    }
     if (options.ports && options.ports.length > 0) {
       options.ports.forEach((port) => {
         command += ` -p ${validatePortMapping(port)}`;
@@ -1631,7 +1710,7 @@ class DockerService {
    * @param {{ imageName: string, containerName: string, ports?: string[], env?: string[], restart?: string, pullFirst?: boolean }} opts
    */
   async deployContainer(server, opts = {}) {
-    const { imageName, containerName, ports, env, restart = 'unless-stopped', pullFirst = true } = opts;
+    const { imageName, containerName, ports, env, restart = 'unless-stopped', pullFirst = true, shmSize } = opts;
     if (!imageName || !String(imageName).trim()) {
       throw new Error('Image name is required');
     }
@@ -1650,6 +1729,7 @@ class DockerService {
       ports: Array.isArray(ports) ? ports : undefined,
       env: Array.isArray(env) ? env : undefined,
       restart: restart || 'unless-stopped',
+      shmSize,
     });
     const startResult = await this.startContainer(server, createResult.containerId);
     if (!startResult.success) {

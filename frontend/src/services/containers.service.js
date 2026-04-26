@@ -9,8 +9,8 @@ export const containersService = {
     api.get(`/api/v1/servers/${serverId}/containers/${containerId}`, { timeout: 20000 }),
   getUpdateStatus: (serverId, containerId) =>
     api.get(`/api/v1/servers/${serverId}/containers/${containerId}/update-status`, { timeout: 30000 }),
-  pullAndUpdate: (serverId, containerId) =>
-    api.post(`/api/v1/servers/${serverId}/containers/${containerId}/pull-and-update`, {}, { timeout: 360000 }),
+  pullAndUpdate: (serverId, containerId, body = {}) =>
+    api.post(`/api/v1/servers/${serverId}/containers/${containerId}/pull-and-update`, body, { timeout: 360000 }),
   recreate: (serverId, containerId, body = {}, timeout = 120000) =>
     api.post(`/api/v1/servers/${serverId}/containers/${containerId}/recreate`, body, { timeout }),
   getLogs: (serverId, containerId, params = {}) => {
@@ -25,6 +25,8 @@ export const containersService = {
     api.post(`/api/v1/servers/${serverId}/containers/${containerId}/stop`),
   restart: (serverId, containerId) =>
     api.post(`/api/v1/servers/${serverId}/containers/${containerId}/restart`),
+  rename: (serverId, containerId, name) =>
+    api.put(`/api/v1/servers/${serverId}/containers/${containerId}/rename`, { name }),
   remove: (serverId, containerId, force = false) =>
     api.delete(`/api/v1/servers/${serverId}/containers/${containerId}?force=${force}`),
   updateRestartPolicy: (serverId, containerId, policy) =>

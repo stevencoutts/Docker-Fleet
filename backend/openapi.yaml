@@ -115,6 +115,11 @@ components:
       required: [policy]
       properties:
         policy: { type: string, enum: [no, on-failure, unless-stopped, always] }
+    RenameContainerRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
     ExecuteCommand:
       type: object
       required: [command]
@@ -914,6 +919,32 @@ paths:
           description: Unauthorized
         "404":
           description: Not found
+  /servers/{serverId}/containers/{containerId}/rename:
+    put:
+      tags: [Containers]
+      summary: Rename container
+      parameters:
+        - name: serverId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: containerId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RenameContainerRequest' }
+      responses:
+        "200":
+          description: Success
+        "400":
+          description: Validation error
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
   /servers/{serverId}/containers/{containerId}/update-status:
     get:
       tags: [Containers]
@@ -967,6 +998,17 @@ paths:
           in: path
           required: true
           schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                portMappings:
+                  type: array
+                  items: { type: object }
+                imageName: { type: string }
+                shmSize: { type: string, description: "Bytes (e.g. 67108864) or units (e.g. 64m, 128MiB, 1g)" }
       responses:
         "200":
           description: Success

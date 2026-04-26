@@ -99,6 +99,7 @@ const pullAndRecreateContainer = async (req, res, next) => {
   try {
     const { serverId, containerId } = req.params;
     const socketIO = require('../../config/socket').getIO();
+    const shmSize = req.body?.shmSize;
 
     const server = await Server.findOne({
       where: { id: serverId, userId: req.user.id },
@@ -111,7 +112,7 @@ const pullAndRecreateContainer = async (req, res, next) => {
     const onStep = (step, success, detail) => {
       if (socketIO) socketIO.emit('container:update:progress', { serverId, containerId, step, success, detail });
     };
-    const result = await dockerService.pullAndRecreateContainer(server, containerId, { onStep });
+    const result = await dockerService.pullAndRecreateContainer(server, containerId, { onStep, shmSize });
 
     if (result.success && result.containerName) {
       appendContainerUpdateLog({
@@ -148,6 +149,7 @@ const recreateContainer = async (req, res, next) => {
     const socketIO = require('../../config/socket').getIO();
     const portMappings = req.body?.portMappings;
     const imageName = req.body?.imageName != null ? String(req.body.imageName).trim() : '';
+    const shmSize = req.body?.shmSize;
 
     const server = await Server.findOne({
       where: { id: serverId, userId: req.user.id },
@@ -160,7 +162,7 @@ const recreateContainer = async (req, res, next) => {
     const onStep = (step, success, detail) => {
       if (socketIO) socketIO.emit('container:update:progress', { serverId, containerId, step, success, detail });
     };
-    const result = await dockerService.recreateContainer(server, containerId, { onStep, portMappings, imageName: imageName || undefined });
+    const result = await dockerService.recreateContainer(server, containerId, { onStep, portMappings, imageName: imageName || undefined, shmSize });
 
     if (socketIO && result.success) {
       socketIO.emit('container:status:changed', {
@@ -295,6 +297,43 @@ const restartContainer = async (req, res, next) => {
         userId: req.user.id,
       });
       pollingService.syncServerNow(serverId).catch((e) => logger.warn('Polling refresh after restart:', e.message));
+    }
+
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+};
+
+const renameContainer = async (req, res, next) => {
+  try {
+    const { serverId, containerId } = req.params;
+    const { name } = req.body || {};
+    const socketIO = require('../../config/socket').getIO();
+
+    const server = await Server.findOne({
+      where: { id: serverId, userId: req.user.id },
+    });
+
+    if (!server) {
+      return res.status(404).json({ error: 'Server not found' });
+    }
+
+    if (!name || !String(name).trim()) {
+      return res.status(400).json({ error: 'New container name is required' });
+    }
+
+    const result = await dockerService.renameContainer(server, containerId, String(name).trim());
+    if (result.success !== false) {
+      if (socketIO) {
+        socketIO.emit('container:status:changed', {
+          serverId,
+          containerId,
+          action: 'renamed',
+          userId: req.user.id,
+        });
+      }
+      pollingService.syncServerNow(serverId).catch((e) => logger.warn('Polling refresh after rename:', e.message));
     }
 
     res.json(result);
@@ -610,6 +649,7 @@ module.exports = {
   startContainer,
   stopContainer,
   restartContainer,
+  renameContainer,
   removeContainer,
   getContainerStats,
   updateRestartPolicy,

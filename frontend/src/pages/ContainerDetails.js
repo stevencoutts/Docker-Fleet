@@ -135,6 +135,10 @@ const ContainerDetails = () => {
   const [editingPortMappings, setEditingPortMappings] = useState(null);
   const [addingNewPortMappings, setAddingNewPortMappings] = useState(false);
   const [portMappingsRecreateLoading, setPortMappingsRecreateLoading] = useState(false);
+  const [renameValue, setRenameValue] = useState('');
+  const [renameLoading, setRenameLoading] = useState(false);
+  const [renameError, setRenameError] = useState('');
+  const [shmSizeValue, setShmSizeValue] = useState('');
   const maxHistoryPoints = 30;
 
   // Helper function to generate snapshot name with timestamp
@@ -310,6 +314,10 @@ const ContainerDetails = () => {
     try {
       const response = await containersService.getById(serverId, containerId);
       setContainer(response.data.container);
+      const fetchedName = response.data.container?.Name?.replace('/', '') || '';
+      if (fetchedName) setRenameValue(fetchedName);
+      const shmLabel = response.data.container?.Config?.Labels?.['dockerfleet.shmSize'] || response.data.container?.Config?.Labels?.['dockerfleet.shm_size'] || '';
+      if (shmLabel) setShmSizeValue(String(shmLabel));
     } catch (error) {
       console.error('Failed to fetch container details:', error);
       const message = error.code === 'ECONNABORTED' || error.message?.includes('timeout')
@@ -1259,6 +1267,18 @@ const ContainerDetails = () => {
                         )}
                         {!isPinned && (
                           <div className="flex flex-wrap items-center gap-2 mt-2">
+                            <div className="flex items-center gap-2">
+                              <label className="text-xs text-gray-600 dark:text-gray-400">SHM size</label>
+                              <input
+                                type="text"
+                                value={shmSizeValue}
+                                onChange={(e) => setShmSizeValue(e.target.value)}
+                                placeholder="e.g. 64m or 128MiB"
+                                disabled={pullAndUpdateLoading || recreateLoading || portMappingsRecreateLoading}
+                                className="w-48 px-2 py-1 text-xs font-mono border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+                                title="If set, this value is persisted and used on recreate/update."
+                              />
+                            </div>
                             <button
                               type="button"
                               onClick={async () => {
@@ -1291,7 +1311,8 @@ const ContainerDetails = () => {
                                   };
                                   socket?.on('container:update:progress', progressHandler);
                                   try {
-                                    const res = await containersService.pullAndUpdate(serverId, containerId);
+                                    const body = shmSizeValue && shmSizeValue.trim() ? { shmSize: shmSizeValue.trim() } : {};
+                                    const res = await containersService.pullAndUpdate(serverId, containerId, body);
                                     const data = res.data || {};
                                     setLastUpdateResult(data);
                                     if (data.success) {
@@ -1389,7 +1410,8 @@ const ContainerDetails = () => {
                           };
                           socket?.on('container:update:progress', progressHandler);
                           try {
-                            const res = await containersService.recreate(serverId, containerId);
+                            const body = shmSizeValue && shmSizeValue.trim() ? { shmSize: shmSizeValue.trim() } : {};
+                            const res = await containersService.recreate(serverId, containerId, body);
                             const data = res.data || {};
                             setLastRecreateResult(data);
                             if (data.success && data.newContainerId) {
@@ -1448,6 +1470,44 @@ const ContainerDetails = () => {
                           )}
                         </div>
                       )}
+                    </div>
+
+                    {/* Rename container */}
+                    <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-600">
+                      <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">Rename this container (does not recreate). Use letters, numbers, <span className="font-mono">_</span>, <span className="font-mono">.</span>, <span className="font-mono">-</span>.</p>
+                      {renameError && (
+                        <div className="mb-2 text-sm text-red-600 dark:text-red-400">{renameError}</div>
+                      )}
+                      <div className="flex flex-col sm:flex-row gap-2">
+                        <input
+                          type="text"
+                          value={renameValue}
+                          onChange={(e) => { setRenameValue(e.target.value); setRenameError(''); }}
+                          disabled={renameLoading}
+                          className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-primary-500 font-mono"
+                        />
+                        <button
+                          type="button"
+                          disabled={renameLoading || !renameValue.trim()}
+                          onClick={async () => {
+                            setRenameError('');
+                            const nextName = renameValue.trim();
+                            if (!nextName) return;
+                            setRenameLoading(true);
+                            try {
+                              await containersService.rename(serverId, containerId, nextName);
+                              await fetchContainerDetails();
+                            } catch (err) {
+                              setRenameError(err.response?.data?.error || err.response?.data?.message || err.message || 'Rename failed');
+                            } finally {
+                              setRenameLoading(false);
+                            }
+                          }}
+                          className="px-3 py-2 text-sm font-medium text-white bg-primary-600 dark:bg-primary-500 rounded-lg hover:bg-primary-700 dark:hover:bg-primary-600 disabled:opacity-50"
+                        >
+                          {renameLoading ? 'Renaming…' : 'Rename'}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 );
@@ -1618,7 +1678,9 @@ const ContainerDetails = () => {
                             };
                             socket?.on('container:update:progress', progressHandler);
                             try {
-                              const res = await containersService.recreate(serverId, containerId, { portMappings });
+                              const body = { portMappings };
+                              if (shmSizeValue && shmSizeValue.trim()) body.shmSize = shmSizeValue.trim();
+                              const res = await containersService.recreate(serverId, containerId, body);
                               const data = res.data || {};
                               setLastRecreateResult(data);
                               setEditingPortMappings(null);
