@@ -139,6 +139,8 @@ const ContainerDetails = () => {
   const [renameLoading, setRenameLoading] = useState(false);
   const [renameError, setRenameError] = useState('');
   const [shmSizeValue, setShmSizeValue] = useState('');
+  const [shmApplyLoading, setShmApplyLoading] = useState(false);
+  const [shmApplyError, setShmApplyError] = useState('');
   const maxHistoryPoints = 30;
 
   // Helper function to generate snapshot name with timestamp
@@ -1267,18 +1269,6 @@ const ContainerDetails = () => {
                         )}
                         {!isPinned && (
                           <div className="flex flex-wrap items-center gap-2 mt-2">
-                            <div className="flex items-center gap-2">
-                              <label className="text-xs text-gray-600 dark:text-gray-400">SHM size</label>
-                              <input
-                                type="text"
-                                value={shmSizeValue}
-                                onChange={(e) => setShmSizeValue(e.target.value)}
-                                placeholder="e.g. 64m or 128MiB"
-                                disabled={pullAndUpdateLoading || recreateLoading || portMappingsRecreateLoading}
-                                className="w-48 px-2 py-1 text-xs font-mono border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
-                                title="If set, this value is persisted and used on recreate/update."
-                              />
-                            </div>
                             <button
                               type="button"
                               onClick={async () => {
@@ -1311,8 +1301,7 @@ const ContainerDetails = () => {
                                   };
                                   socket?.on('container:update:progress', progressHandler);
                                   try {
-                                    const body = shmSizeValue && shmSizeValue.trim() ? { shmSize: shmSizeValue.trim() } : {};
-                                    const res = await containersService.pullAndUpdate(serverId, containerId, body);
+                                    const res = await containersService.pullAndUpdate(serverId, containerId);
                                     const data = res.data || {};
                                     setLastUpdateResult(data);
                                     if (data.success) {
@@ -1410,8 +1399,7 @@ const ContainerDetails = () => {
                           };
                           socket?.on('container:update:progress', progressHandler);
                           try {
-                            const body = shmSizeValue && shmSizeValue.trim() ? { shmSize: shmSizeValue.trim() } : {};
-                            const res = await containersService.recreate(serverId, containerId, body);
+                            const res = await containersService.recreate(serverId, containerId);
                             const data = res.data || {};
                             setLastRecreateResult(data);
                             if (data.success && data.newContainerId) {
@@ -1508,6 +1496,75 @@ const ContainerDetails = () => {
                           {renameLoading ? 'Renaming…' : 'Rename'}
                         </button>
                       </div>
+                    </div>
+
+                    {/* Shared memory (/dev/shm) */}
+                    <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-600">
+                      <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+                        Shared memory (<span className="font-mono">/dev/shm</span>). Changing this requires recreating the container.
+                      </p>
+                      <div className="text-sm text-gray-700 dark:text-gray-300 mb-2">
+                        <span className="text-gray-500 dark:text-gray-400">Current: </span>
+                        <span className="font-mono font-medium">
+                          {container?.HostConfig?.ShmSize ? `${formatBytes(container.HostConfig.ShmSize)} (${container.HostConfig.ShmSize} bytes)` : 'Default'}
+                        </span>
+                        {shmSizeValue && (
+                          <span className="text-gray-500 dark:text-gray-400"> · configured: <span className="font-mono">{shmSizeValue}</span></span>
+                        )}
+                      </div>
+                      {shmApplyError && (
+                        <div className="mb-2 text-sm text-red-600 dark:text-red-400">{shmApplyError}</div>
+                      )}
+                      <div className="flex flex-col sm:flex-row gap-2">
+                        <input
+                          type="text"
+                          value={shmSizeValue}
+                          onChange={(e) => { setShmSizeValue(e.target.value); setShmApplyError(''); }}
+                          placeholder="e.g. 64m or 128MiB"
+                          disabled={shmApplyLoading}
+                          className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-primary-500 font-mono"
+                        />
+                        <button
+                          type="button"
+                          disabled={shmApplyLoading || !shmSizeValue.trim()}
+                          onClick={async () => {
+                            setShmApplyError('');
+                            const shmSize = shmSizeValue.trim();
+                            if (!shmSize) return;
+                            setShmApplyLoading(true);
+                            setLastRecreateResult({ inProgress: true, steps: [] });
+                            const progressHandler = (payload) => {
+                              if (String(payload.serverId) !== String(serverId) || String(payload.containerId) !== String(containerId)) return;
+                              setLastRecreateResult((prev) => ({ ...prev, steps: [...(prev.steps || []), { step: payload.step, success: payload.success, detail: payload.detail }] }));
+                            };
+                            socket?.on('container:update:progress', progressHandler);
+                            try {
+                              const res = await containersService.recreate(serverId, containerId, { shmSize }, 180000);
+                              const data = res.data || {};
+                              setLastRecreateResult(data);
+                              if (data.success && data.newContainerId) {
+                                navigate(`/servers/${serverId}/containers/${data.newContainerId}`, { replace: true, state: { recreateResult: data } });
+                              } else if (data.success) {
+                                fetchContainerDetails();
+                              } else if (data.error) {
+                                setShmApplyError(data.error);
+                              }
+                            } catch (err) {
+                              setShmApplyError(err.response?.data?.error || err.message || 'Failed to apply SHM size');
+                              setLastRecreateResult((prev) => ({ ...prev, success: false, error: err.response?.data?.error || err.message || 'Recreate failed', inProgress: false }));
+                            } finally {
+                              socket?.off('container:update:progress', progressHandler);
+                              setShmApplyLoading(false);
+                            }
+                          }}
+                          className="px-3 py-2 text-sm font-medium text-white bg-amber-600 dark:bg-amber-500 rounded-lg hover:bg-amber-700 dark:hover:bg-amber-600 disabled:opacity-50"
+                        >
+                          {shmApplyLoading ? 'Applying…' : 'Apply (recreate)'}
+                        </button>
+                      </div>
+                      <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                        This will recreate the container and persist the configured value for future updates/recreates.
+                      </p>
                     </div>
                   </div>
                 );
@@ -1678,9 +1735,7 @@ const ContainerDetails = () => {
                             };
                             socket?.on('container:update:progress', progressHandler);
                             try {
-                              const body = { portMappings };
-                              if (shmSizeValue && shmSizeValue.trim()) body.shmSize = shmSizeValue.trim();
-                              const res = await containersService.recreate(serverId, containerId, body);
+                              const res = await containersService.recreate(serverId, containerId, { portMappings });
                               const data = res.data || {};
                               setLastRecreateResult(data);
                               setEditingPortMappings(null);
