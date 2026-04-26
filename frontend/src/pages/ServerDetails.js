@@ -1556,9 +1556,14 @@ const ServerDetails = () => {
                     e.stopPropagation();
                     setRenewCertificatesLoading(true);
                     try {
-                      await publicWwwService.renewCertificates(serverId);
+                      const res = await publicWwwService.renewCertificates(serverId);
                       await fetchCertificates();
-                      alert('Certificates renewed and nginx reloaded.');
+                      const data = res?.data || {};
+                      const msg = [
+                        data.message || (data.renewed ? 'Certificates renewed.' : 'No renewals attempted.'),
+                        data.manualHint ? `\n\n${data.manualHint}` : '',
+                      ].join('');
+                      alert(msg.trim() || 'Certificate renewal completed.');
                     } catch (err) {
                       alert(err.response?.data?.error || err.message || 'Renew failed');
                     } finally {

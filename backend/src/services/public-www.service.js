@@ -821,9 +821,50 @@ async function renewCertificates(serverId, userId) {
   if (!server || server.userId !== userId) throw new Error('Server not found');
 
   await ensureNginxAndCertbot(server);
-  await exec(server, 'sudo certbot renew --non-interactive', { timeout: 180000, allowFailure: true });
-  await exec(server, 'sudo systemctl reload nginx 2>/dev/null || sudo nginx -s reload 2>/dev/null || true', { allowFailure: true });
-  return { success: true, message: 'Certificate renewal completed. Nginx reloaded.' };
+  const renew = await exec(server, 'sudo certbot renew --non-interactive', { timeout: 240000, allowFailure: true, logLabel: 'certbot_renew' });
+  const out = `${renew.stdout || ''}\n${renew.stderr || ''}`.trim();
+
+  if (renew.code !== 0) {
+    const tail = out.slice(-1800) || `certbot renew exited with code ${renew.code}`;
+    throw new Error(`Certificate renewal failed.\n\n${tail}`);
+  }
+
+  // Always reload nginx; deploy-hook runs only on successful renewals.
+  await exec(server, 'sudo systemctl reload nginx 2>/dev/null || sudo nginx -s reload 2>/dev/null || true', { allowFailure: true, logLabel: 'nginx_reload_after_renew' });
+
+  const lower = out.toLowerCase();
+  const noop = lower.includes('no renewals were attempted') ||
+    lower.includes('not yet due for renewal') ||
+    lower.includes('no certificates found') ||
+    lower.includes('no renewals attempted');
+
+  // A common reason for "renew doesn't work" is manual DNS certificates.
+  // Surface a hint when renewal configs use manual authenticator.
+  let manualHint = null;
+  try {
+    const manual = await exec(
+      server,
+      "sudo sh -c \"grep -R '^authenticator = manual' -n /etc/letsencrypt/renewal 2>/dev/null | head -20 || true\"",
+      { allowFailure: true, timeout: 15000, logLabel: 'certbot_manual_check' }
+    );
+    const manualOut = (manual.stdout || '').trim();
+    if (manualOut) {
+      manualHint =
+        'Note: some certificates were issued with DNS/manual validation (authenticator=manual). ' +
+        'Those cannot auto-renew without a DNS plugin or configured renewal hooks. ' +
+        'Use the DNS certificate flow again to re-issue if needed.';
+    }
+  } catch (e) {
+    // ignore hint failures
+  }
+
+  return {
+    success: true,
+    renewed: !noop,
+    message: noop ? 'No renewals were attempted (certificates may not be due yet).' : 'Certificate renewal completed.',
+    details: out ? out.slice(-4000) : undefined,
+    manualHint: manualHint || undefined,
+  };
 }
 
 const EMPTY_NGINX_PLACEHOLDER = '# No proxy routes';
