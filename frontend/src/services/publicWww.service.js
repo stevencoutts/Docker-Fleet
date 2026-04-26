@@ -60,6 +60,10 @@ export function getCertificates(serverId) {
   return api.get(`/api/v1/servers/${serverId}/public-www/certificates`);
 }
 
+export function getCertificatesOverview(params = {}) {
+  return api.get('/api/v1/servers/certificates/overview', { params });
+}
+
 export function renewCertificates(serverId) {
   return api.post(`/api/v1/servers/${serverId}/public-www/renew-certificates`, {}, { timeout: 200000 });
 }
@@ -80,6 +84,7 @@ export function updateCustomNginxConfig(serverId, customNginxConfig) {
 export const publicWwwService = {
   getProxyRoutes: (serverId) => api.get(`/api/v1/servers/${serverId}/proxy-routes`),
   getCertificates,
+  getCertificatesOverview,
   renewCertificates,
   getNginxConfig,
   importNginxBlock,

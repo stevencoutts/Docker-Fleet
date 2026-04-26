@@ -28,7 +28,7 @@ const Dashboard = () => {
   const [updateOverview, setUpdateOverview] = useState(defaultUpdateOverview);
   const [updatingFromOverview, setUpdatingFromOverview] = useState(null); // { serverId, containerId }
   const [containersVersion, setContainersVersion] = useState(0); // Version counter to trigger recalculation only when stable data updates
-  const [certOverview, setCertOverview] = useState({ loading: false, expiring: [], checkedServers: 0, errors: 0 });
+  const [certOverview, setCertOverview] = useState({ loading: false, expiring: [], checkedServers: 0, errors: 0, updatedAt: null });
   const socket = useSocket();
   const navigate = useNavigate();
   const refreshTimeoutRef = useRef(null);
@@ -102,60 +102,27 @@ const Dashboard = () => {
     }).catch(() => {});
   });
 
-  const refreshCertificateOverview = async (serversData) => {
-    const list = Array.isArray(serversData) ? serversData : [];
-    const eligibleServers = list.filter((s) => s?.publicWwwEnabled);
+  const refreshCertificateOverview = async ({ forceRefresh = false } = {}) => {
     const requestId = ++certOverviewRequestIdRef.current;
-
-    if (eligibleServers.length === 0) {
-      setCertOverview({ loading: false, expiring: [], checkedServers: 0, errors: 0 });
-      return;
-    }
-
-    setCertOverview((prev) => ({ ...prev, loading: true, checkedServers: eligibleServers.length }));
-
-    const results = await Promise.allSettled(
-      eligibleServers.map(async (server) => {
-        const res = await publicWwwService.getCertificates(server.id);
-        const certs = res?.data?.certificates || [];
-        return { server, certificates: certs };
-      })
-    );
-
-    if (requestId !== certOverviewRequestIdRef.current) return; // stale request
-
-    let errors = 0;
-    const expiring = [];
-    for (const r of results) {
-      if (r.status !== 'fulfilled') {
-        errors += 1;
-        continue;
-      }
-      const { server, certificates } = r.value;
-      (certificates || []).forEach((c) => {
-        const days = c?.validDays;
-        if (days == null) return;
-        if (days <= CERT_EXPIRY_SOON_DAYS) {
-          expiring.push({
-            serverId: server.id,
-            serverName: server.name || server.host || 'Unknown',
-            serverHost: server.host || server.name || 'Unknown',
-            name: c.name,
-            expiryDate: c.expiryDate,
-            validDays: days,
-          });
-        }
+    setCertOverview((prev) => ({ ...prev, loading: true }));
+    try {
+      const res = await publicWwwService.getCertificatesOverview({
+        thresholdDays: CERT_EXPIRY_SOON_DAYS,
+        refresh: forceRefresh ? 1 : 0,
       });
+      if (requestId !== certOverviewRequestIdRef.current) return;
+      const data = res?.data || {};
+      setCertOverview({
+        loading: false,
+        expiring: data.expiring || [],
+        checkedServers: data.checkedServers || 0,
+        errors: data.errors || 0,
+        updatedAt: data.updatedAt || null,
+      });
+    } catch (e) {
+      if (requestId !== certOverviewRequestIdRef.current) return;
+      setCertOverview((prev) => ({ ...prev, loading: false }));
     }
-
-    expiring.sort((a, b) => (a.validDays ?? 999999) - (b.validDays ?? 999999));
-
-    setCertOverview({
-      loading: false,
-      expiring,
-      checkedServers: eligibleServers.length,
-      errors,
-    });
   };
 
   const fetchData = async (showLoading = false) => {
@@ -170,7 +137,7 @@ const Dashboard = () => {
       setServers(serversData);
 
       // Refresh certificates overview in the background (do not block UI)
-      refreshCertificateOverview(serversData).catch(() => {});
+      refreshCertificateOverview({ forceRefresh: false }).catch(() => {});
       
       // Show the page immediately with server data (containers will load progressively)
       if (showLoading) {
@@ -525,7 +492,7 @@ const Dashboard = () => {
                 </h3>
                 <button
                   type="button"
-                  onClick={() => refreshCertificateOverview(serversRef.current)}
+                  onClick={() => refreshCertificateOverview({ forceRefresh: true })}
                   disabled={certOverview.loading}
                   className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md text-white bg-amber-600 hover:bg-amber-700 dark:bg-amber-500 dark:hover:bg-amber-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
@@ -544,12 +511,22 @@ const Dashboard = () => {
                         (Could not check {certOverview.errors} server{certOverview.errors !== 1 ? 's' : ''})
                       </span>
                     )}
+                    {certOverview.updatedAt && (
+                      <span className="ml-1 text-amber-700/70 dark:text-amber-300/70">
+                        (Cached: {new Date(certOverview.updatedAt).toLocaleString()})
+                      </span>
+                    )}
                   </p>
                 )}
                 {!certOverview.loading && certOverview.expiring.length > 0 && (
                   <>
                     <p className="mb-2">
                       Found {certOverview.expiring.length} certificate{certOverview.expiring.length !== 1 ? 's' : ''} due to expire soon.
+                      {certOverview.updatedAt && (
+                        <span className="ml-1 text-amber-700/70 dark:text-amber-300/70">
+                          (Cached: {new Date(certOverview.updatedAt).toLocaleString()})
+                        </span>
+                      )}
                     </p>
                     <ul className="mt-1 list-disc list-inside space-y-1">
                       {certOverview.expiring.slice(0, 5).map((c, idx) => (

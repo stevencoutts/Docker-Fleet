@@ -17,6 +17,7 @@ const {
   updateServerValidation,
 } = require('./servers.controller');
 const { getHostInfo } = require('./system.controller');
+const { getCertificateOverview } = require('./certificates.controller');
 const {
   listProxyRoutes,
   addProxyRoute,
@@ -39,6 +40,8 @@ const { validate } = require('../../middleware/validation.middleware');
 router.use(authenticate);
 
 router.get('/', getAllServers);
+// Cached certificate overview for dashboard (must be before '/:id')
+router.get('/certificates/overview', getCertificateOverview);
 router.get('/:id/host-info', getHostInfo);
 router.get('/:id/proxy-routes', listProxyRoutes);
 router.post('/:id/proxy-routes', addProxyRoute);
