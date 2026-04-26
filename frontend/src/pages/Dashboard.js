@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { serversService } from '../services/servers.service';
 import { containersService } from '../services/containers.service';
 import { systemService } from '../services/system.service';
+import { publicWwwService } from '../services/publicWww.service';
 import { useSocket } from '../context/SocketContext';
 import { useRefetchOnVisible } from '../hooks/useRefetchOnVisible';
 import { updateOverviewService } from '../services/updateOverview.service';
@@ -14,24 +15,27 @@ const defaultUpdateOverview = {
   errors: [],
 };
 
+const CERT_EXPIRY_SOON_DAYS = 30;
+
 const Dashboard = () => {
   const [servers, setServers] = useState([]);
   const [containers, setContainers] = useState({});
   const [hostInfos, setHostInfos] = useState({}); // Store hostname info for each server
   const [loading, setLoading] = useState(true);
-  const [loadingServers, setLoadingServers] = useState(new Set()); // Track which servers are loading
   const [restarting, setRestarting] = useState(false);
   const [enablingAutoRestart, setEnablingAutoRestart] = useState(false);
   const [checkingUpdates, setCheckingUpdates] = useState(false);
   const [updateOverview, setUpdateOverview] = useState(defaultUpdateOverview);
   const [updatingFromOverview, setUpdatingFromOverview] = useState(null); // { serverId, containerId }
   const [containersVersion, setContainersVersion] = useState(0); // Version counter to trigger recalculation only when stable data updates
+  const [certOverview, setCertOverview] = useState({ loading: false, expiring: [], checkedServers: 0, errors: 0 });
   const socket = useSocket();
   const navigate = useNavigate();
   const refreshTimeoutRef = useRef(null);
   const isRefreshingRef = useRef(false); // Track if we're currently refreshing to prevent flicker
   const stableContainersRef = useRef({}); // Store stable container data that only updates when complete
   const serversRef = useRef(servers);
+  const certOverviewRequestIdRef = useRef(0);
 
   useEffect(() => {
     serversRef.current = servers;
@@ -98,6 +102,62 @@ const Dashboard = () => {
     }).catch(() => {});
   });
 
+  const refreshCertificateOverview = async (serversData) => {
+    const list = Array.isArray(serversData) ? serversData : [];
+    const eligibleServers = list.filter((s) => s?.publicWwwEnabled);
+    const requestId = ++certOverviewRequestIdRef.current;
+
+    if (eligibleServers.length === 0) {
+      setCertOverview({ loading: false, expiring: [], checkedServers: 0, errors: 0 });
+      return;
+    }
+
+    setCertOverview((prev) => ({ ...prev, loading: true, checkedServers: eligibleServers.length }));
+
+    const results = await Promise.allSettled(
+      eligibleServers.map(async (server) => {
+        const res = await publicWwwService.getCertificates(server.id);
+        const certs = res?.data?.certificates || [];
+        return { server, certificates: certs };
+      })
+    );
+
+    if (requestId !== certOverviewRequestIdRef.current) return; // stale request
+
+    let errors = 0;
+    const expiring = [];
+    for (const r of results) {
+      if (r.status !== 'fulfilled') {
+        errors += 1;
+        continue;
+      }
+      const { server, certificates } = r.value;
+      (certificates || []).forEach((c) => {
+        const days = c?.validDays;
+        if (days == null) return;
+        if (days <= CERT_EXPIRY_SOON_DAYS) {
+          expiring.push({
+            serverId: server.id,
+            serverName: server.name || server.host || 'Unknown',
+            serverHost: server.host || server.name || 'Unknown',
+            name: c.name,
+            expiryDate: c.expiryDate,
+            validDays: days,
+          });
+        }
+      });
+    }
+
+    expiring.sort((a, b) => (a.validDays ?? 999999) - (b.validDays ?? 999999));
+
+    setCertOverview({
+      loading: false,
+      expiring,
+      checkedServers: eligibleServers.length,
+      errors,
+    });
+  };
+
   const fetchData = async (showLoading = false) => {
     try {
       if (showLoading) {
@@ -108,6 +168,9 @@ const Dashboard = () => {
       const serversResponse = await serversService.getAll();
       const serversData = serversResponse.data.servers;
       setServers(serversData);
+
+      // Refresh certificates overview in the background (do not block UI)
+      refreshCertificateOverview(serversData).catch(() => {});
       
       // Show the page immediately with server data (containers will load progressively)
       if (showLoading) {
@@ -117,7 +180,6 @@ const Dashboard = () => {
       // Fetch containers for each server in parallel
       // Keep previous container data visible while loading new data to prevent flickering
       const containerPromises = serversData.map(async (server) => {
-        setLoadingServers(prev => new Set(prev).add(server.id));
         try {
           const containersResponse = await containersService.getAll(server.id, { all: 'true' }).catch(() => ({ data: { containers: [] } }));
           return {
@@ -128,12 +190,6 @@ const Dashboard = () => {
           console.error(`Failed to fetch containers for server ${server.id}:`, error);
           // On error, return null to indicate we should keep previous data
           return { serverId: server.id, containers: null };
-        } finally {
-          setLoadingServers(prev => {
-            const next = new Set(prev);
-            next.delete(server.id);
-            return next;
-          });
         }
       });
       
@@ -214,6 +270,9 @@ const Dashboard = () => {
   
   // Calculate totals from stable ref - only recalculate when version changes (i.e., when stable data updates)
   const totalContainers = useMemo(() => {
+    // Tie memoization to stable container refreshes.
+    // eslint-disable-next-line no-void
+    void containersVersion;
     // Always read from stable ref which only updates when we have complete data
     const stableContainers = stableContainersRef.current;
     return Object.values(stableContainers).reduce((sum, serverContainers) => {
@@ -222,6 +281,9 @@ const Dashboard = () => {
   }, [containersVersion]); // Only recalculate when version increments (stable data updated)
   
   const totalRunning = useMemo(() => {
+    // Tie memoization to stable container refreshes.
+    // eslint-disable-next-line no-void
+    void containersVersion;
     // Always read from stable ref which only updates when we have complete data
     const stableContainers = stableContainersRef.current;
     return Object.values(stableContainers).reduce((sum, serverContainers) => {
@@ -443,6 +505,86 @@ const Dashboard = () => {
       </div>
 
       {/* Alerts Section - Containers that should be running but are stopped */}
+      {/* Certificates expiring soon (Public WWW) */}
+      {certOverview.checkedServers > 0 && (
+        <div className="mb-6 bg-amber-50 dark:bg-amber-900/20 border-l-4 border-amber-400 dark:border-amber-500 p-4 rounded-r-lg">
+          <div className="flex items-start">
+            <div className="flex-shrink-0">
+              <svg className="h-5 w-5 text-amber-500" fill="currentColor" viewBox="0 0 20 20">
+                <path
+                  fillRule="evenodd"
+                  d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z"
+                  clipRule="evenodd"
+                />
+              </svg>
+            </div>
+            <div className="ml-3 flex-1">
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="text-sm font-medium text-amber-900 dark:text-amber-200">
+                  Certificates expiring within {CERT_EXPIRY_SOON_DAYS} days
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => refreshCertificateOverview(serversRef.current)}
+                  disabled={certOverview.loading}
+                  className="inline-flex items-center px-3 py-1.5 border border-transparent text-xs font-medium rounded-md text-white bg-amber-600 hover:bg-amber-700 dark:bg-amber-500 dark:hover:bg-amber-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-amber-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  {certOverview.loading ? 'Refreshing…' : 'Refresh'}
+                </button>
+              </div>
+              <div className="mt-2 text-sm text-amber-800 dark:text-amber-200">
+                {certOverview.loading && (
+                  <p>Checking certificates on {certOverview.checkedServers} server{certOverview.checkedServers !== 1 ? 's' : ''}…</p>
+                )}
+                {!certOverview.loading && certOverview.expiring.length === 0 && (
+                  <p>
+                    No certificates due to expire soon.
+                    {certOverview.errors > 0 && (
+                      <span className="ml-1 text-amber-700/80 dark:text-amber-300/80">
+                        (Could not check {certOverview.errors} server{certOverview.errors !== 1 ? 's' : ''})
+                      </span>
+                    )}
+                  </p>
+                )}
+                {!certOverview.loading && certOverview.expiring.length > 0 && (
+                  <>
+                    <p className="mb-2">
+                      Found {certOverview.expiring.length} certificate{certOverview.expiring.length !== 1 ? 's' : ''} due to expire soon.
+                    </p>
+                    <ul className="mt-1 list-disc list-inside space-y-1">
+                      {certOverview.expiring.slice(0, 5).map((c, idx) => (
+                        <li key={`${c.serverId}-${c.name}-${idx}`}>
+                          <Link
+                            to={`/servers/${c.serverId}`}
+                            className="font-medium hover:underline"
+                          >
+                            {c.name}
+                          </Link>
+                          {' '}on {c.serverName} —{' '}
+                          <span className={`font-medium ${c.validDays <= 0 ? 'text-red-700 dark:text-red-300' : 'text-amber-800 dark:text-amber-200'}`}>
+                            {c.validDays <= 0 ? 'expired' : `${c.validDays} day${c.validDays !== 1 ? 's' : ''}`}
+                          </span>
+                        </li>
+                      ))}
+                      {certOverview.expiring.length > 5 && (
+                        <li className="text-amber-700 dark:text-amber-300">
+                          ...and {certOverview.expiring.length - 5} more
+                        </li>
+                      )}
+                    </ul>
+                    {certOverview.errors > 0 && (
+                      <p className="mt-2 text-xs text-amber-700/80 dark:text-amber-300/80">
+                        Could not check {certOverview.errors} server{certOverview.errors !== 1 ? 's' : ''}.
+                      </p>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {containersThatShouldBeRunning.length > 0 && (
         <div className="mb-6 bg-yellow-50 dark:bg-yellow-900/20 border-l-4 border-yellow-400 dark:border-yellow-500 p-4 rounded-r-lg">
           <div className="flex items-start">
@@ -840,7 +982,6 @@ const Dashboard = () => {
           {servers.map((server) => {
             // Use stable containers ref for display to prevent flickering
             const serverContainers = stableContainersRef.current[server.id] || containers[server.id] || [];
-            const isLoadingServer = loadingServers.has(server.id);
             const runningCount = serverContainers.filter(isContainerRunning).length;
             const stoppedCount = serverContainers.length - runningCount;
             const serverIssues = containersThatShouldBeRunning.filter(c => c.serverId === server.id).length +
