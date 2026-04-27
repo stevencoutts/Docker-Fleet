@@ -41,6 +41,17 @@ function getDockerRemoteApiVersion() {
   return /^1\.\d+$/.test(v) ? v : '1.41';
 }
 
+/** Human-readable size (base-2) for host info display. */
+function formatBytesBase2(n) {
+  if (n == null || n === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+  const i = Math.min(sizes.length - 1, Math.floor(Math.log(n) / Math.log(k)));
+  const v = n / k ** i;
+  const d = i >= 1 ? 1 : 0;
+  return `${v.toFixed(d)} ${sizes[i]}`;
+}
+
 class DockerService {
   getContainerShmLabelBytes(details) {
     const raw = details?.Config?.Labels?.['dockerfleet.shmSize'] ?? details?.Config?.Labels?.['dockerfleet.shm_size'];
@@ -1485,23 +1496,68 @@ class DockerService {
       results.availableMemory = 'Unknown';
     }
 
-    // Disk usage
+    // Root filesystem (/) — bytes + use% for dashboards and alerts
     try {
-      const diskResult = await sshService.executeCommand(server, 'df -h /', { allowFailure: true });
-      if (diskResult && diskResult.stdout) {
-        const diskLines = diskResult.stdout.split('\n');
-        if (diskLines.length > 1) {
-          const parts = diskLines[1].split(/\s+/);
-          if (parts.length >= 5) {
-            results.diskUsage = `${parts[2]} / ${parts[1]} (${parts[4]} used)`;
+      let totalBytes;
+      let usedBytes;
+      let usePercent;
+
+      const parseLine = (line) => {
+        const p = (line || '').trim().split(/\s+/);
+        if (p.length < 3) return null;
+        const t = parseInt(p[0], 10);
+        const u = parseInt(p[1], 10);
+        const pct = parseInt(p[2], 10);
+        if (Number.isNaN(t) || t <= 0 || Number.isNaN(u) || Number.isNaN(pct)) return null;
+        return { totalBytes: t, usedBytes: u, usePercent: pct };
+      };
+
+      const dfBytes = await sshService.executeCommand(
+        server,
+        "df -PB1 / 2>/dev/null | tail -1 | awk '{gsub(/%/,\"\",$5); print $2,$3,$5}'",
+        { allowFailure: true, timeout: 10000 }
+      );
+      let parsed = dfBytes?.stdout ? parseLine(dfBytes.stdout) : null;
+
+      if (!parsed) {
+        const dfK = await sshService.executeCommand(
+          server,
+          "df -Pk / 2>/dev/null | tail -1 | awk '{gsub(/%/,\"\",$5); print $2*1024,$3*1024,$5}'",
+          { allowFailure: true, timeout: 10000 }
+        );
+        if (dfK?.stdout) parsed = parseLine(dfK.stdout);
+      }
+
+      if (parsed) {
+        totalBytes = parsed.totalBytes;
+        usedBytes = parsed.usedBytes;
+        usePercent = parsed.usePercent;
+        results.rootDiskTotalBytes = totalBytes;
+        results.rootDiskUsedBytes = usedBytes;
+        results.rootDiskUsePercent = usePercent;
+        results.diskUsage = `${formatBytesBase2(usedBytes)} / ${formatBytesBase2(totalBytes)} (${usePercent}%)`;
+      } else {
+        const diskResult = await sshService.executeCommand(server, 'df -h /', { allowFailure: true, timeout: 10000 });
+        if (diskResult && diskResult.stdout) {
+          const diskLines = diskResult.stdout.split('\n');
+          if (diskLines.length > 1) {
+            const line = diskLines[1].trim().split(/\s+/);
+            if (line.length >= 5) {
+              const pctField = line.find((c) => /^\d+%$/.test(c));
+              if (pctField) {
+                const p = parseInt(pctField.replace('%', ''), 10);
+                if (!Number.isNaN(p)) results.rootDiskUsePercent = p;
+              }
+              results.diskUsage = `${line[2]} / ${line[1]} (${line[4]})`;
+            } else {
+              results.diskUsage = 'Unknown';
+            }
           } else {
             results.diskUsage = 'Unknown';
           }
         } else {
           results.diskUsage = 'Unknown';
         }
-      } else {
-        results.diskUsage = 'Unknown';
       }
     } catch (error) {
       logger.debug('Disk usage command failed:', error.message);

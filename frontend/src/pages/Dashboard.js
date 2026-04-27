@@ -16,6 +16,8 @@ const defaultUpdateOverview = {
 };
 
 const CERT_EXPIRY_SOON_DAYS = 30;
+/** Alert when root (/) filesystem use% is at or above this threshold (host-info cache). */
+const ROOT_DISK_ALERT_PERCENT = 80;
 
 const Dashboard = () => {
   const [servers, setServers] = useState([]);
@@ -260,6 +262,13 @@ const Dashboard = () => {
   }, [containersVersion]); // Only recalculate when version increments (stable data updated)
   
   const totalStopped = useMemo(() => totalContainers - totalRunning, [totalContainers, totalRunning]);
+
+  const serversWithHighRootDisk = useMemo(() => {
+    return servers.filter((s) => {
+      const p = hostInfos[s.id]?.rootDiskUsePercent;
+      return typeof p === 'number' && !Number.isNaN(p) && p >= ROOT_DISK_ALERT_PERCENT;
+    });
+  }, [servers, hostInfos]);
 
   const runUpdateCheck = async () => {
     setCheckingUpdates(true);
@@ -557,6 +566,55 @@ const Dashboard = () => {
                   </>
                 )}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {servers.length > 0 && serversWithHighRootDisk.length > 0 && (
+        <div className="mb-6 bg-amber-50 dark:bg-amber-900/20 border-l-4 border-amber-500 dark:border-amber-500 p-4 rounded-r-lg">
+          <div className="flex items-start">
+            <div className="flex-shrink-0">
+              <svg className="h-5 w-5 text-amber-500 dark:text-amber-400" fill="currentColor" viewBox="0 0 20 20">
+                <path
+                  fillRule="evenodd"
+                  d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z"
+                  clipRule="evenodd"
+                />
+              </svg>
+            </div>
+            <div className="ml-3 flex-1">
+              <h3 className="text-sm font-medium text-amber-900 dark:text-amber-100">
+                Root disk usage ≥ {ROOT_DISK_ALERT_PERCENT}%
+              </h3>
+              <p className="mt-1 text-sm text-amber-800 dark:text-amber-200">
+                {serversWithHighRootDisk.length} server{serversWithHighRootDisk.length !== 1 ? 's' : ''} ha{serversWithHighRootDisk.length !== 1 ? 've' : 's'} the root filesystem ({'/'}) at or above {ROOT_DISK_ALERT_PERCENT}% capacity.
+              </p>
+              <ul className="mt-2 list-disc list-inside space-y-1 text-sm text-amber-900 dark:text-amber-100">
+                {serversWithHighRootDisk.slice(0, 8).map((s) => {
+                  const pct = hostInfos[s.id]?.rootDiskUsePercent;
+                  const usage = hostInfos[s.id]?.diskUsage;
+                  return (
+                    <li key={s.id}>
+                      <Link to={`/servers/${s.id}`} className="font-medium hover:underline">
+                        {s.name || s.host}
+                      </Link>
+                      {typeof pct === 'number' && (
+                        <span className="text-amber-800/90 dark:text-amber-200/90">
+                          {' '}
+                          — {pct}%{' '}
+                          {usage ? <span className="font-mono text-xs">({usage})</span> : null}
+                        </span>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+              {serversWithHighRootDisk.length > 8 && (
+                <p className="mt-2 text-xs text-amber-800 dark:text-amber-300">
+                  …and {serversWithHighRootDisk.length - 8} more.
+                </p>
+              )}
             </div>
           </div>
         </div>
@@ -968,18 +1026,22 @@ const Dashboard = () => {
               : 100;
             const info = hostInfos[server.id];
             const hasIssues = serverIssues > 0;
+            const diskPct = info?.rootDiskUsePercent;
+            const diskPressure =
+              typeof diskPct === 'number' && !Number.isNaN(diskPct) && diskPct >= ROOT_DISK_ALERT_PERCENT;
+            const rowHighlight = hasIssues || diskPressure;
 
             return (
               <Link
                 key={server.id}
                 to={`/servers/${server.id}`}
                 className={`group block overflow-hidden rounded-xl border transition-all duration-200 hover:shadow-lg hover:shadow-gray-500/10 dark:hover:shadow-black/20 ${
-                  hasIssues
+                  rowHighlight
                     ? 'border-yellow-400/60 dark:border-yellow-500/50 bg-amber-50/30 dark:bg-amber-900/10 hover:border-yellow-400 dark:hover:border-yellow-500'
                     : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 hover:border-primary-400/50 dark:hover:border-primary-500/50'
                 }`}
               >
-                <div className={`flex flex-col sm:flex-row sm:items-stretch sm:min-h-[88px] ${hasIssues ? 'border-l-4 border-yellow-500' : 'border-l-4 border-transparent group-hover:border-primary-500'}`}>
+                <div className={`flex flex-col sm:flex-row sm:items-stretch sm:min-h-[88px] ${rowHighlight ? 'border-l-4 border-yellow-500' : 'border-l-4 border-transparent group-hover:border-primary-500'}`}>
                   {/* Left: avatar + identity — full width on mobile, fixed width on sm+ */}
                   <div className="flex items-center gap-3 sm:gap-5 pl-4 pr-4 pt-4 pb-3 sm:pl-6 sm:py-5 w-full sm:w-[300px] sm:min-w-[300px] sm:max-w-[300px] shrink-0">
                     <div className="flex flex-col items-center gap-1 shrink-0">
@@ -1031,16 +1093,25 @@ const Dashboard = () => {
                       </p>
                     </div>
                     {/* Issues badge on mobile: inline with header to save space */}
-                    {hasIssues && (
-                      <span className="sm:hidden inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-200 shrink-0">
-                        {serverIssues} issue{serverIssues !== 1 ? 's' : ''}
+                    {(hasIssues || diskPressure) && (
+                      <span className="sm:hidden inline-flex flex-col items-end gap-1 shrink-0">
+                        {hasIssues ? (
+                          <span className="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-200">
+                            {serverIssues} issue{serverIssues !== 1 ? 's' : ''}
+                          </span>
+                        ) : null}
+                        {diskPressure ? (
+                          <span className="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-medium bg-amber-100 text-amber-900 dark:bg-amber-900/50 dark:text-amber-100">
+                            Disk ≥ {ROOT_DISK_ALERT_PERCENT}%
+                          </span>
+                        ) : null}
                       </span>
                     )}
                   </div>
 
                   {/* Stats: Containers full width, then CPU+Memory one line on mobile; fixed grid on sm+ */}
                   <div className="flex-1 flex flex-col justify-center gap-2 px-4 pb-4 sm:px-6 sm:py-4 min-w-0 border-t sm:border-t-0">
-                    <div className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-[220px_90px_160px] sm:items-baseline sm:gap-x-6 sm:gap-y-0">
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-[minmax(0,220px)_minmax(0,88px)_minmax(0,155px)_minmax(0,155px)] sm:items-baseline sm:gap-x-6 sm:gap-y-0">
                       <div className="min-w-0 flex items-baseline gap-2 col-span-2 sm:col-span-1">
                         <span className="text-sm text-gray-500 dark:text-gray-400 shrink-0">Containers</span>
                         <span className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
@@ -1072,6 +1143,23 @@ const Dashboard = () => {
                           <span className="text-gray-400 dark:text-gray-500">—</span>
                         )}
                       </div>
+                      <div className="min-w-0 text-sm col-span-2 sm:col-span-1">
+                        {info?.diskUsage ? (
+                          <span className="flex items-baseline gap-1.5 flex-wrap">
+                            <span className="text-[10px] uppercase tracking-wider text-gray-400 dark:text-gray-500 shrink-0">Disk</span>
+                            <span
+                              className={`font-medium truncate ${
+                                diskPressure ? 'text-amber-800 dark:text-amber-200' : 'text-gray-900 dark:text-gray-100'
+                              }`}
+                              title={typeof diskPct === 'number' ? `Root filesystem: ${diskPct}% used` : info.diskUsage}
+                            >
+                              {info.diskUsage}
+                            </span>
+                          </span>
+                        ) : (
+                          <span className="text-gray-400 dark:text-gray-500">—</span>
+                        )}
+                      </div>
                     </div>
                     {serverContainers.length > 0 && (
                       <div className="w-full sm:w-[220px]">
@@ -1089,9 +1177,18 @@ const Dashboard = () => {
 
                   {/* Right: issues badge (hidden on mobile; shown in header there) */}
                   <div className="hidden sm:flex items-center pr-6 py-4 flex-shrink-0">
-                    {hasIssues && (
-                      <span className="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-200">
-                        {serverIssues} issue{serverIssues !== 1 ? 's' : ''}
+                    {(hasIssues || diskPressure) && (
+                      <span className="inline-flex flex-col gap-1 items-end">
+                        {hasIssues ? (
+                          <span className="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-medium bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-200">
+                            {serverIssues} issue{serverIssues !== 1 ? 's' : ''}
+                          </span>
+                        ) : null}
+                        {diskPressure ? (
+                          <span className="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-medium bg-amber-100 text-amber-900 dark:bg-amber-900/50 dark:text-amber-100">
+                            Disk ≥ {ROOT_DISK_ALERT_PERCENT}%
+                          </span>
+                        ) : null}
                       </span>
                     )}
                   </div>
