@@ -522,12 +522,16 @@ const ContainerDetails = () => {
     return formatted;
   };
 
-  /** Build port specs for restore API from container (hostPort:containerPort/tcp). */
+  /** Build port specs for restore API (hostPort:containerPort for docker -p). */
   const getPortsForRestore = (cont) => {
     const formatted = formatPorts(cont?.NetworkSettings?.Ports);
     const specs = formatted
       .filter((p) => p.host !== 'Not mapped')
-      .map((p) => `${p.host.split(':').pop()}:${p.container}`);
+      .map((p) => {
+        const hostPort = p.host.split(':').pop();
+        const containerPort = String(p.container).split('/')[0];
+        return `${hostPort}:${containerPort}`;
+      });
     return [...new Set(specs)];
   };
 

@@ -13,8 +13,8 @@ const TAG_REGEX = /^[a-zA-Z0-9_.\-]{1,128}$/;
 // Docker container name: alphanumeric start, then alphanumeric + _ . -
 // (Docker allows more in some contexts, but we keep it strict for safety.)
 const CONTAINER_NAME_REGEX = /^[a-zA-Z0-9][a-zA-Z0-9_.\-]{0,254}$/;
-// Port: single port or hostPort:containerPort
-const PORT_REGEX = /^\d{1,5}$|^\d{1,5}:\d{1,5}$/;
+// Port: single port, hostPort:containerPort, or same with optional /tcp|/udp (Docker CLI style)
+const PORT_REGEX = /^\d{1,5}$|^\d{1,5}:\d{1,5}(\/(tcp|udp))?$/;
 const ALLOWED_SHELLS = ['/bin/sh', '/bin/bash'];
 
 function throwInvalid(message, value) {
