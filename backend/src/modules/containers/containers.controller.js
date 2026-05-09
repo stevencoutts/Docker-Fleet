@@ -150,6 +150,7 @@ const recreateContainer = async (req, res, next) => {
     const portMappings = req.body?.portMappings;
     const imageName = req.body?.imageName != null ? String(req.body.imageName).trim() : '';
     const shmSize = req.body?.shmSize;
+    const env = req.body?.env;
 
     const server = await Server.findOne({
       where: { id: serverId, userId: req.user.id },
@@ -162,7 +163,25 @@ const recreateContainer = async (req, res, next) => {
     const onStep = (step, success, detail) => {
       if (socketIO) socketIO.emit('container:update:progress', { serverId, containerId, step, success, detail });
     };
-    const result = await dockerService.recreateContainer(server, containerId, { onStep, portMappings, imageName: imageName || undefined, shmSize });
+    let envArr = undefined;
+    if (env !== undefined) {
+      if (!Array.isArray(env)) return res.status(400).json({ error: 'env must be an array of strings in the form KEY=VALUE' });
+      if (env.length > 500) return res.status(400).json({ error: 'env is too large (max 500 entries)' });
+      const cleaned = [];
+      for (const item of env) {
+        if (typeof item !== 'string') return res.status(400).json({ error: 'env must be an array of strings in the form KEY=VALUE' });
+        const s = item.trim();
+        if (!s) continue;
+        const eq = s.indexOf('=');
+        if (eq <= 0) return res.status(400).json({ error: `Invalid env entry "${s}". Expected KEY=VALUE.` });
+        const key = s.slice(0, eq);
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) return res.status(400).json({ error: `Invalid env var name "${key}". Use letters, numbers, underscore; cannot start with a number.` });
+        cleaned.push(s);
+      }
+      envArr = cleaned;
+    }
+
+    const result = await dockerService.recreateContainer(server, containerId, { onStep, portMappings, imageName: imageName || undefined, shmSize, env: envArr });
 
     if (socketIO && result.success) {
       socketIO.emit('container:status:changed', {

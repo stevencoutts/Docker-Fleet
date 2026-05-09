@@ -141,6 +141,10 @@ const ContainerDetails = () => {
   const [shmSizeValue, setShmSizeValue] = useState('');
   const [shmApplyLoading, setShmApplyLoading] = useState(false);
   const [shmApplyError, setShmApplyError] = useState('');
+  const [envModalOpen, setEnvModalOpen] = useState(false);
+  const [envRows, setEnvRows] = useState([{ key: '', value: '' }]);
+  const [envApplyLoading, setEnvApplyLoading] = useState(false);
+  const [envApplyError, setEnvApplyError] = useState('');
   const maxHistoryPoints = 30;
 
   // Helper function to generate snapshot name with timestamp
@@ -177,6 +181,18 @@ const ContainerDetails = () => {
     fetchContainerDetails();
     fetchSnapshots();
   }, [serverId, containerId]);
+
+  useEffect(() => {
+    if (!envModalOpen) return;
+    const current = Array.isArray(container?.Config?.Env) ? container.Config.Env : [];
+    const rows = current.map((s) => {
+      const idx = typeof s === 'string' ? s.indexOf('=') : -1;
+      if (idx <= 0) return { key: String(s || ''), value: '' };
+      return { key: s.slice(0, idx), value: s.slice(idx + 1) };
+    });
+    setEnvRows(rows.length > 0 ? rows : [{ key: '', value: '' }]);
+    setEnvApplyError('');
+  }, [envModalOpen, container]);
 
   // When restore modal opens, fetch servers for "Restore to server" dropdown
   useEffect(() => {
@@ -790,6 +806,142 @@ const ContainerDetails = () => {
                 Cancel
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Env Vars Modal */}
+      {envModalOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-xl p-6 max-w-3xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-start justify-between mb-4">
+              <div>
+                <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100">Edit environment variables</h3>
+                <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
+                  Saving will recreate the container to apply changes.
+                </p>
+              </div>
+              <button
+                onClick={() => !envApplyLoading && setEnvModalOpen(false)}
+                disabled={envApplyLoading}
+                className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 disabled:opacity-50"
+              >
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {envApplyError && (
+              <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-sm text-red-700 dark:text-red-300">
+                {envApplyError}
+              </div>
+            )}
+
+            <div className="space-y-2">
+              {envRows.map((row, idx) => (
+                <div key={idx} className="flex gap-2 items-start">
+                  <input
+                    className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                    placeholder="KEY"
+                    value={row.key}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setEnvRows((prev) => prev.map((r, i) => (i === idx ? { ...r, key: v } : r)));
+                    }}
+                    disabled={envApplyLoading}
+                  />
+                  <input
+                    className="flex-[2] px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+                    placeholder="VALUE"
+                    value={row.value}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setEnvRows((prev) => prev.map((r, i) => (i === idx ? { ...r, value: v } : r)));
+                    }}
+                    disabled={envApplyLoading}
+                  />
+                  <button
+                    className="px-3 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors text-sm disabled:opacity-50"
+                    onClick={() => {
+                      setEnvRows((prev) => {
+                        const next = prev.filter((_, i) => i !== idx);
+                        return next.length > 0 ? next : [{ key: '', value: '' }];
+                      });
+                    }}
+                    disabled={envApplyLoading}
+                    title="Remove"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-4 flex items-center justify-between">
+              <button
+                onClick={() => setEnvRows((prev) => [...prev, { key: '', value: '' }])}
+                className="px-3 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors text-sm disabled:opacity-50"
+                disabled={envApplyLoading}
+              >
+                Add variable
+              </button>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setEnvModalOpen(false)}
+                  disabled={envApplyLoading}
+                  className="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={async () => {
+                    setEnvApplyError('');
+                    const items = [];
+                    const seen = new Set();
+                    for (const r of envRows) {
+                      const k = (r.key || '').trim();
+                      if (!k) continue;
+                      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) {
+                        setEnvApplyError(`Invalid env var name "${k}". Use letters, numbers, underscore; cannot start with a number.`);
+                        return;
+                      }
+                      if (seen.has(k)) {
+                        setEnvApplyError(`Duplicate env var "${k}".`);
+                        return;
+                      }
+                      seen.add(k);
+                      const v = r.value != null ? String(r.value) : '';
+                      items.push(`${k}=${v}`);
+                    }
+                    setEnvApplyLoading(true);
+                    setLastRecreateResult({ inProgress: true, steps: [] });
+                    try {
+                      const res = await containersService.recreate(serverId, containerId, { env: items }, 240000);
+                      const data = res.data;
+                      setLastRecreateResult(data);
+                      setEnvModalOpen(false);
+                      if (data?.success && data?.newContainerId) {
+                        navigate(`/servers/${serverId}/containers/${data.newContainerId}`, { replace: true, state: { recreateResult: data } });
+                      }
+                    } catch (err) {
+                      setLastRecreateResult((prev) => ({ ...prev, success: false, error: err.response?.data?.error || err.message || 'Recreate failed', inProgress: false }));
+                      setEnvApplyError(err.response?.data?.error || err.message || 'Failed to apply env vars');
+                    } finally {
+                      setEnvApplyLoading(false);
+                    }
+                  }}
+                  disabled={envApplyLoading || recreateLoading || pullAndUpdateLoading}
+                  className="px-4 py-2 bg-primary-600 dark:bg-primary-500 text-white rounded-lg hover:bg-primary-700 dark:hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
+                >
+                  {envApplyLoading ? 'Applying…' : 'Apply (recreate)'}
+                </button>
+              </div>
+            </div>
+
+            <p className="mt-4 text-xs text-gray-500 dark:text-gray-400">
+              Env vars are applied by recreating the container with the updated list.
+            </p>
           </div>
         </div>
       )}
@@ -1863,34 +2015,46 @@ const ContainerDetails = () => {
               </div>
 
               {/* Environment Variables */}
-              {container.Config?.Env && container.Config.Env.length > 0 && (
-                <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
-                  <div className="flex items-center gap-2 mb-4">
+              <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+                  <div className="flex items-center gap-2 mb-4 justify-between">
+                    <div className="flex items-center gap-2">
                     <svg className="w-5 h-5 text-primary-600 dark:text-primary-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                     </svg>
                     <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Environment Variables</h3>
                     <span className="px-2 py-1 text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-full">
-                      {container.Config.Env.length}
+                      {Array.isArray(container.Config?.Env) ? container.Config.Env.length : 0}
                     </span>
-                  </div>
-                  <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 max-h-64 overflow-y-auto">
-                    <div className="space-y-1">
-                      {container.Config.Env.map((env, idx) => {
-                        const [key, ...valueParts] = env.split('=');
-                        const value = valueParts.join('=');
-                        return (
-                          <div key={idx} className="flex items-start gap-2 p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded">
-                            <span className="font-mono text-xs font-semibold text-primary-600 dark:text-primary-400 flex-shrink-0">{key}=</span>
-                            <span className="font-mono text-xs text-gray-700 dark:text-gray-300 break-all">{value || '(empty)'}</span>
-                          </div>
-                        );
-                      })}
                     </div>
+                    <button
+                      onClick={() => setEnvModalOpen(true)}
+                      className="px-3 py-2 bg-primary-600 dark:bg-primary-500 text-white rounded-lg hover:bg-primary-700 dark:hover:bg-primary-600 transition-colors text-sm font-medium"
+                      disabled={recreateLoading || pullAndUpdateLoading || envApplyLoading}
+                      title="Edit env vars (recreate)"
+                    >
+                      Edit (recreate)
+                    </button>
                   </div>
+                  {Array.isArray(container.Config?.Env) && container.Config.Env.length > 0 ? (
+                    <div className="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 max-h-64 overflow-y-auto">
+                      <div className="space-y-1">
+                        {container.Config.Env.map((env, idx) => {
+                          const [key, ...valueParts] = String(env || '').split('=');
+                          const value = valueParts.join('=');
+                          return (
+                            <div key={idx} className="flex items-start gap-2 p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded">
+                              <span className="font-mono text-xs font-semibold text-primary-600 dark:text-primary-400 flex-shrink-0">{key}=</span>
+                              <span className="font-mono text-xs text-gray-700 dark:text-gray-300 break-all">{value || '(empty)'}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-gray-500 dark:text-gray-400">No environment variables found.</p>
+                  )}
                 </div>
-              )}
 
               {/* Additional Info */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

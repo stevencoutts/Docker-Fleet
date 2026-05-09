@@ -653,7 +653,7 @@ class DockerService {
         Image: imageRef,
         Cmd: details.Config?.Cmd || null,
         Entrypoint: details.Config?.Entrypoint || null,
-        Env: details.Config?.Env || null,
+        Env: (options.env && Array.isArray(options.env)) ? options.env : (details.Config?.Env || null),
         WorkingDir: details.Config?.WorkingDir || null,
         Labels: labels,
         Hostname: details.Config?.Hostname || null,
