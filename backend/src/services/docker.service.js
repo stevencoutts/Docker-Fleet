@@ -1,3 +1,4 @@
+const path = require('path');
 const sshService = require('./ssh.service');
 const registryService = require('./registry.service');
 const logger = require('../config/logger');
@@ -16,6 +17,24 @@ const {
 
 function filterValidContainerIds(ids) {
   return (ids || []).filter((id) => DOCKER_ID_REGEX.test(String(id || '').trim()));
+}
+
+/** Host path from docker inspect Mounts[].Source — must stay shell-safe for remote scripts. */
+function validateMountSourcePath(source) {
+  const s = String(source || '').trim();
+  if (!s.startsWith('/')) {
+    const err = new Error('Invalid mount source path');
+    err.code = 'INVALID_INPUT';
+    err.exposed = true;
+    throw err;
+  }
+  if (/[\n\r\x00]/.test(s) || /[`$]/.test(s)) {
+    const err = new Error('Invalid mount source path');
+    err.code = 'INVALID_INPUT';
+    err.exposed = true;
+    throw err;
+  }
+  return s;
 }
 
 /** Comma-separated name suffixes; containers whose name ends with one of these are treated as dev/skip-update. */
@@ -1357,6 +1376,193 @@ class DockerService {
     return { success: result.code === 0 };
   }
 
+  async mkdirRemote(server, absoluteDir) {
+    const q = escapeSingleQuoted(String(absoluteDir).trim());
+    await sshService.executeCommand(server, `mkdir -p ${q}`, { pty: false, timeout: 60000 });
+  }
+
+  /**
+   * Upload bytes to a path on the remote host (SFTP).
+   */
+  async uploadFile(server, remotePath, buffer) {
+    const dir = path.posix.dirname(remotePath);
+    await this.mkdirRemote(server, dir);
+    const ssh = await sshService.connect(server);
+    return new Promise((resolve, reject) => {
+      ssh.sftp((err, sftp) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        sftp.writeFile(remotePath, buffer, (writeErr) => {
+          if (writeErr) reject(writeErr);
+          else resolve();
+        });
+      });
+    });
+  }
+
+  /**
+   * Stable filesystem-friendly base name derived from full image ref (repo:tag → repo).
+   */
+  snapshotVolumeBundleBaseName(fullImageName) {
+    const repo = String(fullImageName || '').split(':')[0].trim();
+    const safe = repo.replace(/[^a-zA-Z0-9_.-]/g, '_').slice(0, 200);
+    return safe || 'snapshot';
+  }
+
+  /**
+   * Where volume payload for a snapshot image is stored on each Docker host (alongside docker commit).
+   */
+  snapshotVolumeBundlePath(fullImageName) {
+    const base = this.snapshotVolumeBundleBaseName(fullImageName);
+    return `/tmp/dockerfleet-volume-bundles/${base}.tar.gz`;
+  }
+
+  /**
+   * After docker commit, archive named/bind mount data (docker commit omits volumes).
+   */
+  async archiveContainerVolumesForSnapshot(server, containerId, fullImageName) {
+    const bundlePath = this.snapshotVolumeBundlePath(fullImageName);
+    const safeId = validateContainerId(containerId);
+    const details = await this.getContainerDetails(server, safeId);
+    const mounts = Array.isArray(details.Mounts) ? details.Mounts : [];
+    const backupMounts = mounts.filter((m) => {
+      if (!m || !m.Source || !m.Destination) return false;
+      if (m.Type === 'tmpfs') return false;
+      return true;
+    });
+
+    const manifest = backupMounts.map((m, i) => ({
+      index: i,
+      destination: m.Destination,
+      rw: m.RW !== false,
+      type: m.Type || 'bind',
+    }));
+
+    const manifestB64 = Buffer.from(JSON.stringify(manifest)).toString('base64');
+    const bundleQ = escapeSingleQuoted(bundlePath);
+    const workId = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+
+    const lines = [
+      'set -e',
+      `WORKDIR=/tmp/dockerfleet-volwk-${workId}`,
+      'mkdir -p "$WORKDIR/data"',
+      `mkdir -p "$(dirname ${bundleQ})"`,
+      `echo '${manifestB64}' | base64 -d > "$WORKDIR/manifest.json"`,
+      'docker pull -q alpine:3.19 2>/dev/null || true',
+    ];
+
+    backupMounts.forEach((m, i) => {
+      const src = validateMountSourcePath(m.Source);
+      const srcQ = escapeSingleQuoted(src);
+      lines.push(`docker run --rm -v ${srcQ}:/from:ro alpine:3.19 tar czf "$WORKDIR/data/${i}.tar.gz" -C /from .`);
+    });
+
+    lines.push(`tar czf ${bundleQ} -C "$WORKDIR" manifest.json data`);
+    lines.push('rm -rf "$WORKDIR"');
+
+    const script = lines.join('\n');
+    await sshService.executeCommand(server, script, {
+      pty: false,
+      timeout: 600000,
+    });
+
+    return { bundlePath, mountCount: backupMounts.length };
+  }
+
+  /**
+   * Extract snapshot volume bundle into new Docker volumes; returns -v specs for docker create.
+   */
+  async restoreSnapshotVolumesFromBundle(server, bundleRemotePath, containerBaseName) {
+    const safeBase = validateContainerName(containerBaseName)
+      .replace(/[^a-zA-Z0-9_.-]/g, '_')
+      .slice(0, 80);
+    const qBundle = escapeSingleQuoted(bundleRemotePath.trim());
+
+    const manRes = await sshService.executeCommand(server, `tar xzOf ${qBundle} manifest.json`, {
+      pty: false,
+      timeout: 120000,
+      allowFailure: true,
+    });
+    if (manRes.code !== 0 || !manRes.stdout || !manRes.stdout.trim()) {
+      logger.info(`No volume manifest in bundle ${bundleRemotePath} (legacy snapshot)`);
+      return [];
+    }
+
+    let manifest = [];
+    try {
+      manifest = JSON.parse(manRes.stdout.trim());
+    } catch (e) {
+      logger.warn(`Invalid manifest in volume bundle ${bundleRemotePath}`);
+      return [];
+    }
+    if (!Array.isArray(manifest) || manifest.length === 0) {
+      return [];
+    }
+
+    const work = `/tmp/dockerfleet-rst-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const qw = escapeSingleQuoted(work);
+    await sshService.executeCommand(server, `mkdir -p ${qw} && tar xzf ${qBundle} -C ${qw}`, {
+      pty: false,
+      timeout: 600000,
+    });
+
+    const binds = [];
+    const createdVolumes = [];
+    try {
+      await sshService.executeCommand(server, 'docker pull -q alpine:3.19 2>/dev/null || true', {
+        pty: false,
+        timeout: 120000,
+        allowFailure: true,
+      });
+
+      for (let i = 0; i < manifest.length; i++) {
+        const m = manifest[i];
+        if (!m || !m.destination) continue;
+        const volName = `df_rst_${safeBase}_${i}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`.slice(
+          0,
+          240,
+        );
+        const volQ = escapeSingleQuoted(volName);
+        await sshService.executeCommand(server, `docker volume create ${volQ}`, { pty: false, timeout: 60000 });
+        createdVolumes.push(volName);
+
+        const archiveFull = `${work}/data/${i}.tar.gz`;
+        const qa = escapeSingleQuoted(archiveFull);
+        const probe = await sshService.executeCommand(server, `test -f ${qa} && echo ok`, {
+          pty: false,
+          allowFailure: true,
+        });
+        if (probe.stdout.trim() !== 'ok') {
+          logger.warn(`Snapshot volume archive missing for mount ${i}, skipping data restore`);
+          await sshService.executeCommand(server, `docker volume rm -f ${volQ}`, { pty: false, allowFailure: true });
+          createdVolumes.pop();
+          continue;
+        }
+
+        const extractCmd = `docker run --rm -v ${volQ}:/to -v ${qa}:/in.tgz:ro alpine:3.19 tar xzf /in.tgz -C /to`;
+        await sshService.executeCommand(server, extractCmd, { pty: false, timeout: 600000 });
+
+        const dest = String(m.destination).trim();
+        const mode = m.rw === false ? 'ro' : 'rw';
+        binds.push(`${volName}:${dest}:${mode}`);
+      }
+    } catch (err) {
+      for (const v of createdVolumes) {
+        await sshService.executeCommand(server, `docker volume rm -f ${escapeSingleQuoted(v)}`, {
+          pty: false,
+          allowFailure: true,
+        });
+      }
+      throw err;
+    } finally {
+      await sshService.executeCommand(server, `rm -rf ${qw}`, { pty: false, allowFailure: true });
+    }
+
+    return binds;
+  }
+
   /**
    * Load an image from a tar buffer on a server (e.g. after copying from another host).
    * @param {object} server - Server model
@@ -1730,6 +1936,11 @@ class DockerService {
     const shmBytes = this.parseBytes(options.shmSize);
     if (shmBytes != null) {
       command += ` --shm-size=${shmBytes}`;
+    }
+    if (options.volumeBinds && options.volumeBinds.length > 0) {
+      options.volumeBinds.forEach((vb) => {
+        command += ` -v ${escape(vb)}`;
+      });
     }
     if (options.ports && options.ports.length > 0) {
       options.ports.forEach((port) => {

@@ -1203,13 +1203,22 @@ const ContainerDetails = () => {
                   const portsForRestore = getPortsForRestore(container);
                   setRestoreLoading(true);
                   try {
-                    await containersService.restoreSnapshot(serverId, restoreImageName, restoreContainerName.trim(), {
+                    const { data } = await containersService.restoreSnapshot(serverId, restoreImageName, restoreContainerName.trim(), {
                       ...(targetId !== serverId ? { targetServerId: targetId } : {}),
                       ...(portsForRestore.length > 0 ? { ports: portsForRestore } : {}),
                     });
                     setRestoreModalOpen(false);
                     setRestoreContainerName('');
-                    alert('Container created successfully!');
+                    let msg = data?.started
+                      ? 'Container restored and started.'
+                      : 'Container created.';
+                    if (data?.volumeMountsRestored > 0) {
+                      msg += ` Restored data for ${data.volumeMountsRestored} volume mount(s).`;
+                    }
+                    if (data?.startWarning) {
+                      msg += ` Warning: ${data.startWarning}`;
+                    }
+                    alert(msg);
                     window.location.href = `/servers/${targetId}`;
                   } catch (error) {
                     alert(error.response?.data?.error || error.message || 'Failed to restore snapshot');
@@ -2096,7 +2105,7 @@ const ContainerDetails = () => {
                 <div>
                   <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Snapshots</h3>
                   <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                    View, restore, or delete snapshots created from this container
+                    Snapshots save the image plus volume and bind-mount data on this host (Docker commit alone omits volumes). Download-as-file is image-only.
                   </p>
                 </div>
                 <button

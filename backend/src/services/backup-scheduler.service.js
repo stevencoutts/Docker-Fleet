@@ -94,6 +94,12 @@ async function runBackupForEntry(server, containerName, retention) {
     return;
   }
 
+  try {
+    await dockerService.archiveContainerVolumesForSnapshot(server, containerId, `${imageName}:${tag}`);
+  } catch (volErr) {
+    logger.warn(`Scheduled backup volume archive failed for ${containerName}:`, volErr.message);
+  }
+
   const keep = Math.max(1, parseInt(retention, 10) || 5);
   try {
     const snapshots = await dockerService.getSnapshotsForContainer(server, containerId);

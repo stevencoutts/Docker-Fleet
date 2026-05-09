@@ -6,6 +6,7 @@ const pollingService = require('../../services/polling.service');
 const { groupContainers } = require('../grouping/grouping.controller');
 const sshService = require('../../services/ssh.service');
 const logger = require('../../config/logger');
+const { validateContainerName, escapeSingleQuoted } = require('../../utils/shellSafe');
 
 const CONTAINER_UPDATES_LOG = path.join(process.cwd(), 'logs', 'container-updates.log');
 function appendContainerUpdateLog(entry) {
@@ -499,6 +500,13 @@ const restoreSnapshot = async (req, res, next) => {
       return res.status(400).json({ error: 'Image name is required' });
     }
 
+    let safeContainerName;
+    try {
+      safeContainerName = validateContainerName(containerName);
+    } catch (e) {
+      return res.status(400).json({ error: e.message || 'Invalid container name' });
+    }
+
     const sourceServer = await Server.findOne({
       where: { id: sourceServerId, userId: req.user.id },
     });
@@ -530,13 +538,47 @@ const restoreSnapshot = async (req, res, next) => {
       }
     }
 
-    const result = await dockerService.createContainerFromImage(targetServer, imageName.trim(), containerName, {
+    const bundlePath = dockerService.snapshotVolumeBundlePath(imageName.trim());
+    let volumeBinds = [];
+
+    const probeSource = await sshService.executeCommand(
+      sourceServer,
+      `test -f ${escapeSingleQuoted(bundlePath)} && echo ok`,
+      { allowFailure: true, pty: false },
+    );
+    const hasBundle = probeSource.stdout.trim() === 'ok';
+
+    if (hasBundle) {
+      try {
+        if (isCrossServer) {
+          const bundleBuf = await dockerService.downloadFile(sourceServer, bundlePath);
+          await dockerService.uploadFile(targetServer, bundlePath, bundleBuf);
+        }
+        volumeBinds = await dockerService.restoreSnapshotVolumesFromBundle(
+          targetServer,
+          bundlePath,
+          safeContainerName,
+        );
+      } catch (volErr) {
+        logger.warn('Snapshot volume restore failed; continuing with image only:', volErr.message);
+      }
+    }
+
+    const result = await dockerService.createContainerFromImage(targetServer, imageName.trim(), safeContainerName, {
       ports,
       env,
       restart: restart || 'unless-stopped',
+      volumeBinds: volumeBinds.length > 0 ? volumeBinds : undefined,
     });
 
-    res.json(result);
+    const startResult = await dockerService.startContainer(targetServer, result.containerId);
+
+    res.json({
+      ...result,
+      started: startResult.success,
+      ...(startResult.success ? {} : { startWarning: startResult.message || 'Failed to start container' }),
+      volumeMountsRestored: volumeBinds.length,
+    });
   } catch (error) {
     logger.error(`Failed to restore snapshot:`, error);
     next(error);
@@ -566,6 +608,15 @@ const createSnapshot = async (req, res, next) => {
     // Step 1: Commit container to image (this keeps it on the server)
     logger.info(`Committing container ${containerId} to image ${fullImageName}`);
     const commitResult = await dockerService.commitContainer(server, containerId, imageName, snapshotTag);
+
+    try {
+      const volSnap = await dockerService.archiveContainerVolumesForSnapshot(server, containerId, commitResult.imageName);
+      logger.info(
+        `Snapshot volume bundle for ${commitResult.imageName}: ${volSnap.mountCount} mount(s) → ${volSnap.bundlePath}`,
+      );
+    } catch (volErr) {
+      logger.warn(`Volume snapshot failed for ${fullImageName} (image still committed):`, volErr.message);
+    }
 
     let fileData = null;
     let downloadFileName = null;
