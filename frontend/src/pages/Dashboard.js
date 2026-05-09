@@ -270,6 +270,38 @@ const Dashboard = () => {
     });
   }, [servers, hostInfos]);
 
+  const showCertExpiryBanner = useMemo(
+    () =>
+      certOverview.checkedServers > 0 &&
+      (certOverview.loading ||
+        certOverview.expiring.length > 0 ||
+        certOverview.errors > 0),
+    [
+      certOverview.checkedServers,
+      certOverview.loading,
+      certOverview.expiring.length,
+      certOverview.errors,
+    ],
+  );
+
+  const showImageUpdatesBanner = useMemo(
+    () =>
+      servers.length > 0 &&
+      totalContainers > 0 &&
+      (checkingUpdates ||
+        !updateOverview.ranOnce ||
+        (updateOverview.containers?.length ?? 0) > 0 ||
+        (updateOverview.errors?.length ?? 0) > 0),
+    [
+      servers.length,
+      totalContainers,
+      checkingUpdates,
+      updateOverview.ranOnce,
+      updateOverview.containers,
+      updateOverview.errors,
+    ],
+  );
+
   const runUpdateCheck = async () => {
     setCheckingUpdates(true);
     try {
@@ -482,7 +514,7 @@ const Dashboard = () => {
 
       {/* Alerts Section - Containers that should be running but are stopped */}
       {/* Certificates expiring soon (Public WWW) */}
-      {certOverview.checkedServers > 0 && (
+      {showCertExpiryBanner && (
         <div className="mb-6 bg-amber-50 dark:bg-amber-900/20 border-l-4 border-amber-400 dark:border-amber-500 p-4 rounded-r-lg">
           <div className="flex items-start">
             <div className="flex-shrink-0">
@@ -746,7 +778,7 @@ const Dashboard = () => {
       )}
 
       {/* Image update overview */}
-      {servers.length > 0 && totalContainers > 0 && (
+      {showImageUpdatesBanner && (
         <div className="mb-6 bg-blue-50 dark:bg-blue-900/20 border-l-4 border-blue-400 dark:border-blue-500 p-4 rounded-r-lg">
           <div className="flex items-start">
             <div className="flex-shrink-0">
