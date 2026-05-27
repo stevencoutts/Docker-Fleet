@@ -75,8 +75,34 @@ function getRegistryHost(registry) {
   return registry;
 }
 
+const MANIFEST_ACCEPT = [
+  'application/vnd.docker.distribution.manifest.list.v2+json',
+  'application/vnd.docker.distribution.manifest.v2+json',
+  'application/vnd.oci.image.index.v1+json',
+  'application/vnd.oci.image.manifest.v1+json',
+].join(', ');
+
+function normalizeDigest(digest) {
+  return (digest || '').replace(/^sha256:/i, '').toLowerCase();
+}
+
 /**
- * Make HEAD or GET manifest request and return digest or null/error.
+ * Collect index + per-platform digests from a registry manifest (multi-arch safe).
+ */
+function collectDigestsFromManifest(manifest, headerDigest) {
+  const digests = new Set();
+  if (headerDigest) digests.add(normalizeDigest(headerDigest));
+  if (!manifest || typeof manifest !== 'object') return [...digests];
+  if (Array.isArray(manifest.manifests)) {
+    for (const item of manifest.manifests) {
+      if (item && item.digest) digests.add(normalizeDigest(item.digest));
+    }
+  }
+  return [...digests];
+}
+
+/**
+ * Make HEAD or GET manifest request and return digest and/or body.
  */
 function doManifestRequest(host, urlPath, token, isDockerHub, method) {
   const options = {
@@ -84,7 +110,7 @@ function doManifestRequest(host, urlPath, token, isDockerHub, method) {
     path: urlPath,
     method,
     headers: {
-      Accept: 'application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json',
+      Accept: MANIFEST_ACCEPT,
     },
   };
   if (token) {
@@ -99,17 +125,28 @@ function doManifestRequest(host, urlPath, token, isDockerHub, method) {
         return;
       }
       const digest = res.headers['docker-content-digest'];
-      if (digest) {
-        res.resume();
-        resolve({ digest });
-        return;
-      }
       if (method === 'HEAD') {
+        if (digest) {
+          res.resume();
+          resolve({ digest });
+          return;
+        }
         resolve(null);
         return;
       }
-      res.resume();
-      resolve({ error: 'No Docker-Content-Digest in response' });
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          resolve({ error: `Registry returned ${res.statusCode}` });
+          return;
+        }
+        if (!digest && !data.trim()) {
+          resolve({ error: 'No Docker-Content-Digest in response' });
+          return;
+        }
+        resolve({ digest: digest || undefined, body: data || undefined });
+      });
     });
     req.on('error', (err) => resolve({ error: err.message }));
     req.setTimeout(15000, () => {
@@ -121,36 +158,92 @@ function doManifestRequest(host, urlPath, token, isDockerHub, method) {
 }
 
 /**
- * HEAD manifest (then GET if needed) and return Docker-Content-Digest.
+ * Fetch registry digests for a tag (manifest list index + per-platform manifests).
  * Some registries (e.g. ghcr.io) only return the digest on GET.
  */
-function getRemoteDigest(registry, path, tag, token = null) {
+async function getRemoteDigestsForComparison(registry, path, tag, token = null) {
   const host = getRegistryHost(registry);
   const isDockerHub = host === 'registry-1.docker.io';
   const pathEncoded = path.split('/').map(encodeURIComponent).join('/');
   const tagEncoded = encodeURIComponent(tag);
   const urlPath = `/v2/${pathEncoded}/manifests/${tagEncoded}`;
 
-  return doManifestRequest(host, urlPath, token, isDockerHub, 'HEAD').then((result) => {
-    if (result && result.error) return result;
-    if (result && result.digest) return result;
-    if (result === null && isDockerHub) {
-      return getDockerHubToken(path).then((t) =>
-        getRemoteDigest(registry, path, tag, t)
-      ).catch((e) => ({ error: e.message }));
+  const run = async (authToken) => {
+    const digests = new Set();
+    let displayDigest = null;
+
+    const head = await doManifestRequest(host, urlPath, authToken, isDockerHub, 'HEAD');
+    if (head && head.error) return head;
+    if (head && head.digest) {
+      displayDigest = head.digest;
+      digests.add(normalizeDigest(head.digest));
     }
-    return doManifestRequest(host, urlPath, token, isDockerHub, 'GET');
+
+    const get = await doManifestRequest(host, urlPath, authToken, isDockerHub, 'GET');
+    if (get && get.error) return get;
+    if (get && get.body) {
+      try {
+        const manifest = JSON.parse(get.body);
+        for (const d of collectDigestsFromManifest(manifest, get.digest || head?.digest)) {
+          digests.add(d);
+        }
+        if (!displayDigest && get.digest) displayDigest = get.digest;
+      } catch (e) {
+        return { error: 'Could not parse registry manifest' };
+      }
+    } else if (get && get.digest) {
+      displayDigest = get.digest;
+      digests.add(normalizeDigest(get.digest));
+    }
+
+    if (digests.size === 0) {
+      return { error: 'No Docker-Content-Digest in response' };
+    }
+    return {
+      digests: [...digests],
+      digest: displayDigest || `sha256:${[...digests][0]}`,
+    };
+  };
+
+  let result = await run(token);
+  if (result === null && isDockerHub) {
+    try {
+      const t = await getDockerHubToken(path);
+      result = await run(t);
+    } catch (e) {
+      return { error: e.message };
+    }
+  }
+  return result || { error: 'Registry auth failed' };
+}
+
+/** @deprecated Use getRemoteDigestsForComparison; kept for callers that only need the index digest. */
+function getRemoteDigest(registry, path, tag, token = null) {
+  return getRemoteDigestsForComparison(registry, path, tag, token).then((r) => {
+    if (r.error) return r;
+    return { digest: r.digest };
   });
 }
 
 /**
- * Check if a container's image has an update available by comparing local digest to registry.
- * @param {object} opts - { localDigest, imageRef } where imageRef is e.g. "postgres:15-alpine"
+ * Check if a container's image has an update available by comparing local digest(s) to registry.
+ * @param {object} opts - { localDigest|localDigests, imageRef }
  * @returns {Promise<{ updateAvailable: boolean, remoteDigest?: string, error?: string }>}
  */
 async function checkUpdateAvailable(opts) {
-  const { localDigest, imageRef } = opts;
-  if (!localDigest || !imageRef) {
+  const { localDigest, localDigests, imageRef } = opts;
+  const localList = [];
+  if (Array.isArray(localDigests)) {
+    for (const d of localDigests) {
+      const n = normalizeDigest(d);
+      if (n) localList.push(n);
+    }
+  }
+  if (localDigest) {
+    const n = normalizeDigest(localDigest);
+    if (n && !localList.includes(n)) localList.push(n);
+  }
+  if (localList.length === 0 || !imageRef) {
     return { updateAvailable: false, error: 'Missing localDigest or imageRef' };
   }
   const parsed = parseImageRef(imageRef);
@@ -170,15 +263,13 @@ async function checkUpdateAvailable(opts) {
     }
   }
 
-  const result = await getRemoteDigest(parsed.registry, parsed.path, parsed.tag, token);
+  const result = await getRemoteDigestsForComparison(parsed.registry, parsed.path, parsed.tag, token);
   if (result.error) {
     return { updateAvailable: false, error: result.error };
   }
-  const remoteDigest = result.digest;
-  const localNormalized = (localDigest || '').replace(/^sha256:/i, '');
-  const remoteNormalized = (remoteDigest || '').replace(/^sha256:/i, '');
-  const updateAvailable = localNormalized !== remoteNormalized;
-  return { updateAvailable, remoteDigest };
+  const remoteSet = new Set(result.digests || []);
+  const updateAvailable = !localList.some((ld) => remoteSet.has(ld));
+  return { updateAvailable, remoteDigest: result.digest };
 }
 
 /**
@@ -505,7 +596,9 @@ function listTags(registry, path, token = null) {
 
 module.exports = {
   parseImageRef,
+  normalizeDigest,
   getRemoteDigest,
+  getRemoteDigestsForComparison,
   checkUpdateAvailable,
   listTags,
   parseVersionFromTag,

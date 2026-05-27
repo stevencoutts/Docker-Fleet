@@ -1490,8 +1490,14 @@ const ContainerDetails = () => {
                                     const data = res.data || {};
                                     setLastUpdateResult(data);
                                     if (data.success) {
-                                      setUpdateStatus(null);
                                       updateOverviewService.removeContainer(serverId, containerId).catch(() => {});
+                                      const targetId = data.newContainerId || containerId;
+                                      try {
+                                        const statusRes = await containersService.getUpdateStatus(serverId, targetId);
+                                        setUpdateStatus(statusRes.data?.updateStatus || statusRes.data || {});
+                                      } catch {
+                                        setUpdateStatus({ updateAvailable: false });
+                                      }
                                       if (data.newContainerId) {
                                         navigate(`/servers/${serverId}/containers/${data.newContainerId}`, { replace: true, state: { updateResult: data } });
                                       } else {

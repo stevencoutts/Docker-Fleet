@@ -371,7 +371,8 @@ class DockerService {
         return { updateAvailable: false, reason: 'Local build or untagged image' };
       }
 
-      const localDigest = repoDigests[0].includes('@') ? repoDigests[0].split('@')[1] : repoDigests[0];
+      const localDigests = repoDigests.map((rd) => (rd.includes('@') ? rd.split('@')[1] : rd)).filter(Boolean);
+      const localDigest = localDigests[0];
       const parsed = registryService.parseImageRef(imageRef);
       const labelsCmd = `docker image inspect ${imageId} --format '{{json .Config.Labels}}'`;
       const labelsResult = await sshService.executeCommand(server, labelsCmd, { allowFailure: true, timeout: 5000 });
@@ -388,7 +389,7 @@ class DockerService {
         } catch (e) { /* ignore */ }
       }
       const [result, tagsResult] = await Promise.all([
-        registryService.checkUpdateAvailable({ localDigest, imageRef }),
+        registryService.checkUpdateAvailable({ localDigests, imageRef }),
         !parsed.digestPinned && parsed.registry && parsed.path
           ? registryService.listTags(parsed.registry, parsed.path)
           : Promise.resolve(null),
@@ -435,7 +436,12 @@ class DockerService {
             const effectiveForSameCheck = resolvedParsed || currentParsed;
             const sameVersion = effectiveForSameCheck && registryService.compareVersionParts(effectiveForSameCheck, newest.version) === 0;
             const newerByVersion = effectiveForSameCheck && registryService.compareVersionParts(effectiveForSameCheck, newest.version) < 0;
-            if (result.updateAvailable || newerByVersion) out.updateAvailable = true;
+            // For :latest, trust digest match — a newer semver tag alone is not an update when content is current.
+            if (result.updateAvailable) {
+              out.updateAvailable = true;
+            } else if (newerByVersion && parsed.tag && parsed.tag !== 'latest') {
+              out.updateAvailable = true;
+            }
           } else if (resolvedVersion) {
             out.resolvedNewerThanTagList = true;
           }
