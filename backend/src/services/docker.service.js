@@ -46,6 +46,95 @@ function getSkipUpdateNamePatterns() {
   return raw.split(',').map(s => s.trim()).filter(Boolean);
 }
 
+/**
+ * Prefer HostConfig.PortBindings from inspect; fall back to NetworkSettings.Ports (runtime state).
+ */
+function resolvePortBindingsFromInspect(details) {
+  const bindings = details?.HostConfig?.PortBindings;
+  if (bindings && typeof bindings === 'object' && Object.keys(bindings).length > 0) {
+    return bindings;
+  }
+  const ports = details?.NetworkSettings?.Ports;
+  if (!ports || typeof ports !== 'object') return null;
+  const out = {};
+  for (const [containerPort, hostPorts] of Object.entries(ports)) {
+    if (!hostPorts || !Array.isArray(hostPorts) || hostPorts.length === 0) continue;
+    out[containerPort] = hostPorts
+      .map((hp) => ({
+        HostIp: hp.HostIp != null && hp.HostIp !== '' ? String(hp.HostIp) : '0.0.0.0',
+        HostPort: String(hp.HostPort ?? ''),
+      }))
+      .filter((hp) => hp.HostPort);
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+/** Docker Engine API requires ExposedPorts when publishing ports via PortBindings on create. */
+function buildExposedPortsForCreate(details, portBindings) {
+  const exposed = { ...(details?.Config?.ExposedPorts || {}) };
+  if (portBindings && typeof portBindings === 'object') {
+    for (const key of Object.keys(portBindings)) {
+      if (key) exposed[key] = exposed[key] || {};
+    }
+  }
+  return Object.keys(exposed).length > 0 ? exposed : null;
+}
+
+function mountTargetFromBind(bindStr) {
+  const parts = String(bindStr || '').split(':');
+  return parts.length >= 2 ? parts[1] : null;
+}
+
+/**
+ * Build Binds and/or Mounts for container create without duplicate container paths.
+ * Inspect often lists the same mount in HostConfig.Binds and HostConfig.Mounts.
+ */
+function resolveMountsForRecreate(details) {
+  const usedTargets = new Set();
+  const binds = [];
+  const mounts = [];
+
+  const hcBinds = details?.HostConfig?.Binds;
+  if (Array.isArray(hcBinds)) {
+    for (const b of hcBinds) {
+      const target = mountTargetFromBind(b);
+      if (!target || usedTargets.has(target)) continue;
+      usedTargets.add(target);
+      binds.push(b);
+    }
+  }
+
+  const hcMounts = details?.HostConfig?.Mounts;
+  if (Array.isArray(hcMounts)) {
+    for (const m of hcMounts) {
+      const target = m.Target || m.Destination;
+      if (!target || usedTargets.has(target)) continue;
+      usedTargets.add(target);
+      mounts.push(m);
+    }
+  }
+
+  if (binds.length === 0 && mounts.length === 0) {
+    const topMounts = details?.Mounts;
+    if (Array.isArray(topMounts)) {
+      for (const m of topMounts) {
+        const target = m.Destination || m.Target;
+        if (!target || usedTargets.has(target)) continue;
+        const src = m.Source || m.Name || '';
+        if (!src) continue;
+        usedTargets.add(target);
+        const mode = m.RW === false ? 'ro' : 'rw';
+        binds.push(`${src}:${target}:${mode}`);
+      }
+    }
+  }
+
+  return {
+    binds: binds.length > 0 ? binds : null,
+    mounts: mounts.length > 0 ? mounts : null,
+  };
+}
+
 function matchesSkipUpdateNamePattern(containerName) {
   const name = (containerName || '').replace(/^\//, '');
   if (!name) return false;
@@ -428,23 +517,10 @@ class DockerService {
       const labels = { ...(details.Config?.Labels || {}) };
       if (requestedShm != null) labels['dockerfleet.shmSize'] = String(requestedShm);
 
-      // Preserve mounts: prefer HostConfig.Binds; fallback to building from top-level Mounts (bind mounts store config/settings)
-      let binds = details.HostConfig?.Binds;
-      if (!binds || !Array.isArray(binds) || binds.length === 0) {
-        const topMounts = details.Mounts;
-        if (topMounts && Array.isArray(topMounts) && topMounts.length > 0) {
-          binds = topMounts.map((m) => {
-            const src = m.Source || m.Name || '';
-            const dst = m.Destination || m.Target || '';
-            const mode = m.RW === false ? 'ro' : 'rw';
-            return src && dst ? `${src}:${dst}:${mode}` : null;
-          }).filter(Boolean);
-        }
-      }
-      if (!binds || binds.length === 0) {
-        binds = null;
-      }
+      const { binds, mounts: recreateMounts } = resolveMountsForRecreate(details);
 
+      const portBindings = resolvePortBindingsFromInspect(details);
+      const exposedPorts = buildExposedPortsForCreate(details, portBindings);
       const createBody = {
         Image: imageRef,
         Cmd: details.Config?.Cmd || null,
@@ -453,12 +529,13 @@ class DockerService {
         WorkingDir: details.Config?.WorkingDir || null,
         Labels: labels,
         Hostname: details.Config?.Hostname || null,
+        ...(exposedPorts ? { ExposedPorts: exposedPorts } : {}),
         HostConfig: {
           Binds: binds,
-          PortBindings: details.HostConfig?.PortBindings || null,
+          PortBindings: portBindings,
           RestartPolicy: details.HostConfig?.RestartPolicy || null,
           NetworkMode: details.HostConfig?.NetworkMode || null,
-          Mounts: details.HostConfig?.Mounts || null,
+          Mounts: recreateMounts,
           Links: details.HostConfig?.Links || null,
           ExtraHosts: details.HostConfig?.ExtraHosts || null,
           ShmSize: shmSize != null ? shmSize : undefined,
@@ -620,23 +697,9 @@ class DockerService {
       const labels = { ...(details.Config?.Labels || {}) };
       if (requestedShm != null) labels['dockerfleet.shmSize'] = String(requestedShm);
 
-      let binds = details.HostConfig?.Binds;
-      if (!binds || !Array.isArray(binds) || binds.length === 0) {
-        const topMounts = details.Mounts;
-        if (topMounts && Array.isArray(topMounts) && topMounts.length > 0) {
-          binds = topMounts.map((m) => {
-            const src = m.Source || m.Name || '';
-            const dst = m.Destination || m.Target || '';
-            const mode = m.RW === false ? 'ro' : 'rw';
-            return src && dst ? `${src}:${dst}:${mode}` : null;
-          }).filter(Boolean);
-        }
-      }
-      if (!binds || binds.length === 0) {
-        binds = null;
-      }
+      const { binds, mounts: recreateMounts } = resolveMountsForRecreate(details);
 
-      let portBindings = details.HostConfig?.PortBindings || null;
+      let portBindings = resolvePortBindingsFromInspect(details);
       const portMappings = options.portMappings;
       if (portMappings && Array.isArray(portMappings) && portMappings.length > 0) {
         const requestedIps = [...new Set(portMappings.map((p) => (p.hostIp != null ? String(p.hostIp).trim() : '') || '0.0.0.0').filter((ip) => ip && ip !== '0.0.0.0'))];
@@ -668,6 +731,7 @@ class DockerService {
         portBindings = Object.keys(bindings).length > 0 ? bindings : null;
       }
 
+      const exposedPorts = buildExposedPortsForCreate(details, portBindings);
       const createBody = {
         Image: imageRef,
         Cmd: details.Config?.Cmd || null,
@@ -676,12 +740,13 @@ class DockerService {
         WorkingDir: details.Config?.WorkingDir || null,
         Labels: labels,
         Hostname: details.Config?.Hostname || null,
+        ...(exposedPorts ? { ExposedPorts: exposedPorts } : {}),
         HostConfig: {
           Binds: binds,
           PortBindings: portBindings,
           RestartPolicy: details.HostConfig?.RestartPolicy || null,
           NetworkMode: details.HostConfig?.NetworkMode || null,
-          Mounts: details.HostConfig?.Mounts || null,
+          Mounts: recreateMounts,
           Links: details.HostConfig?.Links || null,
           ExtraHosts: details.HostConfig?.ExtraHosts || null,
           ShmSize: shmSize != null ? shmSize : undefined,

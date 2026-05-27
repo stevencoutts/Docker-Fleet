@@ -522,9 +522,29 @@ const ContainerDetails = () => {
     return formatted;
   };
 
+  /** NetworkSettings.Ports is empty until start; HostConfig.PortBindings holds the configured mappings. */
+  const formatPortsFromContainer = (cont) => {
+    const fromNetwork = formatPorts(cont?.NetworkSettings?.Ports);
+    if (fromNetwork.some((p) => p.host !== 'Not mapped')) return fromNetwork;
+    const bindings = cont?.HostConfig?.PortBindings;
+    if (!bindings || typeof bindings !== 'object') return fromNetwork;
+    const formatted = [];
+    for (const [containerPort, hostPorts] of Object.entries(bindings)) {
+      if (!hostPorts?.length) continue;
+      hostPorts.forEach((hostPort) => {
+        formatted.push({
+          container: containerPort,
+          host: `${hostPort.HostIp || '0.0.0.0'}:${hostPort.HostPort}`,
+          protocol: containerPort.split('/')[1] || 'tcp',
+        });
+      });
+    }
+    return formatted.length > 0 ? formatted : fromNetwork;
+  };
+
   /** Build port specs for restore API (hostPort:containerPort for docker -p). */
   const getPortsForRestore = (cont) => {
-    const formatted = formatPorts(cont?.NetworkSettings?.Ports);
+    const formatted = formatPortsFromContainer(cont);
     const specs = formatted
       .filter((p) => p.host !== 'Not mapped')
       .map((p) => {
@@ -614,7 +634,7 @@ const ContainerDetails = () => {
   const containerName = container.Name?.replace('/', '') || containerId.substring(0, 12);
   const image = container.Config?.Image || 'Unknown';
   const created = formatDate(container.Created);
-  const ports = formatPorts(container.NetworkSettings?.Ports);
+  const ports = formatPortsFromContainer(container);
   const mountsList = Array.isArray(container.Mounts) ? container.Mounts : (Array.isArray(container.mounts) ? container.mounts : []);
   const networksObj = container.NetworkSettings?.Networks || container.networkSettings?.networks || container.Networks || {};
   const networksList = typeof networksObj === 'object' && networksObj !== null ? Object.entries(networksObj) : [];
