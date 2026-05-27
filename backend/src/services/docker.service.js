@@ -37,8 +37,8 @@ function validateMountSourcePath(source) {
   return s;
 }
 
-/** Comma-separated name suffixes; containers whose name ends with one of these are treated as dev/skip-update. */
-const DEFAULT_SKIP_UPDATE_SUFFIXES = '-db-1,-postgres-1';
+/** Comma-separated name suffixes; containers whose name ends with one of these are treated as dev/skip-update. Empty by default — use labels instead. */
+const DEFAULT_SKIP_UPDATE_SUFFIXES = '';
 
 function getSkipUpdateNamePatterns() {
   const envVal = process.env.SKIP_UPDATE_NAME_PATTERNS ?? process.env.DOCKERFLEET_SKIP_UPDATE_NAME_PATTERNS;
