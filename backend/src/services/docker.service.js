@@ -414,7 +414,14 @@ class DockerService {
         const resolvedParsed = resolvedVersion ? registryService.parseVersionFromString(resolvedVersion) : null;
         const scheme = resolvedParsed?.scheme || undefined;
         const excludeDevelopment = currentTag === 'latest';
-        const newest = registryService.getNewestVersionTag(tagsResult.tags, { scheme, excludeDevelopment });
+        // If user is pinned to a 2-part version tag (e.g. mariadb:10.11), only compare against that series (10.11.x),
+        // otherwise the registry's newest tag may jump major versions and look like a perpetual "update available".
+        let tagsForNewest = tagsResult.tags;
+        if (/^\d+\.\d+$/.test(currentTag)) {
+          const prefix = `${currentTag}.`;
+          tagsForNewest = tagsResult.tags.filter((t) => typeof t === 'string' && t.startsWith(prefix));
+        }
+        const newest = registryService.getNewestVersionTag(tagsForNewest, { scheme, excludeDevelopment });
         if (newest) {
           let currentParsed = null;
           if (currentTag && currentTag !== 'latest' && currentTag !== 'dev' && !/^dev[-_]/.test(currentTag)) {
