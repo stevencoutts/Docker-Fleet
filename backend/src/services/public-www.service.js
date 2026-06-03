@@ -853,28 +853,81 @@ async function renewCertificates(serverId, userId) {
 
   await ensureNginxAndCertbotIfNeeded(server);
 
+  const EXPIRY_SOON_DAYS = 30;
   const manualNames = await getManualDnsCertificateNames(server);
   if (manualNames.length > 0) {
-    let manualCertificates = [];
+    let allCertificates = [];
     try {
       const listed = await listCertificates(serverId, userId);
-      const manualSet = new Set(manualNames.map((n) => n.toLowerCase()));
-      manualCertificates = (listed.certificates || []).filter((c) => manualSet.has(String(c.name).toLowerCase()));
+      allCertificates = listed.certificates || [];
     } catch (e) {
       logger.warn('Public WWW: listCertificates during renew skipped', { host: server.host, message: e.message });
     }
+    const manualSet = new Set(manualNames.map((n) => n.toLowerCase()));
+    let manualCertificates = allCertificates.filter((c) => manualSet.has(String(c.name).toLowerCase()));
     if (manualCertificates.length === 0) {
       manualCertificates = manualNames.map((name) => ({ name, domains: [name], manualDns: true }));
     }
+
+    // Renew HTTP/nginx certs (e.g. mtx) via certbot even when other certs need DNS renewal.
+    const nonManual = allCertificates.filter((c) => !manualSet.has(String(c.name).toLowerCase()));
+    let certbotRenewed = false;
+    let certbotDetails;
+    if (nonManual.length > 0) {
+      const renew = await exec(server, 'sudo certbot renew --non-interactive', { timeout: 240000, allowFailure: true, logLabel: 'certbot_renew_non_manual' });
+      const out = `${renew.stdout || ''}\n${renew.stderr || ''}`.trim();
+      certbotDetails = out ? out.slice(-4000) : undefined;
+      if (renew.code !== 0) {
+        const tail = out.slice(-1800) || `certbot renew exited with code ${renew.code}`;
+        return {
+          success: false,
+          error: `Certificate renewal failed for non-DNS certificates.\n\n${tail}`,
+          requiresDnsRenewal: true,
+          manualCertificates,
+          manualCertificateNames: manualNames,
+        };
+      }
+      await exec(server, 'sudo systemctl reload nginx 2>/dev/null || sudo nginx -s reload 2>/dev/null || true', { allowFailure: true, logLabel: 'nginx_reload_after_renew' });
+      const lower = out.toLowerCase();
+      certbotRenewed = !(lower.includes('no renewals were attempted') || lower.includes('not yet due for renewal') || lower.includes('no renewals attempted'));
+    }
+
+    const expiringManual = manualCertificates.filter((c) => c.validDays != null && c.validDays < EXPIRY_SOON_DAYS);
+    const preferredDnsDomain = expiringManual.length > 0
+      ? [...expiringManual].sort((a, b) => (a.validDays ?? 999) - (b.validDays ?? 999))[0].name
+      : null;
+    const soonestExpiring = [...allCertificates]
+      .filter((c) => c.validDays != null && c.validDays < EXPIRY_SOON_DAYS)
+      .sort((a, b) => (a.validDays ?? 999) - (b.validDays ?? 999))[0];
+
+    let message =
+      'One or more certificates use DNS validation and must be renewed manually. ' +
+      'Use the DNS renewal steps below: request a TXT record, add it at your DNS provider, then confirm when done.';
+    if (soonestExpiring && !manualSet.has(String(soonestExpiring.name).toLowerCase())) {
+      const certbotPart = certbotRenewed
+        ? `Certbot renewed ${soonestExpiring.name} (${soonestExpiring.validDays} days left). `
+        : `${soonestExpiring.name} (${soonestExpiring.validDays} days) renews via certbot, not DNS. `;
+      if (preferredDnsDomain) {
+        message = `${certbotPart}DNS renewal below is for ${preferredDnsDomain}, the DNS-validated certificate expiring soonest.`;
+      } else {
+        message = `${certbotPart}No DNS-validated certificate is expiring within ${EXPIRY_SOON_DAYS} days. Use Renew (DNS) on a specific domain if needed.`;
+      }
+    } else if (preferredDnsDomain) {
+      message = `DNS renewal is required for ${preferredDnsDomain} (expiring soonest among DNS-validated certificates). Add the TXT record, then click Continue.`;
+    }
+
     return {
       success: true,
-      renewed: false,
+      renewed: certbotRenewed,
       requiresDnsRenewal: true,
       manualCertificates,
       manualCertificateNames: manualNames,
-      message:
-        'One or more certificates use DNS validation and must be renewed manually. ' +
-        'Use the DNS renewal steps below: request a TXT record, add it at your DNS provider, then confirm when done.',
+      preferredDnsDomain,
+      expiringSoonestName: soonestExpiring?.name,
+      expiringSoonestUsesDns: soonestExpiring ? manualSet.has(String(soonestExpiring.name).toLowerCase()) : undefined,
+      certbotRenewed,
+      details: certbotDetails,
+      message,
     };
   }
 

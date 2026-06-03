@@ -1609,16 +1609,30 @@ const ServerDetails = () => {
                           alert(data.message || 'DNS renewal is required for certificates on this server.');
                           return;
                         }
-                        const sorted = [...list].sort((a, b) => (a.validDays ?? 999) - (b.validDays ?? 999));
-                        const first = sorted[0];
-                        const base = String(first.name || '').toLowerCase();
+                        const expiringManual = list.filter((c) => c.validDays != null && c.validDays < 30);
+                        const soonestFromBanner = [...certificates.filter((c) => c.validDays != null && c.validDays < 30)]
+                          .sort((a, b) => (a.validDays ?? 999) - (b.validDays ?? 999))[0];
+                        let domainToRenew = data.preferredDnsDomain || null;
+                        if (soonestFromBanner?.manualDns) {
+                          domainToRenew = soonestFromBanner.name;
+                        } else if (!domainToRenew) {
+                          const pool = expiringManual.length > 0 ? expiringManual : list;
+                          domainToRenew = [...pool].sort((a, b) => (a.validDays ?? 999) - (b.validDays ?? 999))[0]?.name;
+                        }
+                        if (!domainToRenew) {
+                          alert(data.message || 'No DNS-validated certificate needs renewal right now.');
+                          if (data.certbotRenewed) fetchCertificates().catch(() => {});
+                          return;
+                        }
+                        const base = String(domainToRenew).toLowerCase();
                         const route = proxyRoutes.find(
                           (r) => r.domain.replace(/^\*\./, '').toLowerCase() === base,
                         );
-                        const hasWildcard = Array.isArray(first.domains) && first.domains.some((d) => String(d).startsWith('*.'));
+                        const match = list.find((c) => String(c.name).toLowerCase() === base) || { name: domainToRenew, domains: [domainToRenew] };
+                        const hasWildcard = Array.isArray(match.domains) && match.domains.some((d) => String(d).startsWith('*.'));
                         openDnsCertPanel({
                           routeId: route?.id ?? null,
-                          domain: first.name,
+                          domain: domainToRenew,
                           wildcard: hasWildcard,
                           forceRenewal: true,
                           notice: data.message,
@@ -1660,7 +1674,9 @@ const ServerDetails = () => {
               <strong>Certificate expiry:</strong>{' '}
               {certificates.filter((c) => c.validDays != null && c.validDays < 30).map((c) => `${c.name} (${c.validDays <= 0 ? 'expired' : `${c.validDays} days`})`).join(', ')}.
               {certificates.some((c) => c.validDays != null && c.validDays < 30 && c.manualDns) ? (
-                <> Click <strong>Renew certificates</strong> or <strong>Renew (DNS)</strong> on a domain below — DNS TXT validation is required.</>
+                <> Click <strong>Renew certificates</strong> (certbot + DNS where needed) or <strong>Renew (DNS)</strong> on a specific domain.</>
+              ) : certificates.some((c) => c.validDays != null && c.validDays < 30) ? (
+                <> Use <strong>Renew certificates</strong> — the expiring cert renews via certbot. Use <strong>Renew (DNS)</strong> only for domains marked DNS renewal.</>
               ) : (
                 <> Use <strong>Renew certificates</strong> to renew via certbot.</>
               )}
@@ -1670,13 +1686,9 @@ const ServerDetails = () => {
                 <div ref={dnsCertPanelRef} className="mb-4 p-4 rounded-xl border-2 border-primary-300 dark:border-primary-700 bg-primary-50/50 dark:bg-primary-900/30 shadow-sm">
                   <h4 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-2">
                     {dnsCertForceRenewal ? 'Renew certificate (DNS validation)' : 'Get certificate (DNS validation)'}
-                    {(() => {
-                      const route = dnsCertForRouteId != null ? proxyRoutes.find((route) => route.id === dnsCertForRouteId) : null;
-                      const label = route?.domain || dnsCertDomain;
-                      return label ? (
-                        <span className="font-mono text-primary-600 dark:text-primary-400 ml-2">for {label}</span>
-                      ) : null;
-                    })()}
+                    {dnsCertDomain ? (
+                      <span className="font-mono text-primary-600 dark:text-primary-400 ml-2">for {dnsCertDomain}</span>
+                    ) : null}
                   </h4>
                   {dnsRenewalNotice && (
                     <p className="text-xs text-amber-800 dark:text-amber-200 mb-2 rounded-lg bg-amber-50/80 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-700 px-2 py-1.5">
