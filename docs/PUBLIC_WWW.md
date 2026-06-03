@@ -98,6 +98,24 @@ Let's Encrypt reached your server (often via IPv6) but nginx returned **404**. C
 2. **Fix:** In the UI add a proxy route for that domain (point at the real backend), click **Sync config**, then renew. Or, after upgrading dockerMgmr, **Sync config** alone adds a minimal port-80 block for certs that exist on disk but have no route.
 3. Confirm: `curl -4 -I http://mtx.couttsnet.com/.well-known/acme-challenge/test` and `curl -6 -I ...` (expect 404 for a fake token, not connection refused).
 
+### Domain already in `sites-enabled` (e.g. Matrix / mtx)
+
+If `grep mtx /etc/nginx/sites-enabled/` shows a vhost (common for Synapse), **do not** add a duplicate Public WWW route unless you intend to migrate that site into `dockerfleet-proxy.conf`. Renewal must work in the **existing** file (e.g. `/etc/nginx/sites-enabled/matrix`).
+
+Let's Encrypt often validates over **IPv6**. If the matrix vhost has `listen 80` but not `listen [::]:80`, requests can hit dockerMgmr's `default_server` on IPv6 and return 404. Add to the **port 80** `server` block in `sites-available/matrix`:
+
+```nginx
+listen [::]:80;
+```
+
+Ensure that block exists (not only 443), reload nginx, then:
+
+```bash
+sudo certbot renew --cert-name mtx.couttsnet.com
+```
+
+Inspect the live config: `sudo nginx -T 2>/dev/null | grep -A25 'server_name mtx'`
+
 ## Proxy routes
 
 Each route maps a **domain** to a **container name** and **port** on the same host. Nginx listens on 80/443 and `proxy_pass`es to `http://127.0.0.1:<containerPort>`. The container must be listening on that port (e.g. bind to `0.0.0.0:8080`).

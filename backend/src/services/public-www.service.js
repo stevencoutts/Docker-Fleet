@@ -145,15 +145,50 @@ function routeBaseDomain(domain) {
   return String(domain || '').replace(/^\*\./, '').trim().toLowerCase();
 }
 
+/** All server_name values from an nginx config dump (nginx -T or concatenated site files). */
+function parseServerNamesFromNginxConfig(configText) {
+  const names = new Set();
+  if (!configText || typeof configText !== 'string') return names;
+  const re = /server_name\s+([^;]+);/g;
+  for (const match of configText.matchAll(re)) {
+    for (const part of match[1].trim().split(/\s+/)) {
+      const n = part.toLowerCase();
+      if (n && n !== '_' && !n.startsWith('$')) names.add(n);
+    }
+  }
+  return names;
+}
+
+async function getNginxConfiguredServerNames(server) {
+  try {
+    const nginxRunning = await exec(server, 'systemctl is-active nginx 2>/dev/null || true', { allowFailure: true, timeout: 5000 });
+    if ((nginxRunning.stdout || '').trim() !== 'active') return new Set();
+
+    const dump = await exec(server, 'sudo nginx -T 2>/dev/null || true', { allowFailure: true, timeout: 20000 });
+    const configText = (dump.stdout || '').trim();
+    if (configText) return parseServerNamesFromNginxConfig(configText);
+
+    const catSites = await exec(
+      server,
+      'for f in /etc/nginx/sites-enabled/* /etc/nginx/conf.d/* 2>/dev/null; do [ -f "$f" ] && cat "$f" 2>/dev/null; done',
+      { allowFailure: true, timeout: 15000 },
+    );
+    return parseServerNamesFromNginxConfig((catSites.stdout || '').trim());
+  } catch (e) {
+    logger.warn('Public WWW: getNginxConfiguredServerNames failed', { host: server.host, message: e.message });
+    return new Set();
+  }
+}
+
 /**
- * Port-80 server blocks for certs on disk that have no proxy route (e.g. mtx.couttsnet.com).
+ * Port-80 server blocks for certs on disk that have no proxy route and no other nginx vhost.
  * Without these, HTTP-01 renewal hits default_server and returns 404.
  */
-function buildOrphanCertHttpBlocks(routes, certDomains = new Set()) {
+function buildOrphanCertHttpBlocks(routes, certDomains = new Set(), existingNginxNames = new Set()) {
   const routed = new Set((routes || []).map((r) => routeBaseDomain(r.domain)));
   const orphans = [...certDomains]
     .map((d) => routeBaseDomain(d))
-    .filter((base) => base && base.includes('.') && !routed.has(base));
+    .filter((base) => base && base.includes('.') && !routed.has(base) && !existingNginxNames.has(base));
   const unique = [...new Set(orphans)].sort();
   if (unique.length === 0) return '';
   return `\n# Let's Encrypt HTTP-01 for certs without a proxy route\n${unique.map((domain) => `
@@ -168,7 +203,7 @@ server {
 }
 
 /** Domains that have a cert in /etc/letsencrypt/live/<domain>/ (base name only, e.g. example.com). */
-function buildNginxConfig(routes, certDomains = new Set()) {
+function buildNginxConfig(routes, certDomains = new Set(), existingNginxNames = new Set()) {
   const defaultBlock = buildDefaultServerBlock();
   const blocks = (routes || []).map((r) => {
     const custom = (r.customNginxBlock || '').trim();
@@ -176,7 +211,7 @@ function buildNginxConfig(routes, certDomains = new Set()) {
     return buildDefaultRouteBlock(r, certDomains);
   });
   const routeBlocks = blocks.join('\n') || '# No proxy routes\n';
-  const orphanBlocks = buildOrphanCertHttpBlocks(routes, certDomains);
+  const orphanBlocks = buildOrphanCertHttpBlocks(routes, certDomains, existingNginxNames);
   return defaultBlock + routeBlocks + orphanBlocks;
 }
 
@@ -580,7 +615,8 @@ async function getCertDomains(server) {
 async function writeNginxConfigAndReload(server, routes, onProgress, certDomains) {
   if (onProgress) onProgress('nginx_config', 'Writing nginx config and reloading...', 'running');
   const domains = certDomains ?? await getCertDomains(server);
-  const config = buildNginxConfig(routes, domains);
+  const existingNginxNames = await getNginxConfiguredServerNames(server);
+  const config = buildNginxConfig(routes, domains, existingNginxNames);
   const escaped = config.replace(/'/g, "'\\''");
   await exec(server, `echo '${escaped}' | sudo tee ${NGINX_CONF_PATH} > /dev/null`, { allowFailure: false });
   await exec(server, 'sudo nginx -t && sudo systemctl reload nginx', { allowFailure: true });
@@ -845,16 +881,21 @@ async function listCertificates(serverId, userId) {
   const manualDnsNames = new Set((await getManualDnsCertificateNames(server)).map((n) => n.toLowerCase()));
   const routes = await ServerProxyRoute.findAll({ where: { serverId } });
   const routedDomains = new Set(routes.map((r) => routeBaseDomain(r.domain)));
+  const existingNginxNames = await getNginxConfiguredServerNames(server);
   const certificates = [];
 
   for (const name of list) {
+    const base = routeBaseDomain(name);
     const cert = {
       name,
       domains: [name],
       expiryDate: null,
       validDays: null,
       manualDns: manualDnsNames.has(name.toLowerCase()),
-      noProxyRoute: !manualDnsNames.has(name.toLowerCase()) && !routedDomains.has(routeBaseDomain(name)),
+      noProxyRoute: !manualDnsNames.has(name.toLowerCase())
+        && !routedDomains.has(base)
+        && !existingNginxNames.has(base),
+      externalNginxVhost: !routedDomains.has(base) && existingNginxNames.has(base),
     };
     const path = `/etc/letsencrypt/live/${name}`;
     for (const certFile of ['fullchain.pem', 'cert.pem']) {

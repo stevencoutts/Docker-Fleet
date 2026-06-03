@@ -1675,13 +1675,18 @@ const ServerDetails = () => {
                 <> Click <strong>Renew certificates</strong> (certbot + DNS where needed) or <strong>Renew (DNS)</strong> on a specific domain.</>
               ) : certificates.some((c) => c.validDays != null && c.validDays < 30) ? (
                 <>
-                  {' '}Use <strong>Renew certificates</strong> after <strong>Sync config</strong>
-                  {certificates.some((c) => c.validDays != null && c.validDays < 30 && c.noProxyRoute) ? (
-                    <> (add a proxy route for {certificates.filter((c) => c.validDays != null && c.validDays < 30 && c.noProxyRoute).map((c) => c.name).join(', ')} first — no port-80 vhost otherwise)</>
+                  {' '}
+                  {certificates.some((c) => c.validDays != null && c.validDays < 30 && c.externalNginxVhost) ? (
+                    <>
+                      <strong>{certificates.filter((c) => c.validDays != null && c.validDays < 30 && c.externalNginxVhost).map((c) => c.name).join(', ')}</strong> uses an existing nginx vhost (e.g. sites-enabled/matrix) — add <code className="text-xs">listen [::]:80;</code> on port 80 if IPv6 ACME fails, then <code className="text-xs">sudo certbot renew --cert-name …</code> on the server.
+                    </>
+                  ) : certificates.some((c) => c.validDays != null && c.validDays < 30 && c.noProxyRoute) ? (
+                    <>
+                      Add a proxy route for {certificates.filter((c) => c.validDays != null && c.validDays < 30 && c.noProxyRoute).map((c) => c.name).join(', ')}, <strong>Sync config</strong>, then <strong>Renew certificates</strong>.
+                    </>
                   ) : (
-                    <> — certbot HTTP renewal</>
+                    <>Use <strong>Renew certificates</strong> (certbot HTTP renewal).</>
                   )}
-                  .
                 </>
               ) : (
                 <> Use <strong>Renew certificates</strong> to renew via certbot.</>
