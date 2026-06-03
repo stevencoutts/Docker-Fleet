@@ -465,6 +465,22 @@ async function isNginxAlreadyInstalled(server) {
   }
 }
 
+async function isCertbotInstalled(server) {
+  try {
+    const r = await exec(server, 'command -v certbot >/dev/null && echo ok', { allowFailure: true, timeout: 10000 });
+    return (r.stdout || '').trim() === 'ok';
+  } catch (e) {
+    return false;
+  }
+}
+
+/** Skip apt-get when nginx and certbot are already on the host (renew/DNS flows must stay fast). */
+async function ensureNginxAndCertbotIfNeeded(server, onProgress) {
+  const [nginx, certbot] = await Promise.all([isNginxAlreadyInstalled(server), isCertbotInstalled(server)]);
+  if (nginx && certbot) return;
+  await ensureNginxAndCertbot(server, onProgress);
+}
+
 /**
  * Ensure nginx and certbot are installed (Debian/Ubuntu). Can take several minutes on first run.
  */
@@ -673,7 +689,7 @@ async function requestDnsCert(serverId, userId, options = {}) {
   logger.info('Public WWW: certbot email', { source: user?.letsEncryptEmail ? 'user' : 'env', email: certbotEmailRaw ? `${certbotEmailRaw.slice(0, 3)}***@${(certbotEmailRaw.split('@')[1] || '')}` : 'none' });
 
   await ensureHostnameResolves(server);
-  await ensureNginxAndCertbot(server);
+  await ensureNginxAndCertbotIfNeeded(server);
   logger.info('Public WWW: deploying DNS hook and runner', { host: hostLabel });
   await deployDnsHook(server);
 
@@ -835,18 +851,27 @@ async function renewCertificates(serverId, userId) {
   const server = await Server.findByPk(serverId);
   if (!server || server.userId !== userId) throw new Error('Server not found');
 
-  await ensureNginxAndCertbot(server);
+  await ensureNginxAndCertbotIfNeeded(server);
 
   const manualNames = await getManualDnsCertificateNames(server);
   if (manualNames.length > 0) {
-    const listed = await listCertificates(serverId, userId);
-    const manualSet = new Set(manualNames.map((n) => n.toLowerCase()));
-    const manualCertificates = (listed.certificates || []).filter((c) => manualSet.has(String(c.name).toLowerCase()));
+    let manualCertificates = [];
+    try {
+      const listed = await listCertificates(serverId, userId);
+      const manualSet = new Set(manualNames.map((n) => n.toLowerCase()));
+      manualCertificates = (listed.certificates || []).filter((c) => manualSet.has(String(c.name).toLowerCase()));
+    } catch (e) {
+      logger.warn('Public WWW: listCertificates during renew skipped', { host: server.host, message: e.message });
+    }
+    if (manualCertificates.length === 0) {
+      manualCertificates = manualNames.map((name) => ({ name, domains: [name], manualDns: true }));
+    }
     return {
       success: true,
       renewed: false,
       requiresDnsRenewal: true,
       manualCertificates,
+      manualCertificateNames: manualNames,
       message:
         'One or more certificates use DNS validation and must be renewed manually. ' +
         'Use the DNS renewal steps below: request a TXT record, add it at your DNS provider, then confirm when done.',

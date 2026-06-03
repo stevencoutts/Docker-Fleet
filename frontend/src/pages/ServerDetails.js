@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { serversService, tailscaleEnableWithProgress } from '../services/servers.service';
 import { containersService } from '../services/containers.service';
@@ -67,6 +67,7 @@ const ServerDetails = () => {
   const [dnsCertWildcard, setDnsCertWildcard] = useState(false);
   const [dnsCertForceRenewal, setDnsCertForceRenewal] = useState(false);
   const [dnsRenewalNotice, setDnsRenewalNotice] = useState(null);
+  const dnsCertPanelRef = useRef(null);
   const [letsEncryptEmail, setLetsEncryptEmail] = useState('');
   const [letsEncryptEmailSaving, setLetsEncryptEmailSaving] = useState(false);
   const [certificates, setCertificates] = useState([]);
@@ -178,7 +179,18 @@ const ServerDetails = () => {
     setDnsCertForceRenewal(forceRenewal);
     setDnsCertChallenge(null);
     setDnsRenewalNotice(notice);
+    requestAnimationFrame(() => {
+      dnsCertPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
   };
+
+  useEffect(() => {
+    if (dnsCertPanelOpen) {
+      requestAnimationFrame(() => {
+        dnsCertPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    }
+  }, [dnsCertPanelOpen]);
 
   const copyDnsChallengeField = async (text, label) => {
     try {
@@ -1588,12 +1600,16 @@ const ServerDetails = () => {
                     setRenewCertificatesLoading(true);
                     try {
                       const res = await publicWwwService.renewCertificates(serverId);
-                      await fetchCertificates();
                       const data = res?.data || {};
-                      if (data.requiresDnsRenewal && Array.isArray(data.manualCertificates) && data.manualCertificates.length > 0) {
-                        const sorted = [...data.manualCertificates].sort(
-                          (a, b) => (a.validDays ?? 999) - (b.validDays ?? 999),
-                        );
+                      if (data.requiresDnsRenewal) {
+                        const list = (Array.isArray(data.manualCertificates) && data.manualCertificates.length > 0)
+                          ? data.manualCertificates
+                          : (data.manualCertificateNames || []).map((name) => ({ name, domains: [name], manualDns: true }));
+                        if (list.length === 0) {
+                          alert(data.message || 'DNS renewal is required for certificates on this server.');
+                          return;
+                        }
+                        const sorted = [...list].sort((a, b) => (a.validDays ?? 999) - (b.validDays ?? 999));
                         const first = sorted[0];
                         const base = String(first.name || '').toLowerCase();
                         const route = proxyRoutes.find(
@@ -1607,8 +1623,10 @@ const ServerDetails = () => {
                           forceRenewal: true,
                           notice: data.message,
                         });
+                        fetchCertificates().catch(() => {});
                         return;
                       }
+                      await fetchCertificates();
                       const msg = [
                         data.message || (data.renewed ? 'Certificates renewed.' : 'No renewals attempted.'),
                         data.manualHint ? `\n\n${data.manualHint}` : '',
@@ -1648,6 +1666,174 @@ const ServerDetails = () => {
               )}
             </div>
           )}
+          {dnsCertPanelOpen && server?.publicWwwEnabled && (
+                <div ref={dnsCertPanelRef} className="mb-4 p-4 rounded-xl border-2 border-primary-300 dark:border-primary-700 bg-primary-50/50 dark:bg-primary-900/30 shadow-sm">
+                  <h4 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-2">
+                    {dnsCertForceRenewal ? 'Renew certificate (DNS validation)' : 'Get certificate (DNS validation)'}
+                    {(() => {
+                      const route = dnsCertForRouteId != null ? proxyRoutes.find((route) => route.id === dnsCertForRouteId) : null;
+                      const label = route?.domain || dnsCertDomain;
+                      return label ? (
+                        <span className="font-mono text-primary-600 dark:text-primary-400 ml-2">for {label}</span>
+                      ) : null;
+                    })()}
+                  </h4>
+                  {dnsRenewalNotice && (
+                    <p className="text-xs text-amber-800 dark:text-amber-200 mb-2 rounded-lg bg-amber-50/80 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-700 px-2 py-1.5">
+                      {dnsRenewalNotice}
+                    </p>
+                  )}
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                    {!dnsCertChallenge
+                      ? 'Step 1: Request challenge to get the DNS TXT record. Step 2: Add the record at your DNS provider. Step 3: Click Continue when propagation is done (often 1–5 minutes).'
+                      : 'Step 2: Add this TXT record at your DNS provider, wait for propagation, then click Continue.'}
+                  </p>
+                  {!dnsCertChallenge ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <input
+                        type="text"
+                        value={dnsCertDomain}
+                        onChange={(e) => setDnsCertDomain(e.target.value)}
+                        placeholder="example.com"
+                        className="rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 px-2 py-1.5 text-sm min-w-[180px]"
+                      />
+                      <label className="flex items-center gap-1.5 text-sm text-gray-700 dark:text-gray-300">
+                        <input
+                          type="checkbox"
+                          checked={dnsCertWildcard}
+                          onChange={(e) => setDnsCertWildcard(e.target.checked)}
+                          className="rounded"
+                        />
+                        Include wildcard (*.domain)
+                      </label>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          disabled={dnsCertLoading || !dnsCertDomain.trim()}
+                          onClick={async () => {
+                            setDnsCertLoading(true);
+                            try {
+                              const res = await publicWwwService.requestDnsCert(serverId, {
+                                domain: dnsCertDomain.trim(),
+                                wildcard: dnsCertWildcard,
+                                forceRenewal: dnsCertForceRenewal,
+                              });
+                              setDnsCertChallenge(res.data);
+                            } catch (e) {
+                              alert(e.response?.data?.error || e.response?.data?.details || e.message || 'Request failed');
+                            } finally {
+                              setDnsCertLoading(false);
+                            }
+                          }}
+                          className="px-3 py-1.5 text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 rounded-lg disabled:opacity-50 inline-flex items-center gap-2"
+                        >
+                          {dnsCertLoading && (
+                            <svg className="animate-spin h-4 w-4 text-white" fill="none" viewBox="0 0 24 24" aria-hidden>
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                            </svg>
+                          )}
+                          {dnsCertLoading ? 'Requesting…' : 'Request challenge'}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={dnsCertLoading}
+                          onClick={closeDnsCertPanel}
+                          className="px-2 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:underline disabled:opacity-50"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                      {dnsCertLoading && (
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                          Starting certbot on server and waiting for challenge (usually 30–60 seconds). If it doesn’t appear, on the server run: <code className="bg-black/5 dark:bg-white/10 px-1 rounded">sudo /tmp/certbot-dns-runner.sh</code>
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <p className="text-xs text-gray-600 dark:text-gray-400">
+                        Create a <strong>TXT</strong> record at your DNS provider. Many providers want only the host part (e.g. <span className="font-mono">_acme-challenge</span>); others accept the full name below.
+                      </p>
+                      <div className="text-sm font-mono bg-white dark:bg-gray-800 rounded p-2 border border-gray-200 dark:border-gray-600 space-y-2">
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div className="min-w-0 break-all">
+                            <span className="text-gray-500">Type:</span> TXT
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div className="min-w-0 break-all">
+                            <span className="text-gray-500">Name / host:</span> {dnsCertChallenge.recordName}
+                          </div>
+                          <button
+                            type="button"
+                            className="text-xs text-primary-600 dark:text-primary-400 hover:underline shrink-0"
+                            onClick={() => copyDnsChallengeField(dnsCertChallenge.recordName, 'Name')}
+                          >
+                            Copy name
+                          </button>
+                        </div>
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div className="min-w-0 break-all">
+                            <span className="text-gray-500">Value:</span> {dnsCertChallenge.recordValue}
+                          </div>
+                          <button
+                            type="button"
+                            className="text-xs text-primary-600 dark:text-primary-400 hover:underline shrink-0"
+                            onClick={() => copyDnsChallengeField(dnsCertChallenge.recordValue, 'Value')}
+                          >
+                            Copy value
+                          </button>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          disabled={dnsCertLoading}
+                          onClick={async () => {
+                            setDnsCertLoading(true);
+                            try {
+                              await publicWwwService.continueDnsCert(serverId, {
+                                domain: dnsCertChallenge.baseDomain || dnsCertChallenge.domain,
+                              });
+                              closeDnsCertPanel();
+                              await fetchProxyRoutes();
+                              await fetchCertificates();
+                              alert(dnsCertForceRenewal ? 'Certificate renewed and nginx reloaded.' : 'Certificate installed and nginx reloaded.');
+                            } catch (e) {
+                              alert(e.response?.data?.error || e.response?.data?.details || e.message || 'Continue failed');
+                            } finally {
+                              setDnsCertLoading(false);
+                            }
+                          }}
+                          className="px-3 py-1.5 text-sm font-medium text-white bg-green-600 hover:bg-green-700 rounded-lg disabled:opacity-50 inline-flex items-center gap-2"
+                        >
+                          {dnsCertLoading && (
+                            <svg className="animate-spin h-4 w-4 text-white" fill="none" viewBox="0 0 24 24" aria-hidden>
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                            </svg>
+                          )}
+                          {dnsCertLoading ? 'Verifying & installing…' : "I've added the record – Continue"}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={dnsCertLoading}
+                          onClick={() => setDnsCertChallenge(null)}
+                          className="px-2 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:underline disabled:opacity-50"
+                        >
+                          Back
+                        </button>
+                      </div>
+                      {dnsCertLoading && (
+                        <p className="text-xs text-gray-500 dark:text-gray-400">
+                          Verifying DNS and issuing certificate (may take up to 2 minutes)…
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
           <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">Certificate, proxy route, and nginx config per domain.</p>
           {proxyRoutesLoading ? (
             <p className="text-sm text-gray-500">Loading…</p>
@@ -1881,174 +2067,6 @@ const ServerDetails = () => {
                 );
               })}
                 </ul>
-              )}
-          {dnsCertPanelOpen && server?.publicWwwEnabled && (
-                <div className="mb-4 p-4 rounded-xl border border-primary-200 dark:border-primary-800 bg-primary-50/30 dark:bg-primary-900/20">
-                  <h4 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-2">
-                    {dnsCertForceRenewal ? 'Renew certificate (DNS validation)' : 'Get certificate (DNS validation)'}
-                    {(() => {
-                      const route = dnsCertForRouteId != null ? proxyRoutes.find((route) => route.id === dnsCertForRouteId) : null;
-                      const label = route?.domain || dnsCertDomain;
-                      return label ? (
-                        <span className="font-mono text-primary-600 dark:text-primary-400 ml-2">for {label}</span>
-                      ) : null;
-                    })()}
-                  </h4>
-                  {dnsRenewalNotice && (
-                    <p className="text-xs text-amber-800 dark:text-amber-200 mb-2 rounded-lg bg-amber-50/80 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-700 px-2 py-1.5">
-                      {dnsRenewalNotice}
-                    </p>
-                  )}
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
-                    {!dnsCertChallenge
-                      ? 'Step 1: Request challenge to get the DNS TXT record. Step 2: Add the record at your DNS provider. Step 3: Click Continue when propagation is done (often 1–5 minutes).'
-                      : 'Step 2: Add this TXT record at your DNS provider, wait for propagation, then click Continue.'}
-                  </p>
-                  {!dnsCertChallenge ? (
-                    <div className="flex flex-wrap items-center gap-2">
-                      <input
-                        type="text"
-                        value={dnsCertDomain}
-                        onChange={(e) => setDnsCertDomain(e.target.value)}
-                        placeholder="example.com"
-                        className="rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 px-2 py-1.5 text-sm min-w-[180px]"
-                      />
-                      <label className="flex items-center gap-1.5 text-sm text-gray-700 dark:text-gray-300">
-                        <input
-                          type="checkbox"
-                          checked={dnsCertWildcard}
-                          onChange={(e) => setDnsCertWildcard(e.target.checked)}
-                          className="rounded"
-                        />
-                        Include wildcard (*.domain)
-                      </label>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <button
-                          type="button"
-                          disabled={dnsCertLoading || !dnsCertDomain.trim()}
-                          onClick={async () => {
-                            setDnsCertLoading(true);
-                            try {
-                              const res = await publicWwwService.requestDnsCert(serverId, {
-                                domain: dnsCertDomain.trim(),
-                                wildcard: dnsCertWildcard,
-                                forceRenewal: dnsCertForceRenewal,
-                              });
-                              setDnsCertChallenge(res.data);
-                            } catch (e) {
-                              alert(e.response?.data?.error || e.response?.data?.details || e.message || 'Request failed');
-                            } finally {
-                              setDnsCertLoading(false);
-                            }
-                          }}
-                          className="px-3 py-1.5 text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 rounded-lg disabled:opacity-50 inline-flex items-center gap-2"
-                        >
-                          {dnsCertLoading && (
-                            <svg className="animate-spin h-4 w-4 text-white" fill="none" viewBox="0 0 24 24" aria-hidden>
-                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                            </svg>
-                          )}
-                          {dnsCertLoading ? 'Requesting…' : 'Request challenge'}
-                        </button>
-                        <button
-                          type="button"
-                          disabled={dnsCertLoading}
-                          onClick={closeDnsCertPanel}
-                          className="px-2 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:underline disabled:opacity-50"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                      {dnsCertLoading && (
-                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                          Starting certbot on server and waiting for challenge (usually 30–60 seconds). If it doesn’t appear, on the server run: <code className="bg-black/5 dark:bg-white/10 px-1 rounded">sudo /tmp/certbot-dns-runner.sh</code>
-                        </p>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      <p className="text-xs text-gray-600 dark:text-gray-400">
-                        Create a <strong>TXT</strong> record at your DNS provider. Many providers want only the host part (e.g. <span className="font-mono">_acme-challenge</span>); others accept the full name below.
-                      </p>
-                      <div className="text-sm font-mono bg-white dark:bg-gray-800 rounded p-2 border border-gray-200 dark:border-gray-600 space-y-2">
-                        <div className="flex flex-wrap items-start justify-between gap-2">
-                          <div className="min-w-0 break-all">
-                            <span className="text-gray-500">Type:</span> TXT
-                          </div>
-                        </div>
-                        <div className="flex flex-wrap items-start justify-between gap-2">
-                          <div className="min-w-0 break-all">
-                            <span className="text-gray-500">Name / host:</span> {dnsCertChallenge.recordName}
-                          </div>
-                          <button
-                            type="button"
-                            className="text-xs text-primary-600 dark:text-primary-400 hover:underline shrink-0"
-                            onClick={() => copyDnsChallengeField(dnsCertChallenge.recordName, 'Name')}
-                          >
-                            Copy name
-                          </button>
-                        </div>
-                        <div className="flex flex-wrap items-start justify-between gap-2">
-                          <div className="min-w-0 break-all">
-                            <span className="text-gray-500">Value:</span> {dnsCertChallenge.recordValue}
-                          </div>
-                          <button
-                            type="button"
-                            className="text-xs text-primary-600 dark:text-primary-400 hover:underline shrink-0"
-                            onClick={() => copyDnsChallengeField(dnsCertChallenge.recordValue, 'Value')}
-                          >
-                            Copy value
-                          </button>
-                        </div>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <button
-                          type="button"
-                          disabled={dnsCertLoading}
-                          onClick={async () => {
-                            setDnsCertLoading(true);
-                            try {
-                              await publicWwwService.continueDnsCert(serverId, {
-                                domain: dnsCertChallenge.baseDomain || dnsCertChallenge.domain,
-                              });
-                              closeDnsCertPanel();
-                              await fetchProxyRoutes();
-                              await fetchCertificates();
-                              alert(dnsCertForceRenewal ? 'Certificate renewed and nginx reloaded.' : 'Certificate installed and nginx reloaded.');
-                            } catch (e) {
-                              alert(e.response?.data?.error || e.response?.data?.details || e.message || 'Continue failed');
-                            } finally {
-                              setDnsCertLoading(false);
-                            }
-                          }}
-                          className="px-3 py-1.5 text-sm font-medium text-white bg-green-600 hover:bg-green-700 rounded-lg disabled:opacity-50 inline-flex items-center gap-2"
-                        >
-                          {dnsCertLoading && (
-                            <svg className="animate-spin h-4 w-4 text-white" fill="none" viewBox="0 0 24 24" aria-hidden>
-                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                            </svg>
-                          )}
-                          {dnsCertLoading ? 'Verifying & installing…' : "I've added the record – Continue"}
-                        </button>
-                        <button
-                          type="button"
-                          disabled={dnsCertLoading}
-                          onClick={() => setDnsCertChallenge(null)}
-                          className="px-2 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:underline disabled:opacity-50"
-                        >
-                          Back
-                        </button>
-                      </div>
-                      {dnsCertLoading && (
-                        <p className="text-xs text-gray-500 dark:text-gray-400">
-                          Verifying DNS and issuing certificate (may take up to 2 minutes)…
-                        </p>
-                      )}
-                    </div>
-                  )}
-                </div>
               )}
               <div className="space-y-2">
                 <div className="flex flex-wrap items-end gap-2">
