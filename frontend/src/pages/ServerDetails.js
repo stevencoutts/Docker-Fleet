@@ -1601,7 +1601,7 @@ const ServerDetails = () => {
                     try {
                       const res = await publicWwwService.renewCertificates(serverId);
                       const data = res?.data || {};
-                      if (data.requiresDnsRenewal) {
+                      if (data.requiresDnsRenewal && (data.preferredDnsDomain || data.expiringSoonestUsesDns)) {
                         const list = (Array.isArray(data.manualCertificates) && data.manualCertificates.length > 0)
                           ? data.manualCertificates
                           : (data.manualCertificateNames || []).map((name) => ({ name, domains: [name], manualDns: true }));
@@ -1609,19 +1609,13 @@ const ServerDetails = () => {
                           alert(data.message || 'DNS renewal is required for certificates on this server.');
                           return;
                         }
-                        const expiringManual = list.filter((c) => c.validDays != null && c.validDays < 30);
                         const soonestFromBanner = [...certificates.filter((c) => c.validDays != null && c.validDays < 30)]
                           .sort((a, b) => (a.validDays ?? 999) - (b.validDays ?? 999))[0];
-                        let domainToRenew = data.preferredDnsDomain || null;
-                        if (soonestFromBanner?.manualDns) {
-                          domainToRenew = soonestFromBanner.name;
-                        } else if (!domainToRenew) {
-                          const pool = expiringManual.length > 0 ? expiringManual : list;
-                          domainToRenew = [...pool].sort((a, b) => (a.validDays ?? 999) - (b.validDays ?? 999))[0]?.name;
-                        }
+                        const domainToRenew = data.preferredDnsDomain
+                          || (soonestFromBanner?.manualDns ? soonestFromBanner.name : null);
                         if (!domainToRenew) {
                           alert(data.message || 'No DNS-validated certificate needs renewal right now.');
-                          if (data.certbotRenewed) fetchCertificates().catch(() => {});
+                          await fetchCertificates().catch(() => {});
                           return;
                         }
                         const base = String(domainToRenew).toLowerCase();
@@ -1637,9 +1631,11 @@ const ServerDetails = () => {
                           forceRenewal: true,
                           notice: data.message,
                         });
-                        fetchCertificates().catch(() => {});
+                        await fetchCertificates().catch(() => {});
                         return;
                       }
+                      setDnsCertPanelOpen(false);
+                      setDnsRenewalNotice(null);
                       await fetchCertificates();
                       const msg = [
                         data.message || (data.renewed ? 'Certificates renewed.' : 'No renewals attempted.'),
