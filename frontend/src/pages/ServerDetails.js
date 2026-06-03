@@ -1637,10 +1637,12 @@ const ServerDetails = () => {
                       setDnsCertPanelOpen(false);
                       setDnsRenewalNotice(null);
                       await fetchCertificates();
-                      const msg = [
-                        data.message || (data.renewed ? 'Certificates renewed.' : 'No renewals attempted.'),
-                        data.manualHint ? `\n\n${data.manualHint}` : '',
-                      ].join('');
+                      const baseMsg = data.message
+                        || (data.renewed ? 'Certificates renewed.' : 'Certificate renewal finished; no cert was renewed.');
+                      const detailTail = data.details && !data.renewed
+                        ? `\n\n${String(data.details).slice(-1200)}`
+                        : '';
+                      const msg = [baseMsg, data.manualHint ? `\n\n${data.manualHint}` : '', detailTail].join('');
                       alert(msg.trim() || 'Certificate renewal completed.');
                     } catch (err) {
                       alert(err.response?.data?.error || err.message || 'Renew failed');
