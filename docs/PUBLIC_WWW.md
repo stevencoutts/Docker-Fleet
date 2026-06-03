@@ -90,6 +90,14 @@ sudo nginx -t && sudo systemctl reload nginx
 
 Longer term: keep CrowdSec snippets outside `conf.d` (e.g. include from `nginx.conf` only), or renew mtx with a non-nginx authenticator (webroot/standalone) if you change the renewal config.
 
+### HTTP-01 returns 404 for `.well-known/acme-challenge`
+
+Let's Encrypt reached your server (often via IPv6) but nginx returned **404**. Common causes:
+
+1. **No `server_name` for that host on port 80** — e.g. `mtx.couttsnet.com` has a cert in `/etc/letsencrypt/live/` but no **proxy route** in Public WWW, so only `default_server` answers and the challenge fails.
+2. **Fix:** In the UI add a proxy route for that domain (point at the real backend), click **Sync config**, then renew. Or, after upgrading dockerMgmr, **Sync config** alone adds a minimal port-80 block for certs that exist on disk but have no route.
+3. Confirm: `curl -4 -I http://mtx.couttsnet.com/.well-known/acme-challenge/test` and `curl -6 -I ...` (expect 404 for a fake token, not connection refused).
+
 ## Proxy routes
 
 Each route maps a **domain** to a **container name** and **port** on the same host. Nginx listens on 80/443 and `proxy_pass`es to `http://127.0.0.1:<containerPort>`. The container must be listening on that port (e.g. bind to `0.0.0.0:8080`).

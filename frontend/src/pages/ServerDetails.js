@@ -1674,7 +1674,15 @@ const ServerDetails = () => {
               {certificates.some((c) => c.validDays != null && c.validDays < 30 && c.manualDns) ? (
                 <> Click <strong>Renew certificates</strong> (certbot + DNS where needed) or <strong>Renew (DNS)</strong> on a specific domain.</>
               ) : certificates.some((c) => c.validDays != null && c.validDays < 30) ? (
-                <> Use <strong>Renew certificates</strong> — the expiring cert renews via certbot. Use <strong>Renew (DNS)</strong> only for domains marked DNS renewal.</>
+                <>
+                  {' '}Use <strong>Renew certificates</strong> after <strong>Sync config</strong>
+                  {certificates.some((c) => c.validDays != null && c.validDays < 30 && c.noProxyRoute) ? (
+                    <> (add a proxy route for {certificates.filter((c) => c.validDays != null && c.validDays < 30 && c.noProxyRoute).map((c) => c.name).join(', ')} first — no port-80 vhost otherwise)</>
+                  ) : (
+                    <> — certbot HTTP renewal</>
+                  )}
+                  .
+                </>
               ) : (
                 <> Use <strong>Renew certificates</strong> to renew via certbot.</>
               )}

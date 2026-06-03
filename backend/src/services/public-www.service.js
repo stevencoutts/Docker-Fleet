@@ -103,6 +103,7 @@ function buildDefaultRouteBlock(r, certDomains = new Set()) {
   let block = `
 server {
     listen 80;
+    listen [::]:80;
     server_name ${domain};
     location / {
         proxy_pass http://127.0.0.1:${port};
@@ -120,6 +121,7 @@ server {
     block += `
 server {
     listen 443 ssl;
+    listen [::]:443 ssl;
     server_name ${domain};
     ssl_certificate /etc/letsencrypt/live/${baseDomain}/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/${baseDomain}/privkey.pem;
@@ -139,6 +141,32 @@ server {
   return block;
 }
 
+function routeBaseDomain(domain) {
+  return String(domain || '').replace(/^\*\./, '').trim().toLowerCase();
+}
+
+/**
+ * Port-80 server blocks for certs on disk that have no proxy route (e.g. mtx.couttsnet.com).
+ * Without these, HTTP-01 renewal hits default_server and returns 404.
+ */
+function buildOrphanCertHttpBlocks(routes, certDomains = new Set()) {
+  const routed = new Set((routes || []).map((r) => routeBaseDomain(r.domain)));
+  const orphans = [...certDomains]
+    .map((d) => routeBaseDomain(d))
+    .filter((base) => base && base.includes('.') && !routed.has(base));
+  const unique = [...new Set(orphans)].sort();
+  if (unique.length === 0) return '';
+  return `\n# Let's Encrypt HTTP-01 for certs without a proxy route\n${unique.map((domain) => `
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${domain};
+    location / {
+        return 404;
+    }
+}`).join('')}\n`;
+}
+
 /** Domains that have a cert in /etc/letsencrypt/live/<domain>/ (base name only, e.g. example.com). */
 function buildNginxConfig(routes, certDomains = new Set()) {
   const defaultBlock = buildDefaultServerBlock();
@@ -147,7 +175,9 @@ function buildNginxConfig(routes, certDomains = new Set()) {
     if (custom) return custom;
     return buildDefaultRouteBlock(r, certDomains);
   });
-  return defaultBlock + (blocks.join('\n') || '# No proxy routes\n');
+  const routeBlocks = blocks.join('\n') || '# No proxy routes\n';
+  const orphanBlocks = buildOrphanCertHttpBlocks(routes, certDomains);
+  return defaultBlock + routeBlocks + orphanBlocks;
 }
 
 /**
@@ -813,10 +843,19 @@ async function listCertificates(serverId, userId) {
   const names = await getCertDomains(server);
   const list = [...names].filter((n) => n && n !== 'README').sort();
   const manualDnsNames = new Set((await getManualDnsCertificateNames(server)).map((n) => n.toLowerCase()));
+  const routes = await ServerProxyRoute.findAll({ where: { serverId } });
+  const routedDomains = new Set(routes.map((r) => routeBaseDomain(r.domain)));
   const certificates = [];
 
   for (const name of list) {
-    const cert = { name, domains: [name], expiryDate: null, validDays: null, manualDns: manualDnsNames.has(name.toLowerCase()) };
+    const cert = {
+      name,
+      domains: [name],
+      expiryDate: null,
+      validDays: null,
+      manualDns: manualDnsNames.has(name.toLowerCase()),
+      noProxyRoute: !manualDnsNames.has(name.toLowerCase()) && !routedDomains.has(routeBaseDomain(name)),
+    };
     const path = `/etc/letsencrypt/live/${name}`;
     for (const certFile of ['fullchain.pem', 'cert.pem']) {
       const enddateR = await exec(server, `openssl x509 -enddate -noout -in '${path}/${certFile}' 2>/dev/null || sudo openssl x509 -enddate -noout -in '${path}/${certFile}' 2>/dev/null || true`, { allowFailure: true, timeout: 5000 });
@@ -874,6 +913,11 @@ function formatCertbotFailureHints(hints) {
     const files = [...new Set(hints.nginxConfigParseErrors)].join(', ');
     parts.push(
       `Certbot cannot parse nginx config (${files}). CrowdSec/OpenResty snippets in conf.d often break the certbot nginx plugin — temporarily move them out of conf.d, renew, then restore.`,
+    );
+  }
+  if (/\.well-known\/acme-challenge|unauthorized/i.test(text) && /404|unauthorized/i.test(text)) {
+    parts.push(
+      'HTTP-01 validation failed (404): the domain needs a port-80 nginx server_name block. Add a Public WWW proxy route for that domain and click Sync config, then renew.',
     );
   }
   if (hints.rateLimited) {
