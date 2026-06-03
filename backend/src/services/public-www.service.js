@@ -853,6 +853,39 @@ function certbotRenewOutputIndicatesSuccess(out) {
   );
 }
 
+/** Extract user-actionable hints from certbot stdout/stderr. */
+function parseCertbotFailureHints(out) {
+  const text = `${out || ''}`;
+  const hints = { rateLimited: false, rateLimitRetryAfter: null, nginxConfigParseErrors: [] };
+  if (/rateLimited|too many failed authorizations/i.test(text)) {
+    hints.rateLimited = true;
+    const m = text.match(/retry after (\d{4}-\d{2}-\d{2}[^\n]+UTC)/i);
+    if (m) hints.rateLimitRetryAfter = m[1].trim();
+  }
+  for (const match of text.matchAll(/Could not parse file: ([^\s]+)/g)) {
+    hints.nginxConfigParseErrors.push(match[1]);
+  }
+  return hints;
+}
+
+function formatCertbotFailureHints(hints) {
+  const parts = [];
+  if (hints.nginxConfigParseErrors.length > 0) {
+    const files = [...new Set(hints.nginxConfigParseErrors)].join(', ');
+    parts.push(
+      `Certbot cannot parse nginx config (${files}). CrowdSec/OpenResty snippets in conf.d often break the certbot nginx plugin — temporarily move them out of conf.d, renew, then restore.`,
+    );
+  }
+  if (hints.rateLimited) {
+    parts.push(
+      hints.rateLimitRetryAfter
+        ? `Let's Encrypt rate limit: wait until ${hints.rateLimitRetryAfter} before trying again.`
+        : 'Let\'s Encrypt rate limit: too many failed renewals recently — wait about an hour before retrying.',
+    );
+  }
+  return parts.join(' ');
+}
+
 async function execCertbotRenew(server, { certName = null, forceRenewal = false } = {}) {
   const safeName = certName ? String(certName).replace(/'/g, "'\\''") : null;
   const parts = ['sudo certbot renew --non-interactive'];
@@ -865,47 +898,38 @@ async function execCertbotRenew(server, { certName = null, forceRenewal = false 
   });
 }
 
-/**
- * Run certbot renew for HTTP/nginx-managed certs. If the bulk renew is a no-op but a cert
- * is within EXPIRY_SOON_DAYS, retry with --force-renewal per certificate.
- */
-async function renewNonManualCertbotCerts(server, nonManual, expirySoonDays) {
+/** Run certbot renew once for HTTP/nginx-managed certs (no --force-renewal; avoids LE rate limits). */
+async function renewNonManualCertbotCerts(server, nonManual) {
   if (nonManual.length === 0) return { renewed: false, details: undefined };
 
-  const expiring = nonManual
-    .filter((c) => c.validDays != null && c.validDays < expirySoonDays)
-    .sort((a, b) => (a.validDays ?? 999) - (b.validDays ?? 999));
+  const renew = await execCertbotRenew(server);
+  const out = `${renew.stdout || ''}\n${renew.stderr || ''}`.trim();
+  const hints = parseCertbotFailureHints(out);
 
-  let combinedOut = '';
-  let renewed = false;
-
-  let renew = await execCertbotRenew(server);
-  let out = `${renew.stdout || ''}\n${renew.stderr || ''}`.trim();
-  combinedOut = out;
   if (renew.code !== 0) {
-    return { renewed: false, details: out ? out.slice(-4000) : undefined, errorCode: renew.code, errorOut: out };
+    return {
+      renewed: false,
+      details: out ? out.slice(-4000) : undefined,
+      errorCode: renew.code,
+      errorOut: out,
+      hints,
+      hintMessage: formatCertbotFailureHints(hints),
+    };
   }
-  renewed = certbotRenewOutputIndicatesSuccess(out);
 
-  if (!renewed && expiring.length > 0) {
-    for (const cert of expiring) {
-      renew = await execCertbotRenew(server, { certName: cert.name, forceRenewal: true });
-      out = `${renew.stdout || ''}\n${renew.stderr || ''}`.trim();
-      combinedOut = combinedOut ? `${combinedOut}\n--- ${cert.name} ---\n${out}` : out;
-      if (renew.code !== 0) continue;
-      if (certbotRenewOutputIndicatesSuccess(out)) {
-        renewed = true;
-        break;
-      }
-    }
-  }
+  const renewed = certbotRenewOutputIndicatesSuccess(out);
 
   await exec(server, 'sudo systemctl reload nginx 2>/dev/null || sudo nginx -s reload 2>/dev/null || true', {
     allowFailure: true,
     logLabel: 'nginx_reload_after_renew',
   });
 
-  return { renewed, details: combinedOut ? combinedOut.slice(-4000) : undefined };
+  return {
+    renewed,
+    details: out ? out.slice(-4000) : undefined,
+    hints,
+    hintMessage: renewed ? undefined : formatCertbotFailureHints(hints),
+  };
 }
 
 /**
@@ -943,14 +967,16 @@ async function renewCertificates(serverId, userId) {
     const nonManual = allCertificates.filter((c) => !manualSet.has(String(c.name).toLowerCase()));
     let certbotRenewed = false;
     let certbotDetails;
+    let renewResult;
     if (nonManual.length > 0) {
-      const renewResult = await renewNonManualCertbotCerts(server, nonManual, EXPIRY_SOON_DAYS);
+      renewResult = await renewNonManualCertbotCerts(server, nonManual);
       certbotDetails = renewResult.details;
       if (renewResult.errorCode != null) {
         const tail = (renewResult.errorOut || '').slice(-1800) || `certbot renew exited with code ${renewResult.errorCode}`;
+        const hint = renewResult.hintMessage ? `\n\n${renewResult.hintMessage}` : '';
         return {
           success: false,
-          error: `Certificate renewal failed for non-DNS certificates.\n\n${tail}`,
+          error: `Certificate renewal failed for non-DNS certificates.${hint}\n\n${tail}`,
           requiresDnsRenewal: expiringManual.length > 0,
           manualCertificates,
           manualCertificateNames: manualNames,
@@ -968,9 +994,10 @@ async function renewCertificates(serverId, userId) {
 
     let message;
     if (soonestExpiring && !manualSet.has(String(soonestExpiring.name).toLowerCase())) {
+      const hintSuffix = renewResult?.hintMessage ? ` ${renewResult.hintMessage}` : '';
       const certbotPart = certbotRenewed
         ? `Certbot renewed ${soonestExpiring.name}. Refresh certs to see the new expiry.`
-        : `Certbot could not renew ${soonestExpiring.name} (${soonestExpiring.validDays} days left). If it uses DNS validation, use Renew (DNS) on that domain. Otherwise check /etc/letsencrypt/renewal on the server.`;
+        : `Certbot could not renew ${soonestExpiring.name} (${soonestExpiring.validDays} days left).${hintSuffix || ' If it uses DNS validation, use Renew (DNS). Otherwise check /etc/letsencrypt/renewal and nginx -t on the server.'}`;
       if (preferredDnsDomain) {
         message = `${certbotPart} DNS renewal below is for ${preferredDnsDomain}.`;
       } else {
@@ -1014,7 +1041,7 @@ async function renewCertificates(serverId, userId) {
   const nonManual = allCertificates.filter((c) => !manualSet.has(String(c.name).toLowerCase()));
 
   const renewResult = nonManual.length > 0
-    ? await renewNonManualCertbotCerts(server, nonManual, EXPIRY_SOON_DAYS)
+    ? await renewNonManualCertbotCerts(server, nonManual)
     : await (async () => {
       const renew = await execCertbotRenew(server);
       const out = `${renew.stdout || ''}\n${renew.stderr || ''}`.trim();
@@ -1041,7 +1068,8 @@ async function renewCertificates(serverId, userId) {
       ? `Certbot renewed ${soonestExpiring.name}. Refresh certs to see the new expiry.`
       : 'Certificate renewal completed.';
   } else if (soonestExpiring) {
-    message = `Certbot could not renew ${soonestExpiring.name} (${soonestExpiring.validDays} days left). See details below or use Renew (DNS) if this cert uses DNS validation.`;
+    const hint = renewResult.hintMessage ? ` ${renewResult.hintMessage}` : '';
+    message = `Certbot could not renew ${soonestExpiring.name} (${soonestExpiring.validDays} days left).${hint || ' See details below.'}`;
   } else {
     message = 'No certificate renewals were required right now.';
   }

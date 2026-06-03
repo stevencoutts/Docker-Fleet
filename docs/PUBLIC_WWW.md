@@ -73,6 +73,23 @@ Leave it running. When the TXT record name and value appear in the UI (or in `/t
 
 **Renewing DNS-validated certificates:** **Renew certificates** opens the same guided flow (TXT record + **I've added the record – Continue**) instead of a blocking error. Use **Renew (DNS)** on a domain, or **Request challenge** with force renewal when re-issuing before expiry.
 
+## Certbot renew failures (CrowdSec, rate limits)
+
+If `certbot renew` prints **Could not parse file: /etc/nginx/conf.d/crowdsec_nginx.conf** (or similar), the certbot **nginx** plugin uses a strict config parser that does not understand CrowdSec/OpenResty/Lua directives (`init_by_lua`, etc.). Nginx itself may still run fine.
+
+**Workaround** (after any Let's Encrypt rate limit has cleared):
+
+```bash
+sudo mv /etc/nginx/conf.d/crowdsec_nginx.conf /tmp/crowdsec_nginx.conf.bak
+sudo nginx -t && sudo certbot renew --cert-name mtx.couttsnet.com
+sudo mv /tmp/crowdsec_nginx.conf.bak /etc/nginx/conf.d/crowdsec_nginx.conf
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+**Rate limit** (`too many failed authorizations`): Let's Encrypt blocks new attempts for that hostname for about an hour. Do not click **Renew certificates** or run `--force-renewal` repeatedly — wait until the time shown in the error (`retry after … UTC`), fix nginx/certbot first, then try once.
+
+Longer term: keep CrowdSec snippets outside `conf.d` (e.g. include from `nginx.conf` only), or renew mtx with a non-nginx authenticator (webroot/standalone) if you change the renewal config.
+
 ## Proxy routes
 
 Each route maps a **domain** to a **container name** and **port** on the same host. Nginx listens on 80/443 and `proxy_pass`es to `http://127.0.0.1:<containerPort>`. The container must be listening on that port (e.g. bind to `0.0.0.0:8080`).
