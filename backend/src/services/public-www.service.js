@@ -1233,7 +1233,8 @@ async function getNginxConfig(serverId, userId) {
   const config = (r.stdout || '').trim() || null;
   const routes = await ServerProxyRoute.findAll({ where: { serverId }, order: [['domain', 'ASC']] });
   const certDomains = await getCertDomains(server);
-  const generatedConfig = buildNginxConfig(routes, certDomains);
+  const existingNginxNames = await getNginxConfiguredServerNames(server);
+  const generatedConfig = buildNginxConfig(routes, certDomains, existingNginxNames);
   const customNginxConfig = (server.customNginxConfig || '').trim() || undefined;
 
   return {
