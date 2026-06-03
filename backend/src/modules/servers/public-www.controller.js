@@ -133,8 +133,8 @@ async function syncPublicWww(req, res, next) {
 async function requestDnsCert(req, res, next) {
   try {
     const { id: serverId } = req.params;
-    const { domain, wildcard } = req.body || {};
-    const result = await publicWwwService.requestDnsCert(serverId, req.user.id, { domain, wildcard });
+    const { domain, wildcard, forceRenewal } = req.body || {};
+    const result = await publicWwwService.requestDnsCert(serverId, req.user.id, { domain, wildcard, forceRenewal });
     res.json(result);
   } catch (error) {
     if (error.message === 'Server not found') return res.status(404).json({ error: error.message });

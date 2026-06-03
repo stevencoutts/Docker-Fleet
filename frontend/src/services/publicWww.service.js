@@ -47,8 +47,8 @@ export async function enableWithProgress(serverId, onProgress) {
 }
 
 /** Request DNS-01 challenge: returns { recordName, recordValue, domain, baseDomain }. Add TXT record, then call continueDnsCert. */
-export function requestDnsCert(serverId, { domain, wildcard }) {
-  return api.post(`/api/v1/servers/${serverId}/public-www/request-dns-cert`, { domain, wildcard }, { timeout: 90000 });
+export function requestDnsCert(serverId, { domain, wildcard, forceRenewal }) {
+  return api.post(`/api/v1/servers/${serverId}/public-www/request-dns-cert`, { domain, wildcard, forceRenewal }, { timeout: 90000 });
 }
 
 /** After adding the TXT record, call this to complete issuance and reload nginx. */

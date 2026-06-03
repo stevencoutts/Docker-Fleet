@@ -661,6 +661,7 @@ async function requestDnsCert(serverId, userId, options = {}) {
   const domain = (options.domain || '').trim().toLowerCase();
   if (!domain) throw new Error('domain is required');
   const wildcard = Boolean(options.wildcard);
+  const forceRenewal = Boolean(options.forceRenewal);
   const baseDomain = domain.replace(/^\*\./, '');
   const hostLabel = server.host || server.name || serverId;
 
@@ -677,7 +678,8 @@ async function requestDnsCert(serverId, userId, options = {}) {
   await deployDnsHook(server);
 
   const certbotDomains = wildcard ? `-d ${baseDomain} -d '*.${baseDomain}'` : `-d ${domain}`;
-  const certbotArgs = `certonly --manual --preferred-challenges dns ${certbotDomains} --manual-auth-hook ${CERTBOT_DNS_HOOK_PATH} --agree-tos --email ${certbotEmail} --non-interactive`;
+  const forceFlag = forceRenewal ? ' --force-renewal' : '';
+  const certbotArgs = `certonly --manual --preferred-challenges dns ${certbotDomains} --manual-auth-hook ${CERTBOT_DNS_HOOK_PATH} --agree-tos --email ${certbotEmail} --non-interactive${forceFlag}`;
   const runnerScript = `#!/bin/sh
 LOG="${CERTBOT_DNS_LOG_PATH}"
 echo "Certbot DNS started at $(date)" > "$LOG"
@@ -774,6 +776,18 @@ async function continueDnsCert(serverId, userId, options = {}) {
 }
 
 /**
+ * Cert names issued via our interactive DNS/manual certbot flow (authenticator = manual in renewal config).
+ */
+async function getManualDnsCertificateNames(server) {
+  const r = await exec(
+    server,
+    "sudo sh -c 'for f in /etc/letsencrypt/renewal/*.conf; do [ -f \"$f\" ] || continue; grep -q \"^authenticator = manual\" \"$f\" 2>/dev/null && basename \"$f\" .conf; done'",
+    { allowFailure: true, timeout: 15000, logLabel: 'certbot_manual_list' },
+  );
+  return (r.stdout || '').trim().split('\n').map((n) => n.trim()).filter(Boolean);
+}
+
+/**
  * List Let's Encrypt certificates on the server: list /etc/letsencrypt/live/ (ls, then sudo ls if needed), read expiry per cert with openssl.
  */
 async function listCertificates(serverId, userId) {
@@ -782,10 +796,11 @@ async function listCertificates(serverId, userId) {
 
   const names = await getCertDomains(server);
   const list = [...names].filter((n) => n && n !== 'README').sort();
+  const manualDnsNames = new Set((await getManualDnsCertificateNames(server)).map((n) => n.toLowerCase()));
   const certificates = [];
 
   for (const name of list) {
-    const cert = { name, domains: [name], expiryDate: null, validDays: null };
+    const cert = { name, domains: [name], expiryDate: null, validDays: null, manualDns: manualDnsNames.has(name.toLowerCase()) };
     const path = `/etc/letsencrypt/live/${name}`;
     for (const certFile of ['fullchain.pem', 'cert.pem']) {
       const enddateR = await exec(server, `openssl x509 -enddate -noout -in '${path}/${certFile}' 2>/dev/null || sudo openssl x509 -enddate -noout -in '${path}/${certFile}' 2>/dev/null || true`, { allowFailure: true, timeout: 5000 });
@@ -822,25 +837,20 @@ async function renewCertificates(serverId, userId) {
 
   await ensureNginxAndCertbot(server);
 
-  // Manual DNS certificates (authenticator=manual) cannot be auto-renewed without a DNS plugin/API.
-  // Our DNS flow is interactive and uses a temporary hook, so "certbot renew" will fail/hang.
-  try {
-    const manual = await exec(
-      server,
-      "sudo sh -c \"grep -R '^authenticator = manual' -n /etc/letsencrypt/renewal 2>/dev/null | head -20 || true\"",
-      { allowFailure: true, timeout: 15000, logLabel: 'certbot_manual_check' }
-    );
-    const manualOut = (manual.stdout || '').trim();
-    if (manualOut) {
-      throw new Error(
-        'This server has certificate(s) issued with DNS/manual validation (authenticator=manual). ' +
-        'Those cannot be renewed automatically with the current setup.\n\n' +
-        'Use the “Get certificate (DNS validation)” flow again to re-issue the certificate when it is near expiry.'
-      );
-    }
-  } catch (e) {
-    // If we threw intentionally above, surface it; otherwise ignore hint failures.
-    if (e && e.message && e.message.includes('authenticator=manual')) throw e;
+  const manualNames = await getManualDnsCertificateNames(server);
+  if (manualNames.length > 0) {
+    const listed = await listCertificates(serverId, userId);
+    const manualSet = new Set(manualNames.map((n) => n.toLowerCase()));
+    const manualCertificates = (listed.certificates || []).filter((c) => manualSet.has(String(c.name).toLowerCase()));
+    return {
+      success: true,
+      renewed: false,
+      requiresDnsRenewal: true,
+      manualCertificates,
+      message:
+        'One or more certificates use DNS validation and must be renewed manually. ' +
+        'Use the DNS renewal steps below: request a TXT record, add it at your DNS provider, then confirm when done.',
+    };
   }
 
   const renew = await exec(server, 'sudo certbot renew --non-interactive', { timeout: 240000, allowFailure: true, logLabel: 'certbot_renew' });

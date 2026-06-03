@@ -71,6 +71,8 @@ sudo /tmp/certbot-dns-runner.sh
 
 Leave it running. When the TXT record name and value appear in the UI (or in `/tmp/certbot-dns-name.txt` and `/tmp/certbot-dns-value.txt` on the server), add the record at your DNS provider. Then either: create the continue file so certbot proceeds (`sudo touch /tmp/certbot-dns-continue`), or click **Continue** in the UI (which does the same). The runner will then finish and the certificate will be installed.
 
+**Renewing DNS-validated certificates:** **Renew certificates** opens the same guided flow (TXT record + **I've added the record – Continue**) instead of a blocking error. Use **Renew (DNS)** on a domain, or **Request challenge** with force renewal when re-issuing before expiry.
+
 ## Proxy routes
 
 Each route maps a **domain** to a **container name** and **port** on the same host. Nginx listens on 80/443 and `proxy_pass`es to `http://127.0.0.1:<containerPort>`. The container must be listening on that port (e.g. bind to `0.0.0.0:8080`).

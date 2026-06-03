@@ -61,9 +61,12 @@ const ServerDetails = () => {
   const [newRouteForm, setNewRouteForm] = useState({ domain: '', containerName: '', containerPort: '80' });
   const [dnsCertChallenge, setDnsCertChallenge] = useState(null);
   const [dnsCertLoading, setDnsCertLoading] = useState(false);
+  const [dnsCertPanelOpen, setDnsCertPanelOpen] = useState(false);
   const [dnsCertForRouteId, setDnsCertForRouteId] = useState(null);
   const [dnsCertDomain, setDnsCertDomain] = useState('');
   const [dnsCertWildcard, setDnsCertWildcard] = useState(false);
+  const [dnsCertForceRenewal, setDnsCertForceRenewal] = useState(false);
+  const [dnsRenewalNotice, setDnsRenewalNotice] = useState(null);
   const [letsEncryptEmail, setLetsEncryptEmail] = useState('');
   const [letsEncryptEmailSaving, setLetsEncryptEmailSaving] = useState(false);
   const [certificates, setCertificates] = useState([]);
@@ -155,6 +158,34 @@ const ServerDetails = () => {
       setCertificates([]);
     } finally {
       setCertsLoading(false);
+    }
+  };
+
+  const closeDnsCertPanel = () => {
+    setDnsCertPanelOpen(false);
+    setDnsCertForRouteId(null);
+    setDnsCertChallenge(null);
+    setDnsCertForceRenewal(false);
+    setDnsRenewalNotice(null);
+  };
+
+  const openDnsCertPanel = ({ routeId = null, domain, wildcard = false, forceRenewal = false, notice = null }) => {
+    setPublicWwwDomainsOpen(true);
+    setDnsCertPanelOpen(true);
+    setDnsCertForRouteId(routeId);
+    setDnsCertDomain(domain);
+    setDnsCertWildcard(wildcard);
+    setDnsCertForceRenewal(forceRenewal);
+    setDnsCertChallenge(null);
+    setDnsRenewalNotice(notice);
+  };
+
+  const copyDnsChallengeField = async (text, label) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      alert(`${label} copied to clipboard.`);
+    } catch {
+      alert(`Copy failed. Select and copy manually:\n${text}`);
     }
   };
 
@@ -1559,6 +1590,25 @@ const ServerDetails = () => {
                       const res = await publicWwwService.renewCertificates(serverId);
                       await fetchCertificates();
                       const data = res?.data || {};
+                      if (data.requiresDnsRenewal && Array.isArray(data.manualCertificates) && data.manualCertificates.length > 0) {
+                        const sorted = [...data.manualCertificates].sort(
+                          (a, b) => (a.validDays ?? 999) - (b.validDays ?? 999),
+                        );
+                        const first = sorted[0];
+                        const base = String(first.name || '').toLowerCase();
+                        const route = proxyRoutes.find(
+                          (r) => r.domain.replace(/^\*\./, '').toLowerCase() === base,
+                        );
+                        const hasWildcard = Array.isArray(first.domains) && first.domains.some((d) => String(d).startsWith('*.'));
+                        openDnsCertPanel({
+                          routeId: route?.id ?? null,
+                          domain: first.name,
+                          wildcard: hasWildcard,
+                          forceRenewal: true,
+                          notice: data.message,
+                        });
+                        return;
+                      }
                       const msg = [
                         data.message || (data.renewed ? 'Certificates renewed.' : 'No renewals attempted.'),
                         data.manualHint ? `\n\n${data.manualHint}` : '',
@@ -1589,7 +1639,13 @@ const ServerDetails = () => {
             <>
           {certificates.some((c) => c.validDays != null && c.validDays < 30) && (
             <div className="mb-4 p-3 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-sm text-amber-800 dark:text-amber-200">
-              <strong>Certificate expiry:</strong> {certificates.filter((c) => c.validDays != null && c.validDays < 30).map((c) => `${c.name} (${c.validDays <= 0 ? 'expired' : `${c.validDays} days`})`).join(', ')}. Use <strong>Renew certificates</strong> to renew via certbot.
+              <strong>Certificate expiry:</strong>{' '}
+              {certificates.filter((c) => c.validDays != null && c.validDays < 30).map((c) => `${c.name} (${c.validDays <= 0 ? 'expired' : `${c.validDays} days`})`).join(', ')}.
+              {certificates.some((c) => c.validDays != null && c.validDays < 30 && c.manualDns) ? (
+                <> Click <strong>Renew certificates</strong> or <strong>Renew (DNS)</strong> on a domain below — DNS TXT validation is required.</>
+              ) : (
+                <> Use <strong>Renew certificates</strong> to renew via certbot.</>
+              )}
             </div>
           )}
           <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">Certificate, proxy route, and nginx config per domain.</p>
@@ -1622,7 +1678,7 @@ const ServerDetails = () => {
                             try {
                               await publicWwwService.deleteProxyRoute(serverId, r.id);
                               await fetchProxyRoutes();
-                              if (dnsCertForRouteId === r.id) setDnsCertForRouteId(null);
+                              if (dnsCertForRouteId === r.id) closeDnsCertPanel();
                               if (routeCustomNginxEditing === r.id) setRouteCustomNginxEditing(null);
                             } catch (e) {
                               alert(e.response?.data?.error || 'Delete failed');
@@ -1643,14 +1699,37 @@ const ServerDetails = () => {
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="text-gray-500 dark:text-gray-400 shrink-0">Certificate</span>
                           {cert ? (
-                            <span className="text-gray-700 dark:text-gray-300">
-                              {cert.expiryDate != null ? cert.expiryDate : cert.name}
-                              {cert.validDays != null && (
-                                <span className={`ml-1 ${cert.validDays <= 0 ? 'text-red-600 dark:text-red-400 font-medium' : cert.validDays < 30 ? 'text-amber-600 dark:text-amber-400' : 'text-green-600 dark:text-green-400'}`}>
-                                  ({cert.validDays <= 0 ? 'expired' : `${cert.validDays} days`})
-                                </span>
+                            <>
+                              <span className="text-gray-700 dark:text-gray-300">
+                                {cert.expiryDate != null ? cert.expiryDate : cert.name}
+                                {cert.validDays != null && (
+                                  <span className={`ml-1 ${cert.validDays <= 0 ? 'text-red-600 dark:text-red-400 font-medium' : cert.validDays < 30 ? 'text-amber-600 dark:text-amber-400' : 'text-green-600 dark:text-green-400'}`}>
+                                    ({cert.validDays <= 0 ? 'expired' : `${cert.validDays} days`})
+                                  </span>
+                                )}
+                                {cert.manualDns && (
+                                  <span className="ml-1 text-xs text-amber-700 dark:text-amber-300">(DNS renewal)</span>
+                                )}
+                              </span>
+                              {server?.publicWwwEnabled && cert.manualDns && (
+                                <button
+                                  type="button"
+                                  disabled={dnsCertLoading}
+                                  onClick={() => {
+                                    const hasWildcard = Array.isArray(cert.domains) && cert.domains.some((d) => String(d).startsWith('*.'));
+                                    openDnsCertPanel({
+                                      routeId: r.id,
+                                      domain: baseDomain,
+                                      wildcard: hasWildcard,
+                                      forceRenewal: true,
+                                    });
+                                  }}
+                                  className="text-primary-600 dark:text-primary-400 hover:underline"
+                                >
+                                  Renew (DNS)
+                                </button>
                               )}
-                            </span>
+                            </>
                           ) : (
                             <>
                               <span className="text-gray-500 dark:text-gray-400">No certificate</span>
@@ -1658,13 +1737,7 @@ const ServerDetails = () => {
                                 <button
                                   type="button"
                                   disabled={dnsCertLoading}
-                                  onClick={() => {
-                                    setPublicWwwDomainsOpen(true);
-                                    setDnsCertForRouteId(r.id);
-                                    setDnsCertDomain(baseDomain);
-                                    setDnsCertWildcard(false);
-                                    setDnsCertChallenge(null);
-                                  }}
+                                  onClick={() => openDnsCertPanel({ routeId: r.id, domain: baseDomain, wildcard: false, forceRenewal: false })}
                                   className="text-primary-600 dark:text-primary-400 hover:underline"
                                 >
                                   Get cert (DNS)
@@ -1809,21 +1882,27 @@ const ServerDetails = () => {
               })}
                 </ul>
               )}
-          {dnsCertForRouteId != null && server?.publicWwwEnabled && (
+          {dnsCertPanelOpen && server?.publicWwwEnabled && (
                 <div className="mb-4 p-4 rounded-xl border border-primary-200 dark:border-primary-800 bg-primary-50/30 dark:bg-primary-900/20">
                   <h4 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-2">
-                    Get certificate (DNS validation)
+                    {dnsCertForceRenewal ? 'Renew certificate (DNS validation)' : 'Get certificate (DNS validation)'}
                     {(() => {
-                      const route = proxyRoutes.find((route) => route.id === dnsCertForRouteId);
-                      return route?.domain ? (
-                        <span className="font-mono text-primary-600 dark:text-primary-400 ml-2">for {route.domain}</span>
+                      const route = dnsCertForRouteId != null ? proxyRoutes.find((route) => route.id === dnsCertForRouteId) : null;
+                      const label = route?.domain || dnsCertDomain;
+                      return label ? (
+                        <span className="font-mono text-primary-600 dark:text-primary-400 ml-2">for {label}</span>
                       ) : null;
                     })()}
                   </h4>
+                  {dnsRenewalNotice && (
+                    <p className="text-xs text-amber-800 dark:text-amber-200 mb-2 rounded-lg bg-amber-50/80 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-700 px-2 py-1.5">
+                      {dnsRenewalNotice}
+                    </p>
+                  )}
                   <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
                     {!dnsCertChallenge
-                      ? 'Click Request challenge to get the TXT record name and value below, then add that record at your DNS provider and click Continue. Supports wildcards (e.g. *.example.com).'
-                      : 'Add the TXT record at your DNS provider, then click Continue.'}
+                      ? 'Step 1: Request challenge to get the DNS TXT record. Step 2: Add the record at your DNS provider. Step 3: Click Continue when propagation is done (often 1–5 minutes).'
+                      : 'Step 2: Add this TXT record at your DNS provider, wait for propagation, then click Continue.'}
                   </p>
                   {!dnsCertChallenge ? (
                     <div className="flex flex-wrap items-center gap-2">
@@ -1853,6 +1932,7 @@ const ServerDetails = () => {
                               const res = await publicWwwService.requestDnsCert(serverId, {
                                 domain: dnsCertDomain.trim(),
                                 wildcard: dnsCertWildcard,
+                                forceRenewal: dnsCertForceRenewal,
                               });
                               setDnsCertChallenge(res.data);
                             } catch (e) {
@@ -1874,7 +1954,7 @@ const ServerDetails = () => {
                         <button
                           type="button"
                           disabled={dnsCertLoading}
-                          onClick={() => { setDnsCertForRouteId(null); setDnsCertChallenge(null); }}
+                          onClick={closeDnsCertPanel}
                           className="px-2 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:underline disabled:opacity-50"
                         >
                           Cancel
@@ -1888,10 +1968,39 @@ const ServerDetails = () => {
                     </div>
                   ) : (
                     <div className="space-y-2">
-                      <p className="text-xs text-gray-600 dark:text-gray-400">Add this TXT record at your DNS provider:</p>
-                      <div className="text-sm font-mono bg-white dark:bg-gray-800 rounded p-2 border border-gray-200 dark:border-gray-600">
-                        <div><span className="text-gray-500">Name:</span> {dnsCertChallenge.recordName}</div>
-                        <div className="mt-1"><span className="text-gray-500">Value:</span> {dnsCertChallenge.recordValue}</div>
+                      <p className="text-xs text-gray-600 dark:text-gray-400">
+                        Create a <strong>TXT</strong> record at your DNS provider. Many providers want only the host part (e.g. <span className="font-mono">_acme-challenge</span>); others accept the full name below.
+                      </p>
+                      <div className="text-sm font-mono bg-white dark:bg-gray-800 rounded p-2 border border-gray-200 dark:border-gray-600 space-y-2">
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div className="min-w-0 break-all">
+                            <span className="text-gray-500">Type:</span> TXT
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div className="min-w-0 break-all">
+                            <span className="text-gray-500">Name / host:</span> {dnsCertChallenge.recordName}
+                          </div>
+                          <button
+                            type="button"
+                            className="text-xs text-primary-600 dark:text-primary-400 hover:underline shrink-0"
+                            onClick={() => copyDnsChallengeField(dnsCertChallenge.recordName, 'Name')}
+                          >
+                            Copy name
+                          </button>
+                        </div>
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div className="min-w-0 break-all">
+                            <span className="text-gray-500">Value:</span> {dnsCertChallenge.recordValue}
+                          </div>
+                          <button
+                            type="button"
+                            className="text-xs text-primary-600 dark:text-primary-400 hover:underline shrink-0"
+                            onClick={() => copyDnsChallengeField(dnsCertChallenge.recordValue, 'Value')}
+                          >
+                            Copy value
+                          </button>
+                        </div>
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
                         <button
@@ -1903,10 +2012,10 @@ const ServerDetails = () => {
                               await publicWwwService.continueDnsCert(serverId, {
                                 domain: dnsCertChallenge.baseDomain || dnsCertChallenge.domain,
                               });
-                              setDnsCertForRouteId(null);
-                              setDnsCertChallenge(null);
+                              closeDnsCertPanel();
                               await fetchProxyRoutes();
-                              alert('Certificate installed and nginx reloaded.');
+                              await fetchCertificates();
+                              alert(dnsCertForceRenewal ? 'Certificate renewed and nginx reloaded.' : 'Certificate installed and nginx reloaded.');
                             } catch (e) {
                               alert(e.response?.data?.error || e.response?.data?.details || e.message || 'Continue failed');
                             } finally {
