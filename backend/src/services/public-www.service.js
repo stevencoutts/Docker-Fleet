@@ -98,7 +98,7 @@ function buildDefaultRouteBlock(r, certDomains = new Set()) {
   const domain = r.domain.trim();
   const port = parseInt(r.containerPort, 10) || 80;
   const baseDomain = domain.replace(/^\*\./, '');
-  const hasCert = certDomains.has(baseDomain);
+  const hasCert = [...certDomains].some((d) => routeBaseDomain(d) === routeBaseDomain(baseDomain));
 
   let block = `
 server {
@@ -708,6 +708,27 @@ async function disablePublicWww(serverId, userId) {
 /**
  * Sync proxy: rewrite nginx config from current routes (including SSL for domains with certs), reload nginx, run certbot for new domains (HTTP only).
  */
+/**
+ * Attach generatedNginxBlock to each route that uses the default template (no custom block).
+ */
+async function enrichProxyRoutesForApi(server, routes) {
+  const rows = routes.map((r) => (r.toJSON ? r.toJSON() : { ...r }));
+  if (!server.publicWwwEnabled) return rows;
+
+  let certDomains = new Set();
+  try {
+    certDomains = await getCertDomains(server);
+  } catch (e) {
+    logger.warn('Public WWW: getCertDomains for route preview failed', { host: server.host, message: e.message });
+  }
+
+  return rows.map((row) => {
+    if ((row.customNginxBlock || '').trim()) return row;
+    row.generatedNginxBlock = buildDefaultRouteBlock(row, certDomains).trim();
+    return row;
+  });
+}
+
 async function syncProxy(serverId, userId) {
   const server = await Server.findByPk(serverId);
   if (!server || server.userId !== userId) throw new Error('Server not found');
@@ -1370,5 +1391,7 @@ module.exports = {
   importNginxBlockForDomain,
   updateCustomNginxConfig,
   buildNginxConfig,
+  buildDefaultRouteBlock,
   getCertDomains,
+  enrichProxyRoutesForApi,
 };

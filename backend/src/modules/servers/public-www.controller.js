@@ -8,7 +8,8 @@ async function listProxyRoutes(req, res, next) {
     if (!server) return res.status(404).json({ error: 'Server not found' });
 
     const routes = await ServerProxyRoute.findAll({ where: { serverId }, order: [['domain', 'ASC']] });
-    res.json({ routes });
+    const enriched = await publicWwwService.enrichProxyRoutesForApi(server, routes);
+    res.json({ routes: enriched });
   } catch (error) {
     next(error);
   }

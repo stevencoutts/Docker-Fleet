@@ -2001,6 +2001,52 @@ const ServerDetails = () => {
                                   </button>
                                 </span>
                               </>
+                            ) : r.generatedNginxBlock ? (
+                              <>
+                                <pre className="text-xs font-mono text-gray-700 dark:text-gray-300 overflow-x-auto max-h-32 overflow-y-auto p-2 rounded bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-600 whitespace-pre-wrap break-all mb-2">
+                                  {(r.generatedNginxBlock || '').trim().split('\n').slice(0, 14).join('\n')}
+                                  {(r.generatedNginxBlock || '').trim().split('\n').length > 14 ? '\n…' : ''}
+                                </pre>
+                                <span className="text-xs text-gray-500 dark:text-gray-400 block mb-1">
+                                  Auto-generated from route + certificate. Applied to the server when you <strong>Sync config</strong>.
+                                </span>
+                                <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                                  <button
+                                    type="button"
+                                    disabled={routeBusy?.routeId === r.id || routeCustomNginxSaving}
+                                    onClick={() => {
+                                      setRouteCustomNginxEditing(r.id);
+                                      setRouteCustomNginxText(r.generatedNginxBlock ?? '');
+                                    }}
+                                    className="text-primary-600 dark:text-primary-400 hover:underline text-xs"
+                                  >
+                                    Customize nginx
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={routeBusy?.routeId === r.id || routeCustomNginxSaving || routeImportingNginx === r.id}
+                                    onClick={async () => {
+                                      setRouteImportingNginx(r.id);
+                                      try {
+                                        const res = await publicWwwService.importNginxBlock(serverId, r.domain);
+                                        if (res.data?.block) {
+                                          setRouteCustomNginxText(res.data.block);
+                                          setRouteCustomNginxEditing(r.id);
+                                        } else {
+                                          alert(res.data?.error || 'No server block found for this domain on the host.');
+                                        }
+                                      } catch (e) {
+                                        alert(e.response?.data?.error || e.message || 'Import failed');
+                                      } finally {
+                                        setRouteImportingNginx(null);
+                                      }
+                                    }}
+                                    className="text-primary-600 dark:text-primary-400 hover:underline text-xs disabled:opacity-50"
+                                  >
+                                    {routeImportingNginx === r.id ? 'Importing…' : 'Import from server'}
+                                  </button>
+                                </span>
+                              </>
                             ) : (
                               <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
                                 <button
