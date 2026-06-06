@@ -831,7 +831,9 @@ async function readCertbotDnsLog(server, lines = 120) {
 
 function interpretCertbotDnsLog(log) {
   if (!log) return { status: 'pending' };
-  if (/Successfully received certificate|Congratulations! Your certificate|Certificate not yet due for renewal/i.test(log)) {
+  if (
+    /Successfully received certificate|Certificate is saved at:|Congratulations! Your certificate|Certificate not yet due for renewal/i.test(log)
+  ) {
     return { status: 'success' };
   }
   if (
@@ -868,8 +870,16 @@ async function continueDnsCert(serverId, userId, options = {}) {
   const certMtimeBefore = parseInt((certBefore.stdout || '').trim(), 10) || 0;
   const hadCertBefore = certMtimeBefore > 0;
 
+  const logBefore = await readCertbotDnsLog(server, 120);
+  if (interpretCertbotDnsLog(logBefore).status === 'success') {
+    logger.info('Public WWW: continueDnsCert — cert already issued per log', { host: hostLabel, baseDomain });
+    const routes = await ServerProxyRoute.findAll({ where: { serverId } });
+    const certDomains = await getCertDomains(server);
+    await writeNginxConfigAndReload(server, routes, null, certDomains);
+    return { success: true, message: `Certificate for ${baseDomain} is installed. Nginx reloaded.` };
+  }
+
   const runnerActiveBefore = await isCertbotDnsRunnerActive(server);
-  const logBefore = await readCertbotDnsLog(server, 40);
   if (!runnerActiveBefore && !logBefore.includes('Certbot DNS started')) {
     throw new Error(
       'Certbot is not running on the server. Click Request challenge again, wait for the TXT record, add it at your DNS provider, then click Continue while certbot is still waiting (usually within a few minutes).',
@@ -924,6 +934,13 @@ async function continueDnsCert(serverId, userId, options = {}) {
   const certFinal = await exec(server, `sudo test -f '${certPath}' && echo ok`, { allowFailure: true, timeout: 10000 });
   const certExists = (certFinal.stdout || '').trim() === 'ok';
 
+  if (finalState.status === 'success' || certExists) {
+    const routes = await ServerProxyRoute.findAll({ where: { serverId } });
+    const certDomains = await getCertDomains(server);
+    await writeNginxConfigAndReload(server, routes, null, certDomains);
+    return { success: true, message: `Certificate for ${baseDomain} installed and nginx reloaded.` };
+  }
+
   if (!certExists && finalState.status !== 'success') {
     if (finalState.status === 'failed') {
       throw new Error(
@@ -938,10 +955,7 @@ async function continueDnsCert(serverId, userId, options = {}) {
     );
   }
 
-  const routes = await ServerProxyRoute.findAll({ where: { serverId } });
-  const certDomains = await getCertDomains(server);
-  await writeNginxConfigAndReload(server, routes, null, certDomains);
-  return { success: true, message: `Certificate for ${baseDomain} installed and nginx reloaded.` };
+  throw new Error(`Certificate for ${baseDomain} could not be confirmed after issuance. ${finalLog.slice(-800)}`);
 }
 
 /**
