@@ -208,10 +208,6 @@ function buildNginxConfig(routes, certDomains = new Set(), existingNginxNames = 
   const blocks = (routes || []).map((r) => {
     const custom = (r.customNginxBlock || '').trim();
     if (custom) return custom;
-    const base = routeBaseDomain(r.domain);
-    if (existingNginxNames.has(base)) {
-      return `# ${r.domain}: already configured on host nginx (e.g. sites-enabled); not duplicated here`;
-    }
     return buildDefaultRouteBlock(r, certDomains);
   });
   const routeBlocks = blocks.join('\n') || '# No proxy routes\n';
@@ -622,12 +618,8 @@ async function writeNginxConfigAndReload(server, routes, onProgress, certDomains
   const existingNginxNames = await getNginxConfiguredServerNames(server);
   const config = buildNginxConfig(routes, domains, existingNginxNames);
   const escaped = config.replace(/'/g, "'\\''");
-  await exec(server, `echo '${escaped}' | sudo tee ${NGINX_CONF_PATH} > /dev/null`, { allowFailure: false, logLabel: 'nginx_write_config' });
-  const reload = await exec(server, 'sudo nginx -t && sudo systemctl reload nginx', { allowFailure: true, logLabel: 'nginx_test_reload' });
-  if (reload.code !== 0) {
-    const detail = `${reload.stderr || ''}\n${reload.stdout || ''}`.trim().slice(-2000);
-    throw new Error(`Nginx config test failed after writing ${NGINX_CONF_PATH}.${detail ? `\n\n${detail}` : ''}`);
-  }
+  await exec(server, `echo '${escaped}' | sudo tee ${NGINX_CONF_PATH} > /dev/null`, { allowFailure: false });
+  await exec(server, 'sudo nginx -t && sudo systemctl reload nginx', { allowFailure: true });
   if (onProgress) onProgress('nginx_config', 'Nginx config applied', 'ok');
 }
 
@@ -730,20 +722,8 @@ async function enrichProxyRoutesForApi(server, routes) {
     logger.warn('Public WWW: getCertDomains for route preview failed', { host: server.host, message: e.message });
   }
 
-  let existingNginxNames = new Set();
-  try {
-    existingNginxNames = await getNginxConfiguredServerNames(server);
-  } catch (e) {
-    logger.warn('Public WWW: getNginxConfiguredServerNames for route preview failed', { host: server.host, message: e.message });
-  }
-
   return rows.map((row) => {
     if ((row.customNginxBlock || '').trim()) return row;
-    const base = routeBaseDomain(row.domain);
-    if (existingNginxNames.has(base)) {
-      row.nginxManagedExternally = true;
-      return row;
-    }
     row.generatedNginxBlock = buildDefaultRouteBlock(row, certDomains).trim();
     return row;
   });

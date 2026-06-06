@@ -1462,10 +1462,9 @@ const ServerDetails = () => {
               setPublicWwwLoading(true);
               setPublicWwwBusy('sync');
               try {
-                const syncRes = await publicWwwService.sync(serverId);
-                await fetchProxyRoutes();
+                await publicWwwService.sync(serverId);
                 await fetchCertificates();
-                alert(syncRes?.data?.message || 'Proxy config synced to /etc/nginx/conf.d/dockerfleet-proxy.conf');
+                alert('Proxy config synced.');
               } catch (e) {
                 alert(e.response?.data?.details || e.response?.data?.error || e.message || 'Sync failed');
               } finally {
@@ -2002,10 +2001,6 @@ const ServerDetails = () => {
                                   </button>
                                 </span>
                               </>
-                            ) : r.nginxManagedExternally ? (
-                              <span className="text-xs text-gray-500 dark:text-gray-400">
-                                Managed in existing host nginx (e.g. <code className="bg-black/5 dark:bg-white/10 px-1 rounded">sites-enabled</code>) — not written to dockerfleet-proxy.conf. Use <strong>Import from server</strong> to view or <strong>Customize nginx</strong> to override via Docker Fleet.
-                              </span>
                             ) : r.generatedNginxBlock ? (
                               <>
                                 <pre className="text-xs font-mono text-gray-700 dark:text-gray-300 overflow-x-auto max-h-32 overflow-y-auto p-2 rounded bg-gray-50 dark:bg-gray-900/50 border border-gray-200 dark:border-gray-600 whitespace-pre-wrap break-all mb-2">

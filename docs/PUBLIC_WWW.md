@@ -116,14 +116,6 @@ sudo certbot renew --cert-name mtx.couttsnet.com
 
 Inspect the live config: `sudo nginx -T 2>/dev/null | grep -A25 'server_name mtx'`
 
-## Existing nginx (`sites-enabled`) on the host
-
-If Public WWW was **enabled** while nginx already had vhosts, Docker Fleet **imports routes** but leaves `sites-enabled` unchanged — **`/etc/nginx/conf.d/dockerfleet-proxy.conf` is not created until you click Sync config**.
-
-On **Sync**, only domains **not** already in host nginx are written to `dockerfleet-proxy.conf` (e.g. a new route like `sow.example.com`). Domains already in `sites-enabled` stay there; the UI marks them as managed externally.
-
-New routes with a DNS cert still need **Sync config** once so HTTPS is configured on the server.
-
 ## Proxy routes
 
 Each route maps a **domain** to a **container name** and **port** on the same host. Nginx listens on 80/443 and `proxy_pass`es to `http://127.0.0.1:<containerPort>`. The container must be listening on that port (e.g. bind to `0.0.0.0:8080`).
