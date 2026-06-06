@@ -1850,7 +1850,7 @@ const ServerDetails = () => {
                       </div>
                       {dnsCertLoading && (
                         <p className="text-xs text-gray-500 dark:text-gray-400">
-                          Verifying DNS and issuing certificate (may take up to 2 minutes)…
+                          Verifying DNS and issuing certificate (usually 30–90 seconds; up to 3 minutes). If this hangs, on the server check: <code className="bg-black/5 dark:bg-white/10 px-1 rounded">sudo tail -30 /tmp/certbot-dns.log</code>
                         </p>
                       )}
                     </div>

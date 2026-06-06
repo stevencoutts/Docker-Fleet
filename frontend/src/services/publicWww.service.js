@@ -53,7 +53,7 @@ export function requestDnsCert(serverId, { domain, wildcard, forceRenewal }) {
 
 /** After adding the TXT record, call this to complete issuance and reload nginx. */
 export function continueDnsCert(serverId, { domain }) {
-  return api.post(`/api/v1/servers/${serverId}/public-www/continue-dns-cert`, { domain }, { timeout: 150000 });
+  return api.post(`/api/v1/servers/${serverId}/public-www/continue-dns-cert`, { domain }, { timeout: 240000 });
 }
 
 export function getCertificates(serverId) {

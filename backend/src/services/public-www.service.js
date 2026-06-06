@@ -821,6 +821,36 @@ exec certbot ${certbotArgs} >> "$LOG" 2>&1
   throw new Error('Certbot did not produce challenge in time.' + logHint);
 }
 
+async function readCertbotDnsLog(server, lines = 120) {
+  const r = await exec(server, `sudo tail -${lines} ${CERTBOT_DNS_LOG_PATH} 2>/dev/null || true`, {
+    allowFailure: true,
+    timeout: 15000,
+  });
+  return (r.stdout || '').trim();
+}
+
+function interpretCertbotDnsLog(log) {
+  if (!log) return { status: 'pending' };
+  if (/Successfully received certificate|Congratulations! Your certificate|Certificate not yet due for renewal/i.test(log)) {
+    return { status: 'success' };
+  }
+  if (
+    /Certbot failed to authenticate|Some challenges have failed|Challenge failed|incorrect TXT|NXDOMAIN|DNS problem:|No TXT record|check that a DNS record exists|Timeout during connect/i.test(log)
+  ) {
+    return { status: 'failed' };
+  }
+  return { status: 'pending' };
+}
+
+async function isCertbotDnsRunnerActive(server) {
+  const r = await exec(
+    server,
+    'pgrep -af "certbot certonly" 2>/dev/null || pgrep -af certbot-dns-runner 2>/dev/null || pgrep -af "certbot.*manual" 2>/dev/null || true',
+    { allowFailure: true, timeout: 10000 },
+  );
+  return Boolean((r.stdout || '').trim());
+}
+
 /**
  * After user has added the DNS TXT record: touch continue file, wait for cert, then update nginx and reload.
  */
@@ -831,30 +861,87 @@ async function continueDnsCert(serverId, userId, options = {}) {
   const domain = (options.domain || '').trim().toLowerCase();
   if (!domain) throw new Error('domain is required');
   const baseDomain = domain.replace(/^\*\./, '');
-
-  await exec(server, `sudo touch ${CERTBOT_DNS_CONTINUE_FILE}`);
-
+  const hostLabel = server.host || server.name || serverId;
   const certPath = `/etc/letsencrypt/live/${baseDomain}/fullchain.pem`;
-  const deadline = Date.now() + 120000;
-  while (Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 3000));
-    const r = await exec(server, `test -f ${certPath} && echo ok`, { allowFailure: true });
-    if ((r.stdout || '').trim() === 'ok') {
-      const routes = await ServerProxyRoute.findAll({ where: { serverId } });
-      const certDomains = await getCertDomains(server);
-      await writeNginxConfigAndReload(server, routes, null, certDomains);
-      return { success: true, message: `Certificate for ${baseDomain} installed and nginx reloaded.` };
-    }
-  }
-  const logResult = await exec(server, 'tail -80 /tmp/certbot-dns.log 2>/dev/null', { allowFailure: true });
-  const logSnippet = (logResult.stdout || '').trim();
-  if (logSnippet && (/Certbot failed to authenticate|NXDOMAIN|DNS problem:/i.test(logSnippet) || /check that a DNS record exists/i.test(logSnippet))) {
+
+  const certBefore = await exec(server, `sudo stat -c %Y '${certPath}' 2>/dev/null || echo 0`, { allowFailure: true, timeout: 10000 });
+  const certMtimeBefore = parseInt((certBefore.stdout || '').trim(), 10) || 0;
+  const hadCertBefore = certMtimeBefore > 0;
+
+  const runnerActiveBefore = await isCertbotDnsRunnerActive(server);
+  const logBefore = await readCertbotDnsLog(server, 40);
+  if (!runnerActiveBefore && !logBefore.includes('Certbot DNS started')) {
     throw new Error(
-      `DNS validation failed for ${baseDomain}: the TXT record for _acme-challenge.${baseDomain} was not found or not yet propagated. ` +
-      'Add the record at your DNS provider, wait a few minutes for propagation, then click "Request challenge" again to get a new value (if needed) and "Continue" once the record is live.'
+      'Certbot is not running on the server. Click Request challenge again, wait for the TXT record, add it at your DNS provider, then click Continue while certbot is still waiting (usually within a few minutes).',
     );
   }
-  throw new Error('Certificate did not appear in time. ' + (logSnippet || 'Check server /tmp/certbot-dns.log'));
+
+  logger.info('Public WWW: continueDnsCert — touching continue file', { host: hostLabel, baseDomain });
+  await exec(server, `sudo touch ${CERTBOT_DNS_CONTINUE_FILE}`, { allowFailure: false, timeout: 10000 });
+  const continueStartedAt = Date.now();
+
+  const deadline = Date.now() + 180000;
+  let lastLogSnippet = '';
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 3000));
+
+    lastLogSnippet = await readCertbotDnsLog(server, 120);
+    const logState = interpretCertbotDnsLog(lastLogSnippet);
+    if (logState.status === 'failed') {
+      throw new Error(
+        `DNS validation failed for ${baseDomain}: the TXT record for _acme-challenge.${baseDomain} was not found, is wrong, or has not propagated yet. ` +
+        'Verify the record at your DNS provider, wait a few minutes, click Request challenge if you need a fresh value, then Continue again.\n\n' +
+        (lastLogSnippet.slice(-800) || `Check ${CERTBOT_DNS_LOG_PATH} on the server.`),
+      );
+    }
+    if (logState.status === 'success') {
+      break;
+    }
+
+    const certNow = await exec(server, `sudo stat -c %Y '${certPath}' 2>/dev/null || echo 0`, { allowFailure: true, timeout: 10000 });
+    const certMtimeNow = parseInt((certNow.stdout || '').trim(), 10) || 0;
+    if (!hadCertBefore && certMtimeNow > 0) break;
+    if (hadCertBefore && certMtimeNow > certMtimeBefore) break;
+
+    const runnerActive = await isCertbotDnsRunnerActive(server);
+    const elapsedMs = Date.now() - continueStartedAt;
+    if (
+      !runnerActive
+      && elapsedMs > 45000
+      && interpretCertbotDnsLog(lastLogSnippet).status === 'pending'
+      && !(await exec(server, `sudo test -f '${certPath}' && echo ok`, { allowFailure: true, timeout: 10000 })).stdout?.includes('ok')
+    ) {
+      throw new Error(
+        `Certbot stopped before finishing ${baseDomain}. ` +
+        `On the server run: sudo tail -50 ${CERTBOT_DNS_LOG_PATH} — then Request challenge and try again.\n\n` +
+        (lastLogSnippet.slice(-800) || ''),
+      );
+    }
+  }
+
+  const finalLog = lastLogSnippet || await readCertbotDnsLog(server, 120);
+  const finalState = interpretCertbotDnsLog(finalLog);
+  const certFinal = await exec(server, `sudo test -f '${certPath}' && echo ok`, { allowFailure: true, timeout: 10000 });
+  const certExists = (certFinal.stdout || '').trim() === 'ok';
+
+  if (!certExists && finalState.status !== 'success') {
+    if (finalState.status === 'failed') {
+      throw new Error(
+        `DNS validation failed for ${baseDomain}. ` +
+        (finalLog.slice(-800) || `Check ${CERTBOT_DNS_LOG_PATH} on the server.`),
+      );
+    }
+    throw new Error(
+      `Certificate for ${baseDomain} did not appear within 3 minutes. ` +
+      `Certbot may still be running — check: sudo tail -f ${CERTBOT_DNS_LOG_PATH}\n\n` +
+      (finalLog.slice(-800) || ''),
+    );
+  }
+
+  const routes = await ServerProxyRoute.findAll({ where: { serverId } });
+  const certDomains = await getCertDomains(server);
+  await writeNginxConfigAndReload(server, routes, null, certDomains);
+  return { success: true, message: `Certificate for ${baseDomain} installed and nginx reloaded.` };
 }
 
 /**
