@@ -48,7 +48,7 @@ const exportData = async (req, res, next) => {
     const serverIds = servers.map((s) => s.id);
     const proxyRoutes = await ServerProxyRoute.findAll({
       where: { serverId: serverIds },
-      attributes: ['serverId', 'domain', 'containerName', 'containerPort', 'customNginxBlock'],
+      attributes: ['serverId', 'domain', 'containerName', 'containerPort', 'customNginxBlock', 'staticRoot'],
     });
 
     const monitoringSettings = await MonitoringSettings.findOne({
@@ -112,6 +112,7 @@ const exportData = async (req, res, next) => {
         containerName: r.containerName,
         containerPort: r.containerPort,
         customNginxBlock: r.customNginxBlock ?? null,
+        staticRoot: r.staticRoot ?? null,
       })),
       monitoringSettings: monitoringSettings
         ? {
@@ -287,6 +288,7 @@ const importData = async (req, res, next) => {
         containerName: r.containerName,
         containerPort: r.containerPort,
         customNginxBlock: r.customNginxBlock ?? null,
+        staticRoot: r.staticRoot ?? null,
       });
     }
     restored.proxyRoutes = proxyRoutes.filter((r) => oldIdToNewId.has(String(r.serverId))).length;

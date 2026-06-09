@@ -36,6 +36,11 @@ module.exports = (sequelize) => {
         allowNull: true,
         field: 'custom_nginx_block',
       },
+      staticRoot: {
+        type: DataTypes.STRING(512),
+        allowNull: true,
+        field: 'static_root',
+      },
       createdAt: {
         type: DataTypes.DATE,
         allowNull: false,

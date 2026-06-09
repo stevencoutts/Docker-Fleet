@@ -18,7 +18,7 @@ async function listProxyRoutes(req, res, next) {
 async function addProxyRoute(req, res, next) {
   try {
     const { id: serverId } = req.params;
-    const { domain, containerName, containerPort, customNginxBlock } = req.body;
+    const { domain, containerName, containerPort, customNginxBlock, staticRoot } = req.body;
 
     const server = await Server.findOne({ where: { id: serverId, userId: req.user.id } });
     if (!server) return res.status(404).json({ error: 'Server not found' });
@@ -33,6 +33,7 @@ async function addProxyRoute(req, res, next) {
       containerName: String(containerName).trim(),
       containerPort: port,
       customNginxBlock: typeof customNginxBlock === 'string' ? customNginxBlock : null,
+      staticRoot: typeof staticRoot === 'string' && staticRoot.trim() ? staticRoot.trim() : null,
     });
     res.status(201).json({ route });
   } catch (error) {
@@ -43,7 +44,7 @@ async function addProxyRoute(req, res, next) {
 async function updateProxyRoute(req, res, next) {
   try {
     const { id: serverId, routeId } = req.params;
-    const { customNginxBlock } = req.body ?? {};
+    const { customNginxBlock, staticRoot } = req.body ?? {};
 
     const server = await Server.findOne({ where: { id: serverId, userId: req.user.id } });
     if (!server) return res.status(404).json({ error: 'Server not found' });
@@ -51,8 +52,14 @@ async function updateProxyRoute(req, res, next) {
     const route = await ServerProxyRoute.findOne({ where: { id: routeId, serverId } });
     if (!route) return res.status(404).json({ error: 'Proxy route not found' });
 
-    const value = customNginxBlock !== undefined ? (typeof customNginxBlock === 'string' ? customNginxBlock : null) : route.customNginxBlock;
-    await route.update({ customNginxBlock: value });
+    const updates = {};
+    if (customNginxBlock !== undefined) {
+      updates.customNginxBlock = typeof customNginxBlock === 'string' ? customNginxBlock : null;
+    }
+    if (staticRoot !== undefined) {
+      updates.staticRoot = typeof staticRoot === 'string' && staticRoot.trim() ? staticRoot.trim() : null;
+    }
+    await route.update(updates);
     res.json({ route });
   } catch (error) {
     next(error);

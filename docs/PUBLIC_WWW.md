@@ -131,3 +131,5 @@ New routes with a DNS cert still need **Sync config** once so HTTPS is configure
 ## Proxy routes
 
 Each route maps a **domain** to a **container name** and **port** on the same host. Nginx listens on 80/443 and `proxy_pass`es to `http://127.0.0.1:<containerPort>`. The container must be listening on that port (e.g. bind to `0.0.0.0:8080`).
+
+**Static root (optional):** Set e.g. `/var/www` on a route to serve `index.html` from that path on the host. Paths **`/xrpc/`** and **`/.well-known/`** still proxy to the container — use this for an apex site plus Bluesky PDS on the same domain (`couttsnet.com` → `pds:6010` with static root `/var/www`).

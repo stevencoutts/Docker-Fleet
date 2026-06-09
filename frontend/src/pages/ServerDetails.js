@@ -58,7 +58,8 @@ const ServerDetails = () => {
   const [routeCustomNginxSaving, setRouteCustomNginxSaving] = useState(false);
   const [routeImportingNginx, setRouteImportingNginx] = useState(null); // routeId when importing
   const [containerAction, setContainerAction] = useState({}); // { [containerId]: 'start'|'stop'|'restart'|'remove' }
-  const [newRouteForm, setNewRouteForm] = useState({ domain: '', containerName: '', containerPort: '80' });
+  const [newRouteForm, setNewRouteForm] = useState({ domain: '', containerName: '', containerPort: '80', staticRoot: '' });
+  const [routeStaticRootSaving, setRouteStaticRootSaving] = useState(null);
   const [dnsCertChallenge, setDnsCertChallenge] = useState(null);
   const [dnsCertLoading, setDnsCertLoading] = useState(false);
   const [dnsCertPanelOpen, setDnsCertPanelOpen] = useState(false);
@@ -1905,6 +1906,37 @@ const ServerDetails = () => {
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="text-gray-500 dark:text-gray-400 shrink-0">Proxy</span>
                           <span className="font-mono text-gray-800 dark:text-gray-200">{r.containerName}:{r.containerPort}</span>
+                          {r.staticRoot ? (
+                            <span className="text-xs text-gray-500 dark:text-gray-400">(+ static {r.staticRoot})</span>
+                          ) : null}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-gray-500 dark:text-gray-400 shrink-0">Static root</span>
+                          <input
+                            type="text"
+                            defaultValue={r.staticRoot || ''}
+                            key={`static-root-${r.id}-${r.staticRoot || ''}`}
+                            placeholder="/var/www (optional)"
+                            disabled={routeStaticRootSaving === r.id}
+                            className="flex-1 min-w-[10rem] max-w-md text-sm font-mono border border-gray-300 dark:border-gray-600 rounded px-2 py-1 bg-white dark:bg-gray-800"
+                            onBlur={async (e) => {
+                              const next = e.target.value.trim();
+                              const prev = (r.staticRoot || '').trim();
+                              if (next === prev) return;
+                              setRouteStaticRootSaving(r.id);
+                              try {
+                                await publicWwwService.updateProxyRoute(serverId, r.id, { staticRoot: next || null });
+                                await fetchProxyRoutes();
+                              } catch (err) {
+                                alert(err.response?.data?.error || err.message || 'Save failed');
+                              } finally {
+                                setRouteStaticRootSaving(null);
+                              }
+                            }}
+                          />
+                          <span className="text-xs text-gray-500 dark:text-gray-400">
+                            Serves index.html; /xrpc/ and /.well-known/ still proxy to container
+                          </span>
                         </div>
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="text-gray-500 dark:text-gray-400 shrink-0">Certificate</span>
@@ -2167,6 +2199,13 @@ const ServerDetails = () => {
                     onChange={(e) => setNewRouteForm((f) => ({ ...f, containerPort: e.target.value }))}
                     className="rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 px-2 py-1.5 text-sm w-20"
                   />
+                  <input
+                    type="text"
+                    placeholder="Static root (optional)"
+                    value={newRouteForm.staticRoot}
+                    onChange={(e) => setNewRouteForm((f) => ({ ...f, staticRoot: e.target.value }))}
+                    className="rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 px-2 py-1.5 text-sm min-w-[140px]"
+                  />
                   <button
                   type="button"
                   disabled={routeAdding}
@@ -2181,8 +2220,9 @@ const ServerDetails = () => {
                         domain: newRouteForm.domain.trim(),
                         containerName: newRouteForm.containerName.trim(),
                         containerPort: parseInt(newRouteForm.containerPort, 10) || 80,
+                        staticRoot: newRouteForm.staticRoot.trim() || undefined,
                       });
-                      setNewRouteForm({ domain: '', containerName: '', containerPort: '80' });
+                      setNewRouteForm({ domain: '', containerName: '', containerPort: '80', staticRoot: '' });
                       await fetchProxyRoutes();
                     } catch (e) {
                       alert(e.response?.data?.error || 'Add failed');
