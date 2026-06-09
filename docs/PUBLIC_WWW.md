@@ -124,6 +124,8 @@ On **Sync**, only domains **not** already in host nginx are written to `dockerfl
 
 New routes with a DNS cert still need **Sync config** once so HTTPS is configured on the server.
 
+**Sync config** rewrites `dockerfleet-proxy.conf` from routes and installed certs. It does **not** run `certbot --nginx` on domains that already have a certificate (including DNS-validated certs like sow) — that previously mutated the nginx file and could break redirects/backends.
+
 ## Proxy routes
 
 Each route maps a **domain** to a **container name** and **port** on the same host. Nginx listens on 80/443 and `proxy_pass`es to `http://127.0.0.1:<containerPort>`. The container must be listening on that port (e.g. bind to `0.0.0.0:8080`).

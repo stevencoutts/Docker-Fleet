@@ -100,7 +100,15 @@ function buildDefaultRouteBlock(r, certDomains = new Set()) {
   const baseDomain = domain.replace(/^\*\./, '');
   const hasCert = [...certDomains].some((d) => routeBaseDomain(d) === routeBaseDomain(baseDomain));
 
-  let block = `
+  let block = hasCert
+    ? `
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${domain};
+    return 301 https://$host$request_uri;
+}`
+    : `
 server {
     listen 80;
     listen [::]:80;
@@ -631,18 +639,38 @@ async function writeNginxConfigAndReload(server, routes, onProgress, certDomains
   if (onProgress) onProgress('nginx_config', 'Nginx config applied', 'ok');
 }
 
+function routeIsManagedInDockerfleet(route, existingNginxNames) {
+  if ((route.customNginxBlock || '').trim()) return true;
+  return !existingNginxNames.has(routeBaseDomain(route.domain));
+}
+
+/** Routes that need a new HTTP-01 cert via certbot --nginx (not DNS/manual, not already issued). */
+async function getRoutesNeedingHttpCertbot(server, routes) {
+  const certDomains = await getCertDomains(server);
+  const manualSet = new Set((await getManualDnsCertificateNames(server)).map((n) => routeBaseDomain(n)));
+  const existingNginxNames = await getNginxConfiguredServerNames(server);
+  return (routes || []).filter((r) => {
+    const base = routeBaseDomain(r.domain);
+    if (!routeIsManagedInDockerfleet(r, existingNginxNames)) return false;
+    if ([...certDomains].some((d) => routeBaseDomain(d) === base)) return false;
+    if (manualSet.has(base)) return false;
+    return true;
+  });
+}
+
 /**
- * Run certbot for each domain (non-interactive). Skips if no routes.
+ * Run certbot --nginx for new HTTP-01 domains only. Does not use --redirect (template handles HTTPS redirect).
  */
 async function runCertbot(server, routes, email = LETSENCRYPT_EMAIL, onProgress) {
-  const domains = (routes || []).map((r) => r.domain.trim()).filter(Boolean);
-  for (const domain of domains) {
+  for (const route of routes || []) {
+    const domain = (route.domain || '').trim();
+    if (!domain) continue;
     if (onProgress) onProgress('certbot', `Requesting certificate for ${domain}...`, 'running');
     try {
       await exec(
         server,
-        `sudo certbot --nginx -d ${domain} --non-interactive --agree-tos --email ${email} --redirect 2>/dev/null || true`,
-        { timeout: 180000, allowFailure: true }
+        `sudo certbot --nginx -d ${domain} --non-interactive --agree-tos --email ${email} 2>/dev/null || true`,
+        { timeout: 180000, allowFailure: true },
       );
       if (onProgress) onProgress('certbot', `Certificate for ${domain}`, 'ok');
     } catch (e) {
@@ -759,7 +787,14 @@ async function syncProxy(serverId, userId) {
   await ensureDefaultPage(server);
   await ensureDefaultSslCert(server);
   await writeNginxConfigAndReload(server, routes);
-  if (routes.length > 0) await runCertbot(server, routes);
+
+  const user = await User.findByPk(userId);
+  const certbotEmail = (user && user.letsEncryptEmail) ? user.letsEncryptEmail : LETSENCRYPT_EMAIL;
+  const needCertbot = await getRoutesNeedingHttpCertbot(server, routes);
+  if (needCertbot.length > 0) {
+    await runCertbot(server, needCertbot, certbotEmail);
+    await writeNginxConfigAndReload(server, routes);
+  }
 
   return { success: true, message: 'Proxy config synced.' };
 }
