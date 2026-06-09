@@ -188,6 +188,23 @@ async function getNginxConfiguredServerNames(server) {
   }
 }
 
+/** server_name values in our dockerfleet-proxy.conf (managed by Sync — not "external"). */
+async function getDockerfleetProxyServerNames(server) {
+  const r = await exec(server, `sudo cat ${NGINX_CONF_PATH} 2>/dev/null || true`, { allowFailure: true, timeout: 10000 });
+  return parseServerNamesFromNginxConfig((r.stdout || '').trim());
+}
+
+/**
+ * Host nginx vhosts outside dockerfleet-proxy.conf (e.g. sites-enabled/matrix).
+ * Excludes names only present in our managed file so Sync does not drop routes on re-sync.
+ */
+async function getExternalNginxServerNames(server) {
+  const all = await getNginxConfiguredServerNames(server);
+  const ours = await getDockerfleetProxyServerNames(server);
+  for (const name of ours) all.delete(name);
+  return all;
+}
+
 /**
  * Port-80 server blocks for certs on disk that have no proxy route and no other nginx vhost.
  * Without these, HTTP-01 renewal hits default_server and returns 404.
@@ -627,8 +644,8 @@ async function getCertDomains(server) {
 async function writeNginxConfigAndReload(server, routes, onProgress, certDomains) {
   if (onProgress) onProgress('nginx_config', 'Writing nginx config and reloading...', 'running');
   const domains = certDomains ?? await getCertDomains(server);
-  const existingNginxNames = await getNginxConfiguredServerNames(server);
-  const config = buildNginxConfig(routes, domains, existingNginxNames);
+  const externalNginxNames = await getExternalNginxServerNames(server);
+  const config = buildNginxConfig(routes, domains, externalNginxNames);
   const escaped = config.replace(/'/g, "'\\''");
   await exec(server, `echo '${escaped}' | sudo tee ${NGINX_CONF_PATH} > /dev/null`, { allowFailure: false, logLabel: 'nginx_write_config' });
   const reload = await exec(server, 'sudo nginx -t && sudo systemctl reload nginx', { allowFailure: true, logLabel: 'nginx_test_reload' });
@@ -648,10 +665,10 @@ function routeIsManagedInDockerfleet(route, existingNginxNames) {
 async function getRoutesNeedingHttpCertbot(server, routes) {
   const certDomains = await getCertDomains(server);
   const manualSet = new Set((await getManualDnsCertificateNames(server)).map((n) => routeBaseDomain(n)));
-  const existingNginxNames = await getNginxConfiguredServerNames(server);
+  const externalNginxNames = await getExternalNginxServerNames(server);
   return (routes || []).filter((r) => {
     const base = routeBaseDomain(r.domain);
-    if (!routeIsManagedInDockerfleet(r, existingNginxNames)) return false;
+    if (!routeIsManagedInDockerfleet(r, externalNginxNames)) return false;
     if ([...certDomains].some((d) => routeBaseDomain(d) === base)) return false;
     if (manualSet.has(base)) return false;
     return true;
@@ -758,17 +775,17 @@ async function enrichProxyRoutesForApi(server, routes) {
     logger.warn('Public WWW: getCertDomains for route preview failed', { host: server.host, message: e.message });
   }
 
-  let existingNginxNames = new Set();
+  let externalNginxNames = new Set();
   try {
-    existingNginxNames = await getNginxConfiguredServerNames(server);
+    externalNginxNames = await getExternalNginxServerNames(server);
   } catch (e) {
-    logger.warn('Public WWW: getNginxConfiguredServerNames for route preview failed', { host: server.host, message: e.message });
+    logger.warn('Public WWW: getExternalNginxServerNames for route preview failed', { host: server.host, message: e.message });
   }
 
   return rows.map((row) => {
     if ((row.customNginxBlock || '').trim()) return row;
     const base = routeBaseDomain(row.domain);
-    if (existingNginxNames.has(base)) {
+    if (externalNginxNames.has(base)) {
       row.nginxManagedExternally = true;
       return row;
     }
@@ -1058,7 +1075,7 @@ async function listCertificates(serverId, userId) {
   const manualDnsNames = new Set((await getManualDnsCertificateNames(server)).map((n) => n.toLowerCase()));
   const routes = await ServerProxyRoute.findAll({ where: { serverId } });
   const routedDomains = new Set(routes.map((r) => routeBaseDomain(r.domain)));
-  const existingNginxNames = await getNginxConfiguredServerNames(server);
+  const externalNginxNames = await getExternalNginxServerNames(server);
   const certificates = [];
 
   for (const name of list) {
@@ -1071,8 +1088,8 @@ async function listCertificates(serverId, userId) {
       manualDns: manualDnsNames.has(name.toLowerCase()),
       noProxyRoute: !manualDnsNames.has(name.toLowerCase())
         && !routedDomains.has(base)
-        && !existingNginxNames.has(base),
-      externalNginxVhost: !routedDomains.has(base) && existingNginxNames.has(base),
+        && !externalNginxNames.has(base),
+      externalNginxVhost: !routedDomains.has(base) && externalNginxNames.has(base),
     };
     const path = `/etc/letsencrypt/live/${name}`;
     for (const certFile of ['fullchain.pem', 'cert.pem']) {
@@ -1409,8 +1426,8 @@ async function getNginxConfig(serverId, userId) {
   const config = (r.stdout || '').trim() || null;
   const routes = await ServerProxyRoute.findAll({ where: { serverId }, order: [['domain', 'ASC']] });
   const certDomains = await getCertDomains(server);
-  const existingNginxNames = await getNginxConfiguredServerNames(server);
-  const generatedConfig = buildNginxConfig(routes, certDomains, existingNginxNames);
+  const externalNginxNames = await getExternalNginxServerNames(server);
+  const generatedConfig = buildNginxConfig(routes, certDomains, externalNginxNames);
   const customNginxConfig = (server.customNginxConfig || '').trim() || undefined;
 
   return {
