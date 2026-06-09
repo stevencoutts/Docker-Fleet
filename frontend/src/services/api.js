@@ -7,18 +7,15 @@ export const getApiUrl = () => {
     return process.env.REACT_APP_API_URL;
   }
   
-  // Otherwise, detect from current host
-  // If accessing via remote host, use the same host for API
   const host = window.location.hostname;
-  const protocol = window.location.protocol;
-  
-  // If it's localhost, use localhost:5020 (development)
+
+  // Local dev: CRA proxy or backend on 5020
   if (host === 'localhost' || host === '127.0.0.1') {
     return 'http://localhost:5020';
   }
-  
-  // Otherwise, use the same host with port 5020
-  return `${protocol}//${host}:5020`;
+
+  // Production Docker: frontend nginx proxies /api to backend on the same origin
+  return window.location.origin;
 };
 
 const api = axios.create({

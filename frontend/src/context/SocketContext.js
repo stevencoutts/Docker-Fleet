@@ -16,11 +16,10 @@ export const SocketProvider = ({ children }) => {
           return process.env.REACT_APP_API_URL;
         }
         const host = window.location.hostname;
-        const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:';
         if (host === 'localhost' || host === '127.0.0.1') {
           return 'http://localhost:5020';
         }
-        return `${protocol}//${host}:5020`;
+        return window.location.origin;
       };
 
       const newSocket = io(getSocketUrl(), {
