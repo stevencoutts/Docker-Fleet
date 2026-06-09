@@ -188,21 +188,20 @@ async function getNginxConfiguredServerNames(server) {
   }
 }
 
-/** server_name values in our dockerfleet-proxy.conf (managed by Sync — not "external"). */
-async function getDockerfleetProxyServerNames(server) {
-  const r = await exec(server, `sudo cat ${NGINX_CONF_PATH} 2>/dev/null || true`, { allowFailure: true, timeout: 10000 });
-  return parseServerNamesFromNginxConfig((r.stdout || '').trim());
-}
-
 /**
- * Host nginx vhosts outside dockerfleet-proxy.conf (e.g. sites-enabled/matrix).
- * Excludes names only present in our managed file so Sync does not drop routes on re-sync.
+ * server_name values in host nginx outside dockerfleet-proxy.conf (sites-enabled, other conf.d).
+ * Used so Sync does not overwrite mtx/matrix/couttsnet vhosts that already live on the host.
  */
 async function getExternalNginxServerNames(server) {
-  const all = await getNginxConfiguredServerNames(server);
-  const ours = await getDockerfleetProxyServerNames(server);
-  for (const name of ours) all.delete(name);
-  return all;
+  const proxyBasename = NGINX_CONF_PATH.split('/').pop();
+  const r = await exec(
+    server,
+    `for f in /etc/nginx/sites-enabled/*; do [ -f "$f" ] && cat "$f" 2>/dev/null; done; ` +
+    `for f in /etc/nginx/conf.d/*; do [ -f "$f" ] || continue; b=$(basename "$f"); ` +
+    `[ "$b" = "${proxyBasename}" ] && continue; cat "$f" 2>/dev/null; done`,
+    { allowFailure: true, timeout: 15000, logLabel: 'nginx_external_vhosts' },
+  );
+  return parseServerNamesFromNginxConfig((r.stdout || '').trim());
 }
 
 /**

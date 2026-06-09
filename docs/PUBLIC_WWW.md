@@ -120,7 +120,9 @@ Inspect the live config: `sudo nginx -T 2>/dev/null | grep -A25 'server_name mtx
 
 If Public WWW was **enabled** while nginx already had vhosts, Docker Fleet **imports routes** but leaves `sites-enabled` unchanged — **`/etc/nginx/conf.d/dockerfleet-proxy.conf` is not created until you click Sync config**.
 
-On **Sync**, only domains **not** already in **external** host nginx (`sites-enabled`, etc.) are written to `dockerfleet-proxy.conf`. Routes Docker Fleet already manages in `dockerfleet-proxy.conf` are regenerated on each sync (not treated as external). Domains only in `sites-enabled` stay there; the UI marks them as managed externally.
+On **Sync**, domains already in **sites-enabled** or other `conf.d` files (except `dockerfleet-proxy.conf`) are **not** duplicated in `dockerfleet-proxy.conf` — the host vhost keeps serving them. New routes like `sow.example.com` with no `sites-enabled` block are written to `dockerfleet-proxy.conf` on each sync.
+
+If a Docker Fleet route points at the wrong backend (e.g. apex `couttsnet.com` → Bluesky PDS), change or remove that route in the UI; Sync will not override an existing `sites-enabled` vhost for the same name.
 
 New routes with a DNS cert still need **Sync config** once so HTTPS is configured on the server.
 
