@@ -1298,9 +1298,8 @@ async function renewCertificates(serverId, userId) {
   } catch (e) {
     logger.warn('Public WWW: listCertificates during renew skipped', { host: server.host, message: e.message });
   }
-  const manualNames = await getManualDnsCertificateNames(server);
-  const manualSet = new Set(manualNames.map((n) => n.toLowerCase()));
-  const nonManual = allCertificates.filter((c) => !manualSet.has(String(c.name).toLowerCase()));
+  const manualSetNoDns = new Set(manualNames.map((n) => n.toLowerCase()));
+  const nonManual = allCertificates.filter((c) => !manualSetNoDns.has(String(c.name).toLowerCase()));
 
   const renewResult = nonManual.length > 0
     ? await renewNonManualCertbotCerts(server, nonManual)
