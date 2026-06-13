@@ -132,4 +132,16 @@ New routes with a DNS cert still need **Sync config** once so HTTPS is configure
 
 Each route maps a **domain** to a **container name** and **port** on the same host. Nginx listens on 80/443 and `proxy_pass`es to `http://127.0.0.1:<containerPort>`. The container must be listening on that port (e.g. bind to `0.0.0.0:8080`).
 
-**Static root (optional):** Set e.g. `/var/www` on a route to serve `index.html` from that path on the host. Paths **`/xrpc/`** and **`/.well-known/`** still proxy to the container — use this for an apex site plus Bluesky PDS on the same domain (`couttsnet.com` → `pds:6010` with static root `/var/www`).
+**Static root (optional):** Set e.g. `/var/www` on a route to serve `index.html` from that path on the host for `/`. Leave empty to proxy `/` to the main container port.
+
+**PDS port (optional):** Set e.g. `6010` when Bluesky/AT Protocol paths must hit a different backend than `/`. Nginx always proxies **`/xrpc/`** and **`/.well-known/`** to this port when set (otherwise they use the main container port).
+
+**Example — apex site + monitor + Bluesky PDS on one domain:**
+
+| Field | Value |
+|-------|-------|
+| Proxy | `couttsnet-monitor:3001` |
+| PDS port | `6010` |
+| Static root | `/var/www` (optional; omit to serve the monitor at `/`) |
+
+After saving, click **Sync config** on the server.

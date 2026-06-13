@@ -18,7 +18,7 @@ async function listProxyRoutes(req, res, next) {
 async function addProxyRoute(req, res, next) {
   try {
     const { id: serverId } = req.params;
-    const { domain, containerName, containerPort, customNginxBlock, staticRoot } = req.body;
+    const { domain, containerName, containerPort, customNginxBlock, staticRoot, apiProxyPort } = req.body;
 
     const server = await Server.findOne({ where: { id: serverId, userId: req.user.id } });
     if (!server) return res.status(404).json({ error: 'Server not found' });
@@ -27,6 +27,12 @@ async function addProxyRoute(req, res, next) {
     const port = parseInt(containerPort, 10);
     if (!Number.isInteger(port) || port < 1 || port > 65535) return res.status(400).json({ error: 'containerPort must be 1-65535' });
 
+    const apiPortParsed = apiProxyPort != null && apiProxyPort !== '' ? parseInt(apiProxyPort, 10) : null;
+    const apiPort =
+      apiPortParsed != null && Number.isInteger(apiPortParsed) && apiPortParsed >= 1 && apiPortParsed <= 65535
+        ? apiPortParsed
+        : null;
+
     const route = await ServerProxyRoute.create({
       serverId,
       domain: String(domain).trim(),
@@ -34,6 +40,7 @@ async function addProxyRoute(req, res, next) {
       containerPort: port,
       customNginxBlock: typeof customNginxBlock === 'string' ? customNginxBlock : null,
       staticRoot: typeof staticRoot === 'string' && staticRoot.trim() ? staticRoot.trim() : null,
+      apiProxyPort: apiPort,
     });
     res.status(201).json({ route });
   } catch (error) {
@@ -44,7 +51,7 @@ async function addProxyRoute(req, res, next) {
 async function updateProxyRoute(req, res, next) {
   try {
     const { id: serverId, routeId } = req.params;
-    const { customNginxBlock, staticRoot } = req.body ?? {};
+    const { customNginxBlock, staticRoot, apiProxyPort } = req.body ?? {};
 
     const server = await Server.findOne({ where: { id: serverId, userId: req.user.id } });
     if (!server) return res.status(404).json({ error: 'Server not found' });
@@ -58,6 +65,10 @@ async function updateProxyRoute(req, res, next) {
     }
     if (staticRoot !== undefined) {
       updates.staticRoot = typeof staticRoot === 'string' && staticRoot.trim() ? staticRoot.trim() : null;
+    }
+    if (apiProxyPort !== undefined) {
+      const p = parseInt(apiProxyPort, 10);
+      updates.apiProxyPort = Number.isInteger(p) && p >= 1 && p <= 65535 ? p : null;
     }
     await route.update(updates);
     res.json({ route });

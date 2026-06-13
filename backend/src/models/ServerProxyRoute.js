@@ -41,6 +41,11 @@ module.exports = (sequelize) => {
         allowNull: true,
         field: 'static_root',
       },
+      apiProxyPort: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+        field: 'api_proxy_port',
+      },
       createdAt: {
         type: DataTypes.DATE,
         allowNull: false,

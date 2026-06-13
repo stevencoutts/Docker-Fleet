@@ -111,30 +111,61 @@ function buildProxyLocationDirectives(port) {
         proxy_send_timeout 60s;`;
 }
 
-/** Static site at staticRoot; /xrpc/ and /.well-known/ proxy to container (e.g. Bluesky PDS). */
-function buildStaticRootRouteLocations(port, staticRoot) {
-  const proxy = buildProxyLocationDirectives(port);
+function normalizeApiProxyPort(value, fallbackPort) {
+  const n = parseInt(value, 10);
+  if (!Number.isInteger(n) || n < 1 || n > 65535) return fallbackPort;
+  return n;
+}
+
+function buildPdsApiLocationBlock(apiPort) {
+  const proxy = buildProxyLocationDirectives(apiPort);
   return `
     location ^~ /xrpc/ {
 ${proxy}
     }
     location ^~ /.well-known/ {
 ${proxy}
-    }
+    }`;
+}
+
+/** Split routing: optional static /, main proxy, and /xrpc/ + /.well-known/ on apiProxyPort. */
+function buildSplitRouteLocations(mainPort, apiPort, staticRoot) {
+  const apiBlock = buildPdsApiLocationBlock(apiPort);
+  if (staticRoot) {
+    return `${apiBlock}
     location / {
         root ${staticRoot};
         index index.html;
         try_files $uri $uri/ /index.html;
     }`;
+  }
+  return `${apiBlock}
+    location / {
+${buildProxyLocationDirectives(mainPort)}
+    }`;
+}
+
+function routeUsesSplitLocations(r, mainPort) {
+  const staticRoot = normalizeStaticRoot(r.staticRoot);
+  const apiPort = normalizeApiProxyPort(r.apiProxyPort, mainPort);
+  return Boolean(staticRoot) || apiPort !== mainPort;
 }
 
 /** Generate the default server block(s) for one route (HTTP + optional HTTPS). */
 function buildDefaultRouteBlock(r, certDomains = new Set()) {
   const domain = r.domain.trim();
-  const port = parseInt(r.containerPort, 10) || 80;
+  const mainPort = parseInt(r.containerPort, 10) || 80;
+  const apiPort = normalizeApiProxyPort(r.apiProxyPort, mainPort);
   const baseDomain = domain.replace(/^\*\./, '');
   const hasCert = [...certDomains].some((d) => routeBaseDomain(d) === routeBaseDomain(baseDomain));
   const staticRoot = normalizeStaticRoot(r.staticRoot);
+  const split = routeUsesSplitLocations(r, mainPort);
+  const httpsLocations = split
+    ? buildSplitRouteLocations(mainPort, apiPort, staticRoot)
+    : `
+    location / {
+${buildProxyLocationDirectives(mainPort)}
+    }`;
 
   let block = hasCert
     ? `
@@ -149,10 +180,7 @@ server {
     listen 80;
     listen [::]:80;
     server_name ${domain};
-${staticRoot ? buildStaticRootRouteLocations(port, staticRoot) : `
-    location / {
-${buildProxyLocationDirectives(port)}
-    }`}
+${httpsLocations}
 }`;
   if (hasCert) {
     block += `
@@ -162,10 +190,7 @@ server {
     server_name ${domain};
     ssl_certificate /etc/letsencrypt/live/${baseDomain}/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/${baseDomain}/privkey.pem;
-${staticRoot ? buildStaticRootRouteLocations(port, staticRoot) : `
-    location / {
-${buildProxyLocationDirectives(port)}
-    }`}
+${httpsLocations}
 }`;
   }
   return block;

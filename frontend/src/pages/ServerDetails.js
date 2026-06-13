@@ -58,8 +58,9 @@ const ServerDetails = () => {
   const [routeCustomNginxSaving, setRouteCustomNginxSaving] = useState(false);
   const [routeImportingNginx, setRouteImportingNginx] = useState(null); // routeId when importing
   const [containerAction, setContainerAction] = useState({}); // { [containerId]: 'start'|'stop'|'restart'|'remove' }
-  const [newRouteForm, setNewRouteForm] = useState({ domain: '', containerName: '', containerPort: '80', staticRoot: '' });
+  const [newRouteForm, setNewRouteForm] = useState({ domain: '', containerName: '', containerPort: '80', staticRoot: '', apiProxyPort: '' });
   const [routeStaticRootSaving, setRouteStaticRootSaving] = useState(null);
+  const [routeApiProxyPortSaving, setRouteApiProxyPortSaving] = useState(null);
   const [dnsCertChallenge, setDnsCertChallenge] = useState(null);
   const [dnsCertLoading, setDnsCertLoading] = useState(false);
   const [dnsCertPanelOpen, setDnsCertPanelOpen] = useState(false);
@@ -1906,9 +1907,43 @@ const ServerDetails = () => {
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="text-gray-500 dark:text-gray-400 shrink-0">Proxy</span>
                           <span className="font-mono text-gray-800 dark:text-gray-200">{r.containerName}:{r.containerPort}</span>
+                          {r.apiProxyPort ? (
+                            <span className="text-xs text-gray-500 dark:text-gray-400">(PDS /xrpc on :{r.apiProxyPort})</span>
+                          ) : null}
                           {r.staticRoot ? (
                             <span className="text-xs text-gray-500 dark:text-gray-400">(+ static {r.staticRoot})</span>
                           ) : null}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-gray-500 dark:text-gray-400 shrink-0">PDS port</span>
+                          <input
+                            type="number"
+                            min={1}
+                            max={65535}
+                            defaultValue={r.apiProxyPort || ''}
+                            key={`api-proxy-port-${r.id}-${r.apiProxyPort || ''}`}
+                            placeholder="6010 (optional)"
+                            disabled={routeApiProxyPortSaving === r.id}
+                            className="w-28 text-sm font-mono border border-gray-300 dark:border-gray-600 rounded px-2 py-1 bg-white dark:bg-gray-800"
+                            onBlur={async (e) => {
+                              const raw = e.target.value.trim();
+                              const next = raw === '' ? null : parseInt(raw, 10);
+                              const prev = r.apiProxyPort ?? null;
+                              if (next === prev || (raw !== '' && (!Number.isInteger(next) || next < 1 || next > 65535))) return;
+                              setRouteApiProxyPortSaving(r.id);
+                              try {
+                                await publicWwwService.updateProxyRoute(serverId, r.id, { apiProxyPort: next });
+                                await fetchProxyRoutes();
+                              } catch (err) {
+                                alert(err.response?.data?.error || err.message || 'Save failed');
+                              } finally {
+                                setRouteApiProxyPortSaving(null);
+                              }
+                            }}
+                          />
+                          <span className="text-xs text-gray-500 dark:text-gray-400">
+                            /xrpc/ and /.well-known/ proxy here (e.g. Bluesky PDS on 6010)
+                          </span>
                         </div>
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="text-gray-500 dark:text-gray-400 shrink-0">Static root</span>
@@ -1935,7 +1970,7 @@ const ServerDetails = () => {
                             }}
                           />
                           <span className="text-xs text-gray-500 dark:text-gray-400">
-                            Serves index.html; /xrpc/ and /.well-known/ still proxy to container
+                            Serves index.html at /; leave empty to proxy / to the container above
                           </span>
                         </div>
                         <div className="flex flex-wrap items-center gap-2">
@@ -2200,6 +2235,15 @@ const ServerDetails = () => {
                     className="rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 px-2 py-1.5 text-sm w-20"
                   />
                   <input
+                    type="number"
+                    min={1}
+                    max={65535}
+                    placeholder="PDS port"
+                    value={newRouteForm.apiProxyPort}
+                    onChange={(e) => setNewRouteForm((f) => ({ ...f, apiProxyPort: e.target.value }))}
+                    className="rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 px-2 py-1.5 text-sm w-24"
+                  />
+                  <input
                     type="text"
                     placeholder="Static root (optional)"
                     value={newRouteForm.staticRoot}
@@ -2221,8 +2265,9 @@ const ServerDetails = () => {
                         containerName: newRouteForm.containerName.trim(),
                         containerPort: parseInt(newRouteForm.containerPort, 10) || 80,
                         staticRoot: newRouteForm.staticRoot.trim() || undefined,
+                        apiProxyPort: newRouteForm.apiProxyPort.trim() ? parseInt(newRouteForm.apiProxyPort, 10) : undefined,
                       });
-                      setNewRouteForm({ domain: '', containerName: '', containerPort: '80', staticRoot: '' });
+                      setNewRouteForm({ domain: '', containerName: '', containerPort: '80', staticRoot: '', apiProxyPort: '' });
                       await fetchProxyRoutes();
                     } catch (e) {
                       alert(e.response?.data?.error || 'Add failed');
