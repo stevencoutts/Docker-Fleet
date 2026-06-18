@@ -1,12 +1,15 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { stacksService } from '../services/stacks.service';
 import StackEditor from '../components/StackEditor';
+import StackImportModal from '../components/StackImportModal';
 
 export default function Stacks() {
   const [stacks, setStacks] = useState([]);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(null);
   const [editing, setEditing] = useState(undefined);
+  const [importServer, setImportServer] = useState(null);
+  const [importServerId, setImportServerId] = useState('');
 
   const load = useCallback(async () => {
     try {
@@ -31,12 +34,33 @@ export default function Stacks() {
     <div className="p-4">
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-2xl font-bold">Stacks</h1>
-        <button
-          onClick={() => setEditing(null)}
-          className="px-3 py-1.5 text-sm font-medium text-white bg-primary-600 dark:bg-primary-500 rounded-lg hover:bg-primary-700 dark:hover:bg-primary-600 transition-colors"
-        >
-          New stack
-        </button>
+        <div className="flex items-center gap-2">
+          <form
+            onSubmit={(e) => { e.preventDefault(); if (importServerId.trim()) setImportServer(importServerId.trim()); }}
+            className="flex items-center gap-2"
+          >
+            <input
+              type="text"
+              value={importServerId}
+              onChange={(e) => setImportServerId(e.target.value)}
+              placeholder="Server ID to import from"
+              className="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-primary-500 w-48"
+            />
+            <button
+              type="submit"
+              disabled={!importServerId.trim()}
+              className="px-3 py-1.5 text-sm font-medium text-white bg-gray-600 dark:bg-gray-500 rounded-lg hover:bg-gray-700 dark:hover:bg-gray-600 transition-colors disabled:opacity-50"
+            >
+              Import from server
+            </button>
+          </form>
+          <button
+            onClick={() => setEditing(null)}
+            className="px-3 py-1.5 text-sm font-medium text-white bg-primary-600 dark:bg-primary-500 rounded-lg hover:bg-primary-700 dark:hover:bg-primary-600 transition-colors"
+          >
+            New stack
+          </button>
+        </div>
       </div>
       {error && <div className="bg-red-100 text-red-800 p-2 rounded mb-3">{error}</div>}
       <table className="w-full text-left">
@@ -70,6 +94,13 @@ export default function Stacks() {
           stack={editing}
           onClose={() => setEditing(undefined)}
           onSaved={() => { setEditing(undefined); load(); }}
+        />
+      )}
+      {importServer && (
+        <StackImportModal
+          serverId={importServer}
+          onClose={() => setImportServer(null)}
+          onImported={() => { setImportServer(null); setImportServerId(''); load(); }}
         />
       )}
     </div>

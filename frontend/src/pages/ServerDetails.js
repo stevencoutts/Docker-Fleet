@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { serversService, tailscaleEnableWithProgress } from '../services/servers.service';
+import { stacksService } from '../services/stacks.service';
 import { containersService } from '../services/containers.service';
 import { systemService } from '../services/system.service';
 import { publicWwwService } from '../services/publicWww.service';
@@ -2799,7 +2800,7 @@ const ServerDetails = () => {
               </button>
             </div>
             <p className="text-sm text-gray-600 dark:text-gray-400 mb-3 shrink-0">
-              Paste your docker-compose.yml below. The stack will be deployed on this host with <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">docker compose -f - up -d</code>.
+              Paste your docker-compose.yml below. A new managed stack will be created and deployed on this host.
             </p>
             {composeError && (
               <div className="mb-3 rounded-md bg-red-50 dark:bg-red-900/20 p-3 text-sm text-red-800 dark:text-red-200 shrink-0">
@@ -2819,7 +2820,7 @@ const ServerDetails = () => {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Project name (optional)</label>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Stack name *</label>
                 <input
                   type="text"
                   value={composeProjectName}
@@ -2872,32 +2873,30 @@ const ServerDetails = () => {
                     type="button"
                     onClick={async () => {
                       const yaml = composeYaml.trim();
+                      const name = composeProjectName.trim();
                       if (!yaml) {
                         setComposeError('Paste your docker-compose.yml content above.');
+                        return;
+                      }
+                      if (!name) {
+                        setComposeError('Stack name is required.');
                         return;
                       }
                       setComposeError('');
                       setComposeResult(null);
                       setComposeLoading(true);
-                      setComposeResult({ stdout: 'Connecting and running docker compose…\n\nPulling images and starting containers may take several minutes.', stderr: '' });
+                      setComposeResult({ stdout: 'Creating stack and deploying…\n\nPulling images and starting containers may take several minutes.', stderr: '' });
                       try {
-                        const res = await serversService.composeUp(serverId, {
+                        const createRes = await stacksService.create({
+                          serverId,
+                          name,
                           composeYaml: yaml,
-                          projectName: composeProjectName.trim() || undefined,
+                          env: [],
                         });
-                        const out = (res.data.stdout || '') + '\n' + (res.data.stderr || '');
-                        const looksStarted = /Container\s+\S+\s+Started/i.test(out);
-                        const success = res.data.success === true || looksStarted;
-                        setComposeResult({
-                          success,
-                          stdout: res.data.stdout || '',
-                          stderr: res.data.stderr || '',
-                        });
-                        if (success) {
-                          fetchData(false);
-                        } else {
-                          setComposeError(res.data.stderr || res.data.stdout || 'Compose up failed.');
-                        }
+                        const stackId = createRes.data.id;
+                        await stacksService.deploy(stackId);
+                        setComposeResult({ success: true, stdout: `Stack "${name}" created and deployed successfully.`, stderr: '' });
+                        fetchData(false);
                       } catch (err) {
                         setComposeError(err.response?.data?.error || err.message || 'Deploy failed');
                         setComposeResult(null);
