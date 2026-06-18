@@ -114,6 +114,28 @@ function escapeSingleQuoted(arg) {
   return "'" + String(arg).replace(/'/g, "'\\''") + "'";
 }
 
+// Compose project name: alphanumeric start, then [a-zA-Z0-9_.-], max 64 chars
+const COMPOSE_PROJECT_NAME_REGEX = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/;
+const STACK_DEPLOY_BASE = '/opt/dockerfleet/stacks';
+
+function validateComposeProjectName(name) {
+  if (typeof name !== 'string' || !name.trim()) throwInvalid('Stack name is required', name);
+  const trimmed = name.trim();
+  if (!COMPOSE_PROJECT_NAME_REGEX.test(trimmed)) {
+    throwInvalid('Invalid stack name: letters, numbers, hyphen, underscore, period; max 64 chars', name);
+  }
+  return trimmed;
+}
+
+function validateStackDeployPath(p) {
+  if (typeof p !== 'string' || !p.trim()) throwInvalid('Deploy path is required', p);
+  const trimmed = p.trim();
+  if (trimmed.includes('..') || !trimmed.startsWith(STACK_DEPLOY_BASE + '/')) {
+    throwInvalid('Invalid deploy path: must be under ' + STACK_DEPLOY_BASE, p);
+  }
+  return trimmed;
+}
+
 module.exports = {
   validateContainerId,
   validateImageId,
@@ -124,6 +146,10 @@ module.exports = {
   validateContainerName,
   validateExportPath,
   escapeSingleQuoted,
+  validateComposeProjectName,
+  validateStackDeployPath,
+  STACK_DEPLOY_BASE,
+  COMPOSE_PROJECT_NAME_REGEX,
   DOCKER_ID_REGEX,
   IMAGE_NAME_REGEX,
   TAG_REGEX,
