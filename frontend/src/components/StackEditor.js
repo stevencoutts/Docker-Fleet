@@ -1,27 +1,31 @@
 import React, { useState } from 'react';
 import { stacksService } from '../services/stacks.service';
 
+let _uidCounter = 0;
+const nextUid = () => ++_uidCounter;
+
 export default function StackEditor({ stack, onClose, onSaved }) {
   const isEdit = !!stack;
   const [name, setName] = useState(stack?.name || '');
   const [serverId, setServerId] = useState(stack?.serverId || '');
   const [composeYaml, setComposeYaml] = useState(stack?.composeYaml || '');
-  const [env, setEnv] = useState(stack?.env || []);
+  const [env, setEnv] = useState(() => (stack?.env || []).map((e) => ({ ...e, _uid: nextUid() })));
   const [error, setError] = useState(null);
   const [saving, setSaving] = useState(false);
 
   const setRow = (i, patch) => setEnv((rows) => rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
-  const addRow = () => setEnv((rows) => [...rows, { key: '', value: '', isSecret: false }]);
+  const addRow = () => setEnv((rows) => [...rows, { key: '', value: '', isSecret: false, _uid: nextUid() }]);
   const delRow = (i) => setEnv((rows) => rows.filter((_, idx) => idx !== i));
 
   const save = async () => {
     setSaving(true);
     setError(null);
+    const envPayload = env.map(({ key, value, isSecret }) => ({ key, value, isSecret }));
     try {
       if (isEdit) {
-        await stacksService.update(stack.id, { composeYaml, env });
+        await stacksService.update(stack.id, { composeYaml, env: envPayload });
       } else {
-        await stacksService.create({ serverId, name, composeYaml, env });
+        await stacksService.create({ serverId, name, composeYaml, env: envPayload });
       }
       onSaved();
     } catch (e) {
@@ -112,7 +116,7 @@ export default function StackEditor({ stack, onClose, onSaved }) {
             {env.length > 0 && (
               <div className="space-y-2">
                 {env.map((r, i) => (
-                  <div key={i} className="flex gap-2 items-center">
+                  <div key={r._uid} className="flex gap-2 items-center">
                     <input
                       type="text"
                       className="flex-1 px-2 py-1.5 text-sm font-mono border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-primary-500 focus:border-primary-500"

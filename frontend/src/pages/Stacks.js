@@ -54,7 +54,7 @@ export default function Stacks() {
               <td className="p-2">{s.lastDeployStatus || '—'}</td>
               <td className="p-2">{s.lastDeployedAt ? new Date(s.lastDeployedAt).toLocaleString() : '—'}</td>
               <td className="p-2 space-x-2">
-                <button disabled={busy === s.id} onClick={async () => setEditing((await stacksService.get(s.id)).data)} className="text-gray-600 dark:text-gray-400">Edit</button>
+                <button disabled={busy === s.id} onClick={async () => { try { const { data } = await stacksService.get(s.id); setEditing(data); } catch (e) { setError(e.response?.data?.error || e.message); } }} className="text-gray-600 dark:text-gray-400">Edit</button>
                 <button disabled={busy === s.id} onClick={() => act(s.id, () => stacksService.deploy(s.id, false))} className="text-blue-600">Deploy</button>
                 <button disabled={busy === s.id} onClick={() => act(s.id, () => stacksService.deploy(s.id, true))} className="text-blue-600">Pull+Deploy</button>
                 <button disabled={busy === s.id} onClick={() => act(s.id, () => stacksService.restart(s.id))} className="text-amber-600">Restart</button>
@@ -62,7 +62,7 @@ export default function Stacks() {
               </td>
             </tr>
           ))}
-          {!stacks.length && <tr><td className="p-2" colSpan={6}>No managed stacks yet.</td></tr>}
+          {!stacks.length && <tr><td className="p-2" colSpan={5}>No managed stacks yet.</td></tr>}
         </tbody>
       </table>
       {editing !== undefined && (
