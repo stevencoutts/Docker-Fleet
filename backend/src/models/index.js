@@ -50,6 +50,8 @@ db.ServerProxyRoute = require('./ServerProxyRoute')(sequelize, Sequelize);
 db.AppSettings = require('./AppSettings')(sequelize, Sequelize);
 db.UpdateOverviewCache = require('./UpdateOverviewCache')(sequelize, Sequelize);
 db.ServerCertificateCache = require('./ServerCertificateCache')(sequelize, Sequelize);
+db.Stack = require('./Stack')(sequelize, Sequelize);
+db.StackEnvVar = require('./StackEnvVar')(sequelize, Sequelize);
 
 // Associations
 db.Server.belongsTo(db.User, { foreignKey: 'userId', as: 'user' });
@@ -76,6 +78,10 @@ db.Server.hasMany(db.ServerProxyRoute, { foreignKey: 'serverId', as: 'proxyRoute
 db.ServerProxyRoute.belongsTo(db.Server, { foreignKey: 'serverId', as: 'server' });
 db.Server.hasOne(db.ServerCertificateCache, { foreignKey: 'serverId', as: 'certificateCache' });
 db.ServerCertificateCache.belongsTo(db.Server, { foreignKey: 'serverId', as: 'server' });
+db.Server.hasMany(db.Stack, { foreignKey: 'serverId', as: 'stacks' });
+db.Stack.belongsTo(db.Server, { foreignKey: 'serverId', as: 'server' });
+db.Stack.hasMany(db.StackEnvVar, { foreignKey: 'stackId', as: 'envVars' });
+db.StackEnvVar.belongsTo(db.Stack, { foreignKey: 'stackId', as: 'stack' });
 db.UpdateOverviewCache.belongsTo(db.User, { foreignKey: 'userId', as: 'user' });
 db.User.hasOne(db.UpdateOverviewCache, { foreignKey: 'userId', as: 'updateOverviewCache' });
 
