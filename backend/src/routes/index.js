@@ -12,6 +12,7 @@ const backupSchedulesRoutes = require('../modules/backup-schedules/backup-schedu
 const backupRoutes = require('../modules/backup/backup.routes');
 const appConfigRoutes = require('../modules/app-config/app-config.routes');
 const updateOverviewRoutes = require('../modules/update-overview/update-overview.routes');
+const stacksRoutes = require('../modules/stacks/stacks.routes');
 
 // Public: only auth routes (setup, login, register, refresh); /auth/me uses authenticate in its own route
 router.use('/auth', authRoutes);
@@ -25,6 +26,7 @@ router.use('/backup-schedules', backupSchedulesRoutes);
 router.use('/servers', serversRoutes);
 router.use('/servers', containersRoutes);
 router.use('/servers', imagesRoutes);
+router.use('/stacks', stacksRoutes);
 router.use('/users', usersRoutes);
 router.use('/monitoring', monitoringRoutes);
 router.use('/grouping', groupingRoutes);
