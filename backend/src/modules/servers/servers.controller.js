@@ -531,66 +531,6 @@ const updateServerValidation = [
   body('tailscaleAcceptRoutes').optional().isBoolean().withMessage('tailscaleAcceptRoutes must be a boolean'),
 ];
 
-/** Safe project name for docker compose -p: alphanumeric, hyphen, underscore only, max 64 chars */
-const COMPOSE_PROJECT_NAME_REGEX = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/;
-
-const composeUp = async (req, res, next) => {
-  try {
-    const { id: serverId } = req.params;
-    const { composeYaml, projectName } = req.body;
-
-    const yaml = typeof composeYaml === 'string' ? composeYaml.trim() : '';
-    if (!yaml) {
-      return res.status(400).json({ error: 'composeYaml is required and must be a non-empty string' });
-    }
-
-    let safeProject = null;
-    if (projectName != null && String(projectName).trim() !== '') {
-      const name = String(projectName).trim();
-      if (!COMPOSE_PROJECT_NAME_REGEX.test(name)) {
-        return res.status(400).json({
-          error: 'projectName may only contain letters, numbers, hyphen, underscore, period; max 64 characters',
-        });
-      }
-      safeProject = name;
-    }
-
-    const server = await Server.findOne({
-      where: { id: serverId, userId: req.user.id },
-    });
-    if (!server) {
-      return res.status(404).json({ error: 'Server not found' });
-    }
-
-    const projectFlag = safeProject
-      ? `-p '${String(safeProject).replace(/'/g, "'\\''")}'`
-      : '';
-    // Use API 1.41 so older daemons (max 1.41) work; newer daemons accept older client versions
-    const command = `DOCKER_API_VERSION=1.41 docker compose ${projectFlag} -f - up -d`.replace(/\s+/g, ' ').trim();
-    const stdinData = Buffer.from(yaml, 'utf8');
-
-    const result = await sshService.executeCommandWithStdin(server, command, stdinData, {
-      timeout: 300000,
-      allowFailure: true,
-    });
-
-    const stdout = result.stdout || '';
-    const stderr = result.stderr || '';
-    const out = stdout + '\n' + stderr;
-    // Consider success if exit code 0 or if output shows container(s) started (some compose versions exit non-zero despite success)
-    const success = result.code === 0 || /Container\s+\S+\s+Started/i.test(out);
-
-    res.json({
-      success,
-      code: result.code,
-      stdout,
-      stderr,
-    });
-  } catch (error) {
-    logger.error('Compose up failed:', error);
-    next(error);
-  }
-};
 
 module.exports = {
   getAllServers,
@@ -604,7 +544,6 @@ module.exports = {
   tailscaleDisable,
   clearTailscaleStoredKey,
   tailscaleStatus,
-  composeUp,
   serverValidation: createServerValidation, // Keep for backward compatibility
   createServerValidation,
   updateServerValidation,

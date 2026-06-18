@@ -12,7 +12,6 @@ const {
   tailscaleDisable,
   clearTailscaleStoredKey,
   tailscaleStatus,
-  composeUp,
   createServerValidation,
   updateServerValidation,
 } = require('./servers.controller');
@@ -68,7 +67,6 @@ router.put('/:id', updateServerValidation, validate, updateServer);
 router.delete('/:id', deleteServer);
 router.post('/:id/test', testConnection);
 router.post('/:id/provision-dockerfleet', provisionDockerfleet);
-router.post('/:id/compose/up', composeUp);
 router.get('/:id/stacks/discover', stacksController.discover);
 router.post('/:id/stacks/import', stacksController.importStacks);
 
