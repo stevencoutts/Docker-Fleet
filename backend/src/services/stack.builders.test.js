@@ -19,6 +19,14 @@ test('buildComposeCommand up with pull runs pull first', () => {
   assert.match(cmd, /compose -p 'm' --env-file .env -f compose.yaml pull && /);
 });
 
+test('buildComposeCommand with pull applies DOCKER_API_VERSION to all subcommands', () => {
+  const cmd = buildComposeCommand({ name: 'm', deployPath: '/opt/dockerfleet/stacks/m', action: 'up', pull: true });
+  assert.match(cmd, /export DOCKER_API_VERSION=1\.41/);
+  // Verify it's only exported once at the beginning
+  const matches = cmd.match(/export DOCKER_API_VERSION=1\.41/g);
+  assert.strictEqual(matches.length, 1, 'DOCKER_API_VERSION should be exported exactly once');
+});
+
 test('buildComposeCommand down', () => {
   const cmd = buildComposeCommand({ name: 'm', deployPath: '/opt/dockerfleet/stacks/m', action: 'down' });
   assert.match(cmd, /down/);
@@ -34,6 +42,23 @@ test('buildWriteFileCommand round-trips content via base64', () => {
   const b64 = Buffer.from(content, 'utf8').toString('base64');
   assert.match(cmd, new RegExp(b64.replace(/[+/]/g, '\\$&')));
   assert.match(cmd, /base64 -d > '\/opt\/dockerfleet\/stacks\/x\/compose\.yaml'/);
+});
+
+test('buildWriteFileCommand rejects filename with path traversal', () => {
+  assert.throws(() => buildWriteFileCommand('/opt/dockerfleet/stacks/x', '../evil', 'content'), (err) => err.code === 'INVALID_INPUT');
+});
+
+test('buildWriteFileCommand rejects filename with slashes', () => {
+  assert.throws(() => buildWriteFileCommand('/opt/dockerfleet/stacks/x', 'a/b', 'content'), (err) => err.code === 'INVALID_INPUT');
+});
+
+test('buildWriteFileCommand rejects .. as filename', () => {
+  assert.throws(() => buildWriteFileCommand('/opt/dockerfleet/stacks/x', '..', 'content'), (err) => err.code === 'INVALID_INPUT');
+});
+
+test('buildWriteFileCommand accepts compose.yaml and .env', () => {
+  assert.doesNotThrow(() => buildWriteFileCommand('/opt/dockerfleet/stacks/x', 'compose.yaml', 'content'));
+  assert.doesNotThrow(() => buildWriteFileCommand('/opt/dockerfleet/stacks/x', '.env', 'content'));
 });
 
 test('parseComposeLs parses docker compose ls JSON', () => {

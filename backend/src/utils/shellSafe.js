@@ -137,6 +137,7 @@ function validateStackDeployPath(p) {
 }
 
 module.exports = {
+  throwInvalid,
   validateContainerId,
   validateImageId,
   validateShell,
