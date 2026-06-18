@@ -56,8 +56,8 @@ The **Discover** endpoint lists existing docker-compose projects on a host using
 
 ### Discovery & Import
 
-- `POST /api/v1/servers/:id/stacks/discover` — List compose projects on a host
-- `POST /api/v1/servers/:id/stacks/import` — Import a compose project (`{ projectName }`)
+- `GET /api/v1/servers/:id/stacks/discover` — List compose projects on a host
+- `POST /api/v1/servers/:id/stacks/import` — Import a compose project (`{ projects: [{ name, configFiles }] }`)
 
 ## Example Workflow
 
@@ -81,11 +81,11 @@ The **Discover** endpoint lists existing docker-compose projects on a host using
 
 3. **Discover and import an existing stack** from another host:
    ```bash
-   POST /api/v1/servers/:id/stacks/discover
-   # Returns [{ "projectName": "legacy-app", ... }]
+   GET /api/v1/servers/:id/stacks/discover
+   # Returns [{ "name": "legacy-app", "configFiles": [...], "managed": false, ... }]
    
    POST /api/v1/servers/:id/stacks/import
-   { "projectName": "legacy-app" }
+   { "projects": [{ "name": "legacy-app", "configFiles": ["/path/to/compose.yaml"] }] }
    ```
 
 4. **View logs** via the container dashboard (all containers in the stack appear as normal containers).

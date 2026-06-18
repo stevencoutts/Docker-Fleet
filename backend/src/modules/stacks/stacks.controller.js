@@ -1,5 +1,6 @@
 const { Op } = require('sequelize');
 const db = require('../../models');
+const { sequelize } = db;
 const logger = require('../../config/logger');
 const stackService = require('../../services/stack.service');
 const { storeValue, maskRows, flagSecret } = require('../../utils/stackEnv');
@@ -83,22 +84,24 @@ const updateStack = async (req, res, next) => {
     const stack = await findUserStack(req, req.params.id);
     if (!stack) return res.status(404).json({ error: 'Stack not found' });
     const { composeYaml, env } = req.body;
-    if (typeof composeYaml === 'string' && composeYaml.trim()) stack.composeYaml = composeYaml;
-    await stack.save();
-    if (Array.isArray(env)) {
-      // Blank secret value = keep existing
-      const existing = await StackEnvVar.findAll({ where: { stackId: stack.id } });
-      const byKey = Object.fromEntries(existing.map((e) => [e.key, e]));
-      const merged = env.map((e) => {
-        if (e.isSecret && (e.value === null || e.value === undefined || e.value === '') && byKey[e.key]) {
-          return { key: e.key, isSecret: true, value: byKey[e.key].value, _stored: true };
-        }
-        return { key: e.key, isSecret: !!e.isSecret, value: e.value ?? '', _stored: false };
-      });
-      await StackEnvVar.destroy({ where: { stackId: stack.id } });
-      const rows = merged.map((m) => ({ stackId: stack.id, key: m.key, isSecret: m.isSecret, value: m._stored ? m.value : storeValue(m.value, m.isSecret) }));
-      if (rows.length) await StackEnvVar.bulkCreate(rows);
-    }
+    await sequelize.transaction(async (t) => {
+      if (typeof composeYaml === 'string' && composeYaml.trim()) stack.composeYaml = composeYaml;
+      await stack.save({ transaction: t });
+      if (Array.isArray(env)) {
+        // Blank secret value = keep existing
+        const existing = await StackEnvVar.findAll({ where: { stackId: stack.id }, transaction: t });
+        const byKey = Object.fromEntries(existing.map((e) => [e.key, e]));
+        const merged = env.map((e) => {
+          if (e.isSecret && (e.value === null || e.value === undefined || e.value === '') && byKey[e.key]) {
+            return { key: e.key, isSecret: true, value: byKey[e.key].value, _stored: true };
+          }
+          return { key: e.key, isSecret: !!e.isSecret, value: e.value ?? '', _stored: false };
+        });
+        await StackEnvVar.destroy({ where: { stackId: stack.id }, transaction: t });
+        const rows = merged.map((m) => ({ stackId: stack.id, key: m.key, isSecret: m.isSecret, value: m._stored ? m.value : storeValue(m.value, m.isSecret) }));
+        if (rows.length) await StackEnvVar.bulkCreate(rows, { transaction: t });
+      }
+    });
     const full = await findUserStack(req, stack.id);
     res.json(serializeStack(full));
   } catch (e) { if (e.code === 'INVALID_INPUT') return res.status(400).json({ error: e.message }); next(e); }
@@ -156,20 +159,33 @@ const importStacks = async (req, res, next) => {
     if (!server) return res.status(404).json({ error: 'Server not found' });
     const { projects } = req.body; // [{ name, configFiles: [...] }]
     if (!Array.isArray(projects) || !projects.length) return res.status(400).json({ error: 'projects[] required' });
+
+    // Re-derive allowed file paths from a server-side discover to prevent arbitrary file disclosure
+    const discovered = await stackService.discover(server);
+    const discoveredMap = Object.fromEntries(discovered.map((d) => [d.name, d]));
+
     const results = [];
     for (const p of projects) {
       try {
+        // Reject projects not found in the server-side discover
+        const discoveredEntry = discoveredMap[p.name];
+        if (!discoveredEntry) {
+          results.push({ name: p.name, imported: false, error: 'Project not found on host' });
+          continue;
+        }
         const safeName = validateComposeProjectName(p.name);
-        const files = await stackService.readRemoteFiles(server, p.configFiles || []);
-        const composeYaml = (p.configFiles || []).map((f) => files[f]).filter(Boolean).join('\n---\n');
+        // Use server-discovered configFiles, not client-supplied ones
+        const allowedConfigFiles = discoveredEntry.configFiles || [];
+        const files = await stackService.readRemoteFiles(server, allowedConfigFiles);
+        const composeYaml = allowedConfigFiles.map((f) => files[f]).filter(Boolean).join('\n---\n');
         if (!composeYaml) throw new Error('No readable compose file');
         const deployPath = validateStackDeployPath(`${STACK_DEPLOY_BASE}/${safeName}`);
         const [stack] = await Stack.findOrCreate({
           where: { serverId: server.id, name: safeName },
           defaults: { serverId: server.id, name: safeName, composeYaml, deployPath, source: 'imported' },
         });
-        // env: read .env next to first config file if present
-        const firstDir = (p.configFiles && p.configFiles[0]) ? p.configFiles[0].replace(/\/[^/]+$/, '') : null;
+        // env: read .env next to first discovered config file if present
+        const firstDir = allowedConfigFiles[0] ? allowedConfigFiles[0].replace(/\/[^/]+$/, '') : null;
         if (firstDir) {
           const envFiles = await stackService.readRemoteFiles(server, [`${firstDir}/.env`]);
           const envText = envFiles[`${firstDir}/.env`];

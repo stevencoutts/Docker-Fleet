@@ -33,7 +33,7 @@ const {
   getImportNginxBlock,
   updateCustomNginxConfig,
 } = require('./public-www.controller');
-const { authenticate } = require('../../middleware/auth.middleware');
+const { authenticate, authorize } = require('../../middleware/auth.middleware');
 const { validate } = require('../../middleware/validation.middleware');
 const stacksController = require('../stacks/stacks.controller');
 
@@ -67,7 +67,7 @@ router.put('/:id', updateServerValidation, validate, updateServer);
 router.delete('/:id', deleteServer);
 router.post('/:id/test', testConnection);
 router.post('/:id/provision-dockerfleet', provisionDockerfleet);
-router.get('/:id/stacks/discover', stacksController.discover);
-router.post('/:id/stacks/import', stacksController.importStacks);
+router.get('/:id/stacks/discover', authorize('admin'), stacksController.discover);
+router.post('/:id/stacks/import', authorize('admin'), stacksController.importStacks);
 
 module.exports = router;
