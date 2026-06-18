@@ -38,6 +38,9 @@ A production-ready full-stack web application for managing Docker containers acr
 - Pull images from registries
 - Remove images
 
+### Stacks (Docker Compose Management)
+- Centralized compose-stack management — store compose YAML + encrypted env in DockerFleet, deploy to hosts, import existing compose projects. See [docs/STACKS.md](docs/STACKS.md).
+
 ### Security
 - JWT-based authentication
 - Role-based access control (admin/user)

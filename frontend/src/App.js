@@ -13,6 +13,7 @@ import AddServer from './pages/AddServer';
 import ServerDetails from './pages/ServerDetails';
 import ContainerDetails from './pages/ContainerDetails';
 import Images from './pages/Images';
+import Stacks from './pages/Stacks';
 import Users from './pages/Users';
 import Profile from './pages/Profile';
 import MonitoringSettings from './pages/MonitoringSettings';
@@ -44,6 +45,7 @@ function App() {
               <Route path="servers/:serverId" element={<ServerDetails />} />
               <Route path="servers/:serverId/containers/:containerId" element={<ContainerDetails />} />
               <Route path="servers/:serverId/images" element={<Images />} />
+              <Route path="stacks" element={<Stacks />} />
               <Route
                 path="admin/users"
                 element={
