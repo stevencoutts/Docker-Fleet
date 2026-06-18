@@ -1,3 +1,4 @@
+const { Op } = require('sequelize');
 const db = require('../../models');
 const logger = require('../../config/logger');
 const stackService = require('../../services/stack.service');
@@ -40,12 +41,17 @@ async function replaceEnv(stackId, envInput) {
 
 const listStacks = async (req, res, next) => {
   try {
-    const where = {};
-    if (req.query.serverId) where.serverId = req.query.serverId;
     const servers = await Server.findAll({ where: { userId: req.user.id }, attributes: ['id'] });
-    const allowed = new Set(servers.map((s) => s.id));
+    const allowedIds = servers.map((s) => s.id);
+    const where = {};
+    if (req.query.serverId) {
+      if (!allowedIds.includes(req.query.serverId)) return res.json([]);
+      where.serverId = req.query.serverId;
+    } else {
+      where.serverId = { [Op.in]: allowedIds };
+    }
     const stacks = await Stack.findAll({ where, include: [{ model: StackEnvVar, as: 'envVars' }] });
-    res.json(stacks.filter((s) => allowed.has(s.serverId)).map(serializeStack));
+    res.json(stacks.map(serializeStack));
   } catch (e) { next(e); }
 };
 
@@ -123,7 +129,7 @@ const deployStack = async (req, res, next) => {
   } catch (e) { next(e); }
 };
 
-const lifecycleHandler = (action, statusOnSuccess) => async (req, res, next) => {
+const lifecycleHandler = (action) => async (req, res, next) => {
   try {
     const stack = await findUserStack(req, req.params.id);
     if (!stack) return res.status(404).json({ error: 'Stack not found' });
