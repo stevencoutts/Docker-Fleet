@@ -59,6 +59,7 @@ const Layout = () => {
 
   const allNavItems = [
     { name: 'Dashboard', path: '/' },
+    { name: 'Stacks', path: '/stacks' },
     ...backupItems,
     ...settingsItems,
   ];
@@ -154,6 +155,7 @@ const Layout = () => {
               </div>
               <div className="hidden sm:flex items-center flex-1 min-w-0 overflow-x-auto overflow-y-visible scrollbar-hide border-l border-gray-200 dark:border-gray-600 pl-4 lg:pl-6 pr-4 gap-2 sm:gap-4">
                 <Link to="/" className={navLinkClass('/')}>Dashboard</Link>
+                <Link to="/stacks" className={navLinkClass('/stacks')}>Stacks</Link>
                 <Dropdown
                   label="Backup"
                   items={backupItems}
