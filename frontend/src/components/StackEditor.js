@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { stacksService } from '../services/stacks.service';
+import ServerPicker from './ServerPicker';
 
 let _uidCounter = 0;
 const nextUid = () => ++_uidCounter;
@@ -77,15 +78,9 @@ export default function StackEditor({ stack, onClose, onSaved }) {
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Server ID
+                  Server
                 </label>
-                <input
-                  type="text"
-                  className="block w-full px-2 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md shadow-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-primary-500 focus:border-primary-500"
-                  value={serverId}
-                  onChange={(e) => setServerId(e.target.value)}
-                  placeholder="server uuid"
-                />
+                <ServerPicker value={serverId} onChange={setServerId} className="block w-full" />
               </div>
             </div>
           )}

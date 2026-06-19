@@ -1,10 +1,13 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { stacksService } from '../services/stacks.service';
+import { serversService } from '../services/servers.service';
 import StackEditor from '../components/StackEditor';
 import StackImportModal from '../components/StackImportModal';
+import ServerPicker from '../components/ServerPicker';
 
 export default function Stacks() {
   const [stacks, setStacks] = useState([]);
+  const [servers, setServers] = useState([]);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(null);
   const [editing, setEditing] = useState(undefined);
@@ -21,6 +24,14 @@ export default function Stacks() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    serversService.getAll().then(({ data }) => setServers(data.servers || [])).catch(() => {});
+  }, []);
+
+  const serverLabel = (id) => {
+    const s = servers.find((x) => x.id === id);
+    return s ? `${s.name} (${s.host})` : id;
+  };
 
   const act = async (id, fn) => {
     setBusy(id);
@@ -36,19 +47,13 @@ export default function Stacks() {
         <h1 className="text-2xl font-bold">Stacks</h1>
         <div className="flex items-center gap-2">
           <form
-            onSubmit={(e) => { e.preventDefault(); if (importServerId.trim()) setImportServer(importServerId.trim()); }}
+            onSubmit={(e) => { e.preventDefault(); if (importServerId) setImportServer(importServerId); }}
             className="flex items-center gap-2"
           >
-            <input
-              type="text"
-              value={importServerId}
-              onChange={(e) => setImportServerId(e.target.value)}
-              placeholder="Server ID to import from"
-              className="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-primary-500 w-48"
-            />
+            <ServerPicker value={importServerId} onChange={setImportServerId} className="w-56" />
             <button
               type="submit"
-              disabled={!importServerId.trim()}
+              disabled={!importServerId}
               className="px-3 py-1.5 text-sm font-medium text-white bg-gray-600 dark:bg-gray-500 rounded-lg hover:bg-gray-700 dark:hover:bg-gray-600 transition-colors disabled:opacity-50"
             >
               Import from server
@@ -74,7 +79,7 @@ export default function Stacks() {
           {stacks.map((s) => (
             <tr key={s.id} className="border-b">
               <td className="p-2 font-mono">{s.name}</td>
-              <td className="p-2">{s.serverId}</td>
+              <td className="p-2">{serverLabel(s.serverId)}</td>
               <td className="p-2">{s.lastDeployStatus || '—'}</td>
               <td className="p-2">{s.lastDeployedAt ? new Date(s.lastDeployedAt).toLocaleString() : '—'}</td>
               <td className="p-2 space-x-2">
