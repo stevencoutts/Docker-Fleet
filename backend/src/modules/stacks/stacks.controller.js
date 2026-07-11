@@ -92,8 +92,14 @@ const updateStack = async (req, res, next) => {
         const existing = await StackEnvVar.findAll({ where: { stackId: stack.id }, transaction: t });
         const byKey = Object.fromEntries(existing.map((e) => [e.key, e]));
         const merged = env.map((e) => {
-          if (e.isSecret && (e.value === null || e.value === undefined || e.value === '') && byKey[e.key]) {
-            return { key: e.key, isSecret: true, value: byKey[e.key].value, _stored: true };
+          const prior = byKey[e.key];
+          if (e.isSecret && (e.value === null || e.value === undefined || e.value === '') && prior) {
+            if (prior.isSecret) {
+              // Existing value is already stored encrypted; keep as-is
+              return { key: e.key, isSecret: true, value: prior.value, _stored: true };
+            }
+            // Var was stored plain and has just been flagged secret: re-encrypt the plain value
+            return { key: e.key, isSecret: true, value: prior.value ?? '', _stored: false };
           }
           return { key: e.key, isSecret: !!e.isSecret, value: e.value ?? '', _stored: false };
         });

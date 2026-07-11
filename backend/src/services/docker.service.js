@@ -80,6 +80,72 @@ function buildExposedPortsForCreate(details, portBindings) {
   return Object.keys(exposed).length > 0 ? exposed : null;
 }
 
+// Compose project/service names recorded in container labels
+const COMPOSE_LABEL_NAME_REGEX = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$/;
+
+/** Absolute path from compose labels; must stay shell-safe for remote commands. */
+function isSafeComposePath(p) {
+  const s = String(p || '');
+  return s.startsWith('/') && !s.includes('..') && !/[\n\r\x00`$'"\\]/.test(s);
+}
+
+/**
+ * Extract the docker compose project context from container inspect labels.
+ * Returns null when the container is not compose-managed or labels are unusable.
+ */
+function getComposeContextFromInspect(details) {
+  const labels = details?.Config?.Labels || {};
+  const project = labels['com.docker.compose.project'];
+  const service = labels['com.docker.compose.service'];
+  const workingDir = labels['com.docker.compose.project.working_dir'];
+  if (!project || !service) return null;
+  if (!COMPOSE_LABEL_NAME_REGEX.test(project) || !COMPOSE_LABEL_NAME_REGEX.test(service)) return null;
+  if (!workingDir || !isSafeComposePath(workingDir)) return null;
+  const configFiles = String(labels['com.docker.compose.project.config_files'] || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (!configFiles.length || !configFiles.every(isSafeComposePath)) return null;
+  const envFiles = String(labels['com.docker.compose.project.environment_file'] || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .filter(isSafeComposePath);
+  return { project, service, workingDir, configFiles, envFiles };
+}
+
+/**
+ * Networking to carry over when recreating a container via the raw API.
+ * Preserves the primary network endpoint (including compose service aliases,
+ * so DNS names like "db" keep resolving) and lists any additional networks
+ * to reconnect after create.
+ */
+function buildNetworkingForRecreate(details) {
+  const none = { networkingConfig: null, extraNetworks: [] };
+  const networkMode = String(details?.HostConfig?.NetworkMode || '');
+  if (networkMode === 'host' || networkMode === 'none' || networkMode.startsWith('container:')) return none;
+  const networks = details?.NetworkSettings?.Networks;
+  if (!networks || typeof networks !== 'object') return none;
+  const names = Object.keys(networks);
+  if (!names.length) return none;
+  const oldShortId = String(details?.Id || '').substring(0, 12);
+  const oldName = String(details?.Name || '').replace(/^\//, '');
+  const cleanAliases = (aliases) => (Array.isArray(aliases) ? aliases : [])
+    .filter((a) => a && a !== oldShortId && a !== oldName);
+  const primary = names.includes(networkMode) ? networkMode : names[0];
+  // Network-scoped aliases are only supported on user-defined networks
+  const primaryAliases = (primary === 'bridge' || primary === 'default') ? [] : cleanAliases(networks[primary]?.Aliases);
+  const networkingConfig = {
+    EndpointsConfig: {
+      [primary]: primaryAliases.length ? { Aliases: primaryAliases } : {},
+    },
+  };
+  const extraNetworks = names
+    .filter((n) => n !== primary)
+    .map((n) => ({ name: n, aliases: (n === 'bridge' || n === 'default') ? [] : cleanAliases(networks[n]?.Aliases) }));
+  return { networkingConfig, extraNetworks };
+}
+
 function mountTargetFromBind(bindStr) {
   const parts = String(bindStr || '').split(':');
   return parts.length >= 2 ? parts[1] : null;
@@ -486,7 +552,73 @@ class DockerService {
   }
 
   /**
+   * Update a compose-managed service the way a manual redeploy would:
+   * `docker compose pull <service> && docker compose up -d <service>`.
+   * This preserves networks, service DNS aliases and depends_on semantics that a
+   * raw API recreate cannot (losing the service alias breaks apps that connect
+   * to e.g. "db"). Returns null when the compose project files are not present
+   * on the host, so the caller can fall back to the API recreate path.
+   */
+  async updateViaCompose(server, ctx, addStep, meta = {}) {
+    const checkCmd = [`test -d ${escapeSingleQuoted(ctx.workingDir)}`]
+      .concat(ctx.configFiles.map((f) => `test -f ${escapeSingleQuoted(f)}`))
+      .join(' && ');
+    const check = await sshService.executeCommand(server, checkCmd, { allowFailure: true, timeout: 10000 });
+    if (check.code !== 0) return null;
+
+    addStep('Compose-managed service', true, `${ctx.project}/${ctx.service}`);
+
+    const fFlags = ctx.configFiles.map((f) => `-f ${escapeSingleQuoted(f)}`).join(' ');
+    const envFlags = ctx.envFiles.map((f) => `--env-file ${escapeSingleQuoted(f)}`).join(' ');
+    const base = `docker compose -p ${escapeSingleQuoted(ctx.project)} ${fFlags}${envFlags ? ` ${envFlags}` : ''}`;
+    const prefix = `cd ${escapeSingleQuoted(ctx.workingDir)} && export DOCKER_API_VERSION=1.41 && `;
+    const svc = escapeSingleQuoted(ctx.service);
+
+    const pullResult = await sshService.executeCommand(server, `${prefix}${base} pull ${svc}`, { allowFailure: true, timeout: 600000 });
+    addStep('Pull image (compose)', pullResult.code === 0, pullResult.code === 0 ? (meta.imageRef || ctx.service) : ((pullResult.stderr || pullResult.stdout || '').trim() || 'Pull failed'));
+    if (pullResult.code !== 0) {
+      return { success: false, error: `Compose pull failed: ${(pullResult.stderr || pullResult.stdout || '').trim() || 'unknown error'}` };
+    }
+
+    const upResult = await sshService.executeCommand(server, `${prefix}${base} up -d ${svc}`, { allowFailure: true, timeout: 600000 });
+    const upOut = `${upResult.stdout || ''}\n${upResult.stderr || ''}`;
+    const upOk = upResult.code === 0 || /Container\s+\S+\s+(Started|Running|Created)/i.test(upOut);
+    addStep('Recreate service (compose)', upOk, upOk ? 'Running' : ((upResult.stderr || upResult.stdout || '').trim() || 'up failed'));
+    if (!upOk) {
+      return { success: false, error: `Compose up failed: ${(upResult.stderr || upResult.stdout || '').trim() || 'unknown error'}` };
+    }
+
+    // Resolve the recreated container's id and image version for reporting
+    let newContainerId;
+    let newVersion = null;
+    try {
+      const idCmd = `docker ps -aq --no-trunc --filter label=com.docker.compose.project=${escapeSingleQuoted(ctx.project)} --filter label=com.docker.compose.service=${escapeSingleQuoted(ctx.service)} | head -n1`;
+      const idResult = await sshService.executeCommand(server, idCmd, { allowFailure: true, timeout: 10000 });
+      const id = (idResult.stdout || '').trim();
+      if (idResult.code === 0 && DOCKER_ID_REGEX.test(id)) {
+        newContainerId = id;
+        const newDetails = await this.getContainerDetails(server, newContainerId);
+        const newImageId = newDetails?.Image || newDetails?.Config?.Image;
+        if (newImageId) newVersion = await this.getImageVersionFromLabels(server, newImageId);
+      }
+    } catch (e) { /* reporting only */ }
+
+    return {
+      success: true,
+      message: `Updated via docker compose. Service "${ctx.service}" in project "${ctx.project}" is now running the latest image.`,
+      newContainerId: newContainerId || undefined,
+      containerName: meta.name,
+      previousImageRef: meta.imageRef,
+      newImageRef: meta.imageRef,
+      previousVersion: meta.previousVersion || undefined,
+      newVersion: newVersion || undefined,
+    };
+  }
+
+  /**
    * Pull the container's image and recreate the container so it uses the new image (same name and settings).
+   * Compose-managed containers are updated through docker compose when the project files
+   * are available on the host; otherwise falls back to an API recreate.
    * @returns {Promise<{ success: boolean, message?: string, error?: string, containerName?, previousImageRef?, newImageRef?, previousVersion?, newVersion? }>}
    */
   async pullAndRecreateContainer(server, containerId, options = {}) {
@@ -511,6 +643,16 @@ class DockerService {
       }
       addStep('Validate container', true, `"${name}" using ${imageRef}`);
 
+      // Compose-managed containers: update through compose so networks, service
+      // aliases and dependent containers stay intact. Skip when the caller
+      // overrides runtime settings (shmSize), which needs the API recreate path.
+      const composeCtx = options.shmSize == null ? getComposeContextFromInspect(details) : null;
+      if (composeCtx) {
+        const composeResult = await this.updateViaCompose(server, composeCtx, addStep, { name, imageRef, previousVersion });
+        if (composeResult) return { ...composeResult, steps };
+        addStep('Compose config check', true, 'Compose file not found on host, using direct recreate');
+      }
+
       const pullResult = await this.pullImage(server, imageRef);
       addStep('Pull image', pullResult.success, pullResult.success ? imageRef : (pullResult.message || 'Pull failed'));
       if (!pullResult.success) {
@@ -531,6 +673,7 @@ class DockerService {
       if (requestedShm != null) labels['dockerfleet.shmSize'] = String(requestedShm);
 
       const { binds, mounts: recreateMounts } = resolveMountsForRecreate(details);
+      const { networkingConfig, extraNetworks } = buildNetworkingForRecreate(details);
 
       const portBindings = resolvePortBindingsFromInspect(details);
       const exposedPorts = buildExposedPortsForCreate(details, portBindings);
@@ -543,6 +686,7 @@ class DockerService {
         Labels: labels,
         Hostname: details.Config?.Hostname || null,
         ...(exposedPorts ? { ExposedPorts: exposedPorts } : {}),
+        ...(networkingConfig ? { NetworkingConfig: networkingConfig } : {}),
         HostConfig: {
           Binds: binds,
           PortBindings: portBindings,
@@ -617,6 +761,14 @@ class DockerService {
       if (renameResult.code !== 0) {
         const errDetail = (renameResult.stderr || renameResult.stdout || '').trim();
         return { success: false, error: errDetail ? `Failed to rename new container: ${errDetail}. You may have a container with ID ${newContainerId.substring(0, 12)} that you can rename or remove manually.` : 'Failed to rename new container', steps };
+      }
+
+      // Reattach any additional networks (with aliases) the old container was connected to
+      for (const net of extraNetworks) {
+        const aliasFlags = (net.aliases || []).map((a) => `--alias ${escapeSingleQuoted(a)}`).join(' ');
+        const connectCmd = `docker network connect ${aliasFlags ? `${aliasFlags} ` : ''}${escapeSingleQuoted(net.name)} '${newContainerId}'`;
+        const connectResult = await sshService.executeCommand(server, connectCmd, { allowFailure: true, timeout: 10000 });
+        addStep('Reconnect network', connectResult.code === 0, connectResult.code === 0 ? net.name : `${net.name}: ${(connectResult.stderr || connectResult.stdout || '').trim() || 'failed'}`);
       }
 
       // Brief delay so the daemon releases the old container's port bindings before we start the new one
@@ -711,6 +863,7 @@ class DockerService {
       if (requestedShm != null) labels['dockerfleet.shmSize'] = String(requestedShm);
 
       const { binds, mounts: recreateMounts } = resolveMountsForRecreate(details);
+      const { networkingConfig, extraNetworks } = buildNetworkingForRecreate(details);
 
       let portBindings = resolvePortBindingsFromInspect(details);
       const portMappings = options.portMappings;
@@ -754,6 +907,7 @@ class DockerService {
         Labels: labels,
         Hostname: details.Config?.Hostname || null,
         ...(exposedPorts ? { ExposedPorts: exposedPorts } : {}),
+        ...(networkingConfig ? { NetworkingConfig: networkingConfig } : {}),
         HostConfig: {
           Binds: binds,
           PortBindings: portBindings,
@@ -828,6 +982,14 @@ class DockerService {
       if (renameResult.code !== 0) {
         const errDetail = (renameResult.stderr || renameResult.stdout || '').trim();
         return { success: false, error: errDetail ? `Failed to rename new container: ${errDetail}. You may have a container with ID ${newContainerId.substring(0, 12)} that you can rename or remove manually.` : 'Failed to rename new container', steps };
+      }
+
+      // Reattach any additional networks (with aliases) the old container was connected to
+      for (const net of extraNetworks) {
+        const aliasFlags = (net.aliases || []).map((a) => `--alias ${escapeSingleQuoted(a)}`).join(' ');
+        const connectCmd = `docker network connect ${aliasFlags ? `${aliasFlags} ` : ''}${escapeSingleQuoted(net.name)} '${newContainerId}'`;
+        const connectResult = await sshService.executeCommand(server, connectCmd, { allowFailure: true, timeout: 10000 });
+        addStep('Reconnect network', connectResult.code === 0, connectResult.code === 0 ? net.name : `${net.name}: ${(connectResult.stderr || connectResult.stdout || '').trim() || 'failed'}`);
       }
 
       // Brief delay so the daemon releases the old container's port bindings before we start the new one
@@ -2089,3 +2251,6 @@ class DockerService {
 }
 
 module.exports = new DockerService();
+// Exposed for unit tests
+module.exports.getComposeContextFromInspect = getComposeContextFromInspect;
+module.exports.buildNetworkingForRecreate = buildNetworkingForRecreate;

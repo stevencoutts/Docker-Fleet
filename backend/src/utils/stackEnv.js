@@ -13,7 +13,14 @@ function storeValue(plain, isSecret) {
 
 function readValue(stored, isSecret) {
   if (!isSecret) return String(stored ?? '');
-  return decrypt(JSON.parse(stored));
+  try {
+    return decrypt(JSON.parse(stored));
+  } catch (e) {
+    // Legacy or mis-flagged rows can hold a plain-text value while marked secret
+    // (e.g. a var toggled to secret without re-entering the value). Treat the
+    // stored value as plain text rather than failing the whole deploy.
+    return String(stored ?? '');
+  }
 }
 
 function renderEnvFile(rows) {
