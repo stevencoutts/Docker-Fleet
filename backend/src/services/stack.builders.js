@@ -10,7 +10,9 @@ function buildComposeCommand({ name, deployPath, action, pull }) {
   const safePath = validateStackDeployPath(deployPath);
   const base = `docker compose -p ${escapeSingleQuoted(safeName)} --env-file .env -f compose.yaml`;
   let op;
-  if (action === 'up') op = pull ? `${base} pull && ${base} up -d` : `${base} up -d`;
+  // Pull is best-effort: locally built images (and services with build: config)
+  // cannot be pulled from a registry, so pull failures must not block the up.
+  if (action === 'up') op = pull ? `(${base} pull --ignore-pull-failures || true) && ${base} up -d` : `${base} up -d`;
   else if (action === 'down') op = `${base} down`;
   else if (action === 'restart') op = `${base} restart`;
   else throw new Error(`Invalid compose action: ${action}`);

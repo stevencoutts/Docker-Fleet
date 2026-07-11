@@ -14,9 +14,11 @@ test('buildComposeCommand up (no pull)', () => {
   assert.doesNotMatch(cmd, /compose pull/);
 });
 
-test('buildComposeCommand up with pull runs pull first', () => {
+test('buildComposeCommand up with pull runs best-effort pull first', () => {
   const cmd = buildComposeCommand({ name: 'm', deployPath: '/opt/dockerfleet/stacks/m', action: 'up', pull: true });
-  assert.match(cmd, /compose -p 'm' --env-file .env -f compose.yaml pull && /);
+  assert.match(cmd, /compose -p 'm' --env-file .env -f compose.yaml pull --ignore-pull-failures \|\| true\) && /);
+  // A failed pull (e.g. locally built image) must not block the up
+  assert.match(cmd, /\(.*pull.*\|\| true\)/);
 });
 
 test('buildComposeCommand with pull applies DOCKER_API_VERSION to all subcommands', () => {
