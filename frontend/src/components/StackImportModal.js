@@ -69,7 +69,7 @@ export default function StackImportModal({ serverId, onClose, onImported }) {
         ) : (
           <table className="w-full text-left mb-4 text-sm">
             <thead>
-              <tr className="border-b border-gray-200 dark:border-gray-700">
+              <tr className="border-b border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300">
                 <th className="p-2 w-8"></th>
                 <th className="p-2">Project</th>
                 <th className="p-2">Status</th>
@@ -93,7 +93,7 @@ export default function StackImportModal({ serverId, onClose, onImported }) {
                       className="rounded"
                     />
                   </td>
-                  <td className="p-2 font-mono">{p.name}</td>
+                  <td className="p-2 font-mono text-gray-900 dark:text-gray-100">{p.name}</td>
                   <td className="p-2 text-gray-600 dark:text-gray-400">{p.status || '—'}</td>
                   <td className="p-2">
                     {p.managed ? (
