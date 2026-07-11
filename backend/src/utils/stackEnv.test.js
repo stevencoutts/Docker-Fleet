@@ -15,6 +15,13 @@ test('secret values are encrypted at rest and decrypt back', () => {
   assert.strictEqual(readValue(stored, true), 's3cret');
 });
 
+test('secret-flagged plain-text values fall back instead of throwing', () => {
+  // Legacy/mis-flagged rows: value stored as plain text but flagged secret
+  assert.strictEqual(readValue('nextcloud', true), 'nextcloud');
+  assert.strictEqual(readValue('null', true), 'null');
+  assert.strictEqual(readValue('', true), '');
+});
+
 test('flagSecret detects secret-like keys', () => {
   assert.strictEqual(flagSecret('MYSQL_ROOT_PASSWORD'), true);
   assert.strictEqual(flagSecret('DJANGO_SECRET_KEY'), true);
