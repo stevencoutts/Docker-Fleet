@@ -25,7 +25,7 @@ export default function StackImportModal({ serverId, onClose, onImported }) {
     setImporting(true);
     setError(null);
     try {
-      const chosen = projects.filter((p) => selected[p.name] && !p.managed);
+      const chosen = projects.filter((p) => selected[p.name]);
       const { data } = await stacksService.importStacks(
         serverId,
         chosen.map((p) => ({ name: p.name, configFiles: p.configFiles }))
@@ -87,7 +87,6 @@ export default function StackImportModal({ serverId, onClose, onImported }) {
                   <td className="p-2">
                     <input
                       type="checkbox"
-                      disabled={p.managed}
                       checked={!!selected[p.name]}
                       onChange={(e) => setSelected((s) => ({ ...s, [p.name]: e.target.checked }))}
                       className="rounded"
@@ -97,7 +96,7 @@ export default function StackImportModal({ serverId, onClose, onImported }) {
                   <td className="p-2 text-gray-600 dark:text-gray-400">{p.status || '—'}</td>
                   <td className="p-2">
                     {p.managed ? (
-                      <span className="text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-200 px-2 py-0.5 rounded-full">managed</span>
+                      <span className="text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-200 px-2 py-0.5 rounded-full" title="Already managed; importing again refreshes the stored compose from the host">managed (re-import refreshes)</span>
                     ) : (
                       <span className="text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 px-2 py-0.5 rounded-full">unmanaged</span>
                     )}

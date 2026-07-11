@@ -197,10 +197,15 @@ const importStacks = async (req, res, next) => {
           .join('\n---\n');
         if (!composeYaml) throw new Error('No readable compose file');
         const deployPath = validateStackDeployPath(`${STACK_DEPLOY_BASE}/${safeName}`);
-        const [stack] = await Stack.findOrCreate({
-          where: { serverId: server.id, name: safeName },
-          defaults: { serverId: server.id, name: safeName, composeYaml, deployPath, source: 'imported' },
-        });
+        let stack = await Stack.findOne({ where: { serverId: server.id, name: safeName } });
+        let reimported = false;
+        if (stack) {
+          // Re-import: refresh the stored compose from the host's original files
+          await stack.update({ composeYaml, source: 'imported' });
+          reimported = true;
+        } else {
+          stack = await Stack.create({ serverId: server.id, name: safeName, composeYaml, deployPath, source: 'imported' });
+        }
         // env: read .env next to first discovered config file if present
         const firstDir = allowedConfigFiles[0] ? allowedConfigFiles[0].replace(/\/[^/]+$/, '') : null;
         if (firstDir) {
@@ -212,7 +217,7 @@ const importStacks = async (req, res, next) => {
             await StackEnvVar.bulkCreate(parsed.map((e) => ({ stackId: stack.id, key: e.key, isSecret: e.isSecret, value: storeValue(e.value, e.isSecret) })));
           }
         }
-        results.push({ name: safeName, imported: true });
+        results.push({ name: safeName, imported: true, reimported });
       } catch (err) {
         results.push({ name: p.name, imported: false, error: err.message });
       }
