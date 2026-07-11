@@ -150,7 +150,9 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
-app.use(express.json({ limit: '10mb' }));
+// strict: false so a JSON body of null/true/"..." (e.g. axios post with null data)
+// is tolerated instead of failing with "Unexpected token ... in JSON"
+app.use(express.json({ limit: '10mb', strict: false }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Rate limiting - Completely disabled for development/localhost

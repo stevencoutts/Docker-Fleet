@@ -6,7 +6,7 @@ export const stacksService = {
   create: (payload) => api.post('/api/v1/stacks', payload),
   update: (id, payload) => api.put(`/api/v1/stacks/${id}`, payload),
   remove: (id, down = false) => api.delete(`/api/v1/stacks/${id}`, { params: { down } }),
-  deploy: (id, pull = false) => api.post(`/api/v1/stacks/${id}/deploy`, null, { params: { pull } }),
+  deploy: (id, pull = false) => api.post(`/api/v1/stacks/${id}/deploy`, {}, { params: { pull } }),
   down: (id) => api.post(`/api/v1/stacks/${id}/down`),
   restart: (id) => api.post(`/api/v1/stacks/${id}/restart`),
   discover: (serverId) => api.get(`/api/v1/servers/${serverId}/stacks/discover`),
