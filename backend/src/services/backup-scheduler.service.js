@@ -113,6 +113,7 @@ async function runBackupForEntry(server, containerName, retention) {
       for (const s of toRemove) {
         try {
           await dockerService.removeImage(server, s.id, true);
+          await dockerService.removeSnapshotVolumeBundle(server, s.name);
           logger.debug(`Pruned old backup: ${s.name} (${s.id})`);
         } catch (e) {
           logger.warn(`Could not prune image ${s.id}:`, e.message);

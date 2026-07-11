@@ -5,6 +5,7 @@ const {
   buildWriteFileCommand,
   parseComposeLs,
   parseEnvFile,
+  rewriteRelativeBindMounts,
 } = require('./stack.builders');
 
 test('buildComposeCommand up (no pull)', () => {
@@ -71,6 +72,66 @@ test('parseComposeLs parses docker compose ls JSON', () => {
   const out = parseComposeLs(json);
   assert.deepStrictEqual(out[0], { name: 'nextcloud', status: 'running(2)', configFiles: ['/home/s/Docker/nextcloud/docker-compose.yml'] });
   assert.deepStrictEqual(out[1].configFiles, ['/a.yml', '/b.yml']);
+});
+
+test('rewriteRelativeBindMounts resolves ./ and ../ short-syntax binds', () => {
+  const yaml = [
+    'services:',
+    '  app:',
+    '    volumes:',
+    '      - ./data:/app/data',
+    '      - ../shared:/shared:ro',
+    '      - named_vol:/var/lib/x',
+    '      - /abs/path:/abs',
+  ].join('\n');
+  const out = rewriteRelativeBindMounts(yaml, '/home/stevec/Docker/teamarr');
+  assert.match(out, /- \/home\/stevec\/Docker\/teamarr\/data:\/app\/data/);
+  assert.match(out, /- \/home\/stevec\/Docker\/shared:\/shared:ro/);
+  assert.match(out, /- named_vol:\/var\/lib\/x/);
+  assert.match(out, /- \/abs\/path:\/abs/);
+});
+
+test('rewriteRelativeBindMounts handles quotes and bare dot', () => {
+  const yaml = [
+    "      - './cfg:/cfg'",
+    '      - ".:/workdir"',
+  ].join('\n');
+  const out = rewriteRelativeBindMounts(yaml, '/opt/proj');
+  assert.match(out, /- '\/opt\/proj\/cfg:\/cfg'/);
+  assert.match(out, /- "\/opt\/proj:\/workdir"/);
+});
+
+test('rewriteRelativeBindMounts resolves long-syntax source', () => {
+  const yaml = [
+    '    volumes:',
+    '      - type: bind',
+    '        source: ./data',
+    '        target: /app/data',
+  ].join('\n');
+  const out = rewriteRelativeBindMounts(yaml, '/home/s/proj');
+  assert.match(out, /source: \/home\/s\/proj\/data/);
+  assert.match(out, /target: \/app\/data/);
+});
+
+test('rewriteRelativeBindMounts leaves ports, env_file and absolute sources alone', () => {
+  const yaml = [
+    '    ports:',
+    '      - "8080:80"',
+    '    env_file:',
+    '      - ./prod.env',
+    '    volumes:',
+    '      - /data:/data',
+  ].join('\n');
+  const out = rewriteRelativeBindMounts(yaml, '/opt/proj');
+  assert.match(out, /- "8080:80"/);
+  assert.match(out, /- \.\/prod\.env/);
+  assert.match(out, /- \/data:\/data/);
+});
+
+test('rewriteRelativeBindMounts is a no-op without a valid project dir', () => {
+  const yaml = '      - ./data:/app/data';
+  assert.strictEqual(rewriteRelativeBindMounts(yaml, ''), yaml);
+  assert.strictEqual(rewriteRelativeBindMounts(yaml, 'relative/dir'), yaml);
 });
 
 test('parseEnvFile ignores comments/blanks and splits on first =', () => {

@@ -1,3 +1,4 @@
+const path = require('path');
 const {
   validateComposeProjectName,
   validateStackDeployPath,
@@ -59,6 +60,48 @@ function parseComposeLs(jsonText) {
   }));
 }
 
+// "- ./data:/app/data:ro" (short volume syntax, relative bind, unquoted)
+const VOLUME_ITEM_RELATIVE = /^(\s*-\s+)(\.{1,2}(?:\/[^:]*)?)(:.+)$/;
+// "- './cfg:/cfg'" or '- ".:/workdir"' (quote wraps the whole src:dst value)
+const VOLUME_ITEM_RELATIVE_QUOTED = /^(\s*-\s*)(['"])(\.{1,2}(?:\/[^:]*)?)(:.*?)\2(\s*)$/;
+// "source: ./data" (long volume/config/secret syntax, relative path)
+const LONG_SOURCE_RELATIVE = /^(\s*source:\s*)(['"]?)(\.{1,2}(?:\/[^'"\s]*)?)\2(\s*(?:#.*)?)$/;
+
+/**
+ * Rewrite relative bind-mount paths (./x, ../x) in compose YAML to absolute
+ * paths resolved against the original project directory.
+ *
+ * Imported stacks deploy from /opt/dockerfleet/stacks/<name>/, so a relative
+ * bind would silently point at a fresh empty directory instead of the
+ * project's data. Line-based rewrite preserves the file's formatting.
+ */
+function rewriteRelativeBindMounts(yamlText, projectDir) {
+  const text = String(yamlText || '');
+  const dir = String(projectDir || '').replace(/\/+$/, '');
+  if (!dir.startsWith('/')) return text;
+  return text
+    .split('\n')
+    .map((line) => {
+      let m = line.match(VOLUME_ITEM_RELATIVE);
+      if (m) {
+        const abs = path.posix.resolve(dir, m[2]);
+        return `${m[1]}${abs}${m[3]}`;
+      }
+      m = line.match(VOLUME_ITEM_RELATIVE_QUOTED);
+      if (m) {
+        const abs = path.posix.resolve(dir, m[3]);
+        return `${m[1]}${m[2]}${abs}${m[4]}${m[2]}${m[5]}`;
+      }
+      m = line.match(LONG_SOURCE_RELATIVE);
+      if (m) {
+        const abs = path.posix.resolve(dir, m[3]);
+        return `${m[1]}${m[2]}${abs}${m[2]}${m[4]}`;
+      }
+      return line;
+    })
+    .join('\n');
+}
+
 function parseEnvFile(text) {
   return String(text || '')
     .split('\n')
@@ -70,4 +113,4 @@ function parseEnvFile(text) {
     });
 }
 
-module.exports = { buildComposeCommand, buildWriteFileCommand, parseComposeLs, parseEnvFile };
+module.exports = { buildComposeCommand, buildWriteFileCommand, parseComposeLs, parseEnvFile, rewriteRelativeBindMounts };

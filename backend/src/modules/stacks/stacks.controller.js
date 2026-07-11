@@ -4,7 +4,7 @@ const { sequelize } = db;
 const logger = require('../../config/logger');
 const stackService = require('../../services/stack.service');
 const { storeValue, maskRows, flagSecret } = require('../../utils/stackEnv');
-const { parseEnvFile } = require('../../services/stack.builders');
+const { parseEnvFile, rewriteRelativeBindMounts } = require('../../services/stack.builders');
 const { validateComposeProjectName, validateStackDeployPath, STACK_DEPLOY_BASE } = require('../../utils/shellSafe');
 
 const { Stack, StackEnvVar, Server } = db;
@@ -183,7 +183,18 @@ const importStacks = async (req, res, next) => {
         // Use server-discovered configFiles, not client-supplied ones
         const allowedConfigFiles = discoveredEntry.configFiles || [];
         const files = await stackService.readRemoteFiles(server, allowedConfigFiles);
-        const composeYaml = allowedConfigFiles.map((f) => files[f]).filter(Boolean).join('\n---\n');
+        // Rewrite relative bind mounts to absolute paths (resolved against the
+        // original project dir) so deploying from the managed stack directory
+        // doesn't detach the project's data.
+        const composeYaml = allowedConfigFiles
+          .map((f) => {
+            const content = files[f];
+            if (!content) return null;
+            const projectDir = f.replace(/\/[^/]+$/, '');
+            return rewriteRelativeBindMounts(content, projectDir);
+          })
+          .filter(Boolean)
+          .join('\n---\n');
         if (!composeYaml) throw new Error('No readable compose file');
         const deployPath = validateStackDeployPath(`${STACK_DEPLOY_BASE}/${safeName}`);
         const [stack] = await Stack.findOrCreate({

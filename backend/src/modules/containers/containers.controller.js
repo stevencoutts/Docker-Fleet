@@ -538,17 +538,10 @@ const restoreSnapshot = async (req, res, next) => {
       }
     }
 
-    const bundlePath = dockerService.snapshotVolumeBundlePath(imageName.trim());
+    const bundlePath = await dockerService.findSnapshotVolumeBundle(sourceServer, imageName.trim());
     let volumeBinds = [];
 
-    const probeSource = await sshService.executeCommand(
-      sourceServer,
-      `test -f ${escapeSingleQuoted(bundlePath)} && echo ok`,
-      { allowFailure: true, pty: false },
-    );
-    const hasBundle = probeSource.stdout.trim() === 'ok';
-
-    if (hasBundle) {
+    if (bundlePath) {
       try {
         if (isCrossServer) {
           const bundleBuf = await dockerService.downloadFile(sourceServer, bundlePath);

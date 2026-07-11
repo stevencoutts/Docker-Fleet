@@ -1652,18 +1652,72 @@ class DockerService {
   }
 
   /**
-   * Where volume payload for a snapshot image is stored on each Docker host (alongside docker commit).
+   * Preferred persistent directory for snapshot volume bundles (env-overridable).
+   * /tmp is wiped on reboot on most distros, so bundles live under /opt/dockerfleet
+   * (writable on hosts provisioned for managed stacks) when possible.
+   */
+  snapshotVolumeBundlePreferredDir() {
+    return process.env.DOCKERFLEET_BUNDLE_DIR || '/opt/dockerfleet/volume-bundles';
+  }
+
+  snapshotVolumeBundleLegacyDir() {
+    return '/tmp/dockerfleet-volume-bundles';
+  }
+
+  /**
+   * Legacy bundle location (kept for backwards compatibility with old bundles).
    */
   snapshotVolumeBundlePath(fullImageName) {
     const base = this.snapshotVolumeBundleBaseName(fullImageName);
-    return `/tmp/dockerfleet-volume-bundles/${base}.tar.gz`;
+    return `${this.snapshotVolumeBundleLegacyDir()}/${base}.tar.gz`;
+  }
+
+  /**
+   * All locations a bundle for this snapshot image may live, preferred first.
+   */
+  snapshotVolumeBundleCandidatePaths(fullImageName) {
+    const base = this.snapshotVolumeBundleBaseName(fullImageName);
+    return [
+      `${this.snapshotVolumeBundlePreferredDir()}/${base}.tar.gz`,
+      `${this.snapshotVolumeBundleLegacyDir()}/${base}.tar.gz`,
+    ];
+  }
+
+  /**
+   * Locate an existing volume bundle for a snapshot image on the host, or null.
+   */
+  async findSnapshotVolumeBundle(server, fullImageName) {
+    for (const p of this.snapshotVolumeBundleCandidatePaths(fullImageName)) {
+      const probe = await sshService.executeCommand(server, `test -f ${escapeSingleQuoted(p)} && echo ok`, {
+        pty: false,
+        allowFailure: true,
+        timeout: 15000,
+      });
+      if ((probe.stdout || '').trim() === 'ok') return p;
+    }
+    return null;
+  }
+
+  /**
+   * Remove any volume bundle for a snapshot image (used when pruning snapshots).
+   */
+  async removeSnapshotVolumeBundle(server, fullImageName) {
+    for (const p of this.snapshotVolumeBundleCandidatePaths(fullImageName)) {
+      await sshService.executeCommand(server, `rm -f ${escapeSingleQuoted(p)}`, {
+        pty: false,
+        allowFailure: true,
+        timeout: 15000,
+      });
+    }
   }
 
   /**
    * After docker commit, archive named/bind mount data (docker commit omits volumes).
+   * Each mount is archived independently: one unreadable or file-type mount must not
+   * lose the rest. The archiving container mounts the work directory so archives
+   * actually land on the host.
    */
   async archiveContainerVolumesForSnapshot(server, containerId, fullImageName) {
-    const bundlePath = this.snapshotVolumeBundlePath(fullImageName);
     const safeId = validateContainerId(containerId);
     const details = await this.getContainerDetails(server, safeId);
     const mounts = Array.isArray(details.Mounts) ? details.Mounts : [];
@@ -1673,42 +1727,101 @@ class DockerService {
       return true;
     });
 
-    const manifest = backupMounts.map((m, i) => ({
-      index: i,
-      destination: m.Destination,
-      rw: m.RW !== false,
-      type: m.Type || 'bind',
-    }));
+    // Pick the bundle directory: preferred persistent location, else legacy /tmp
+    const preferredDir = this.snapshotVolumeBundlePreferredDir();
+    const legacyDir = this.snapshotVolumeBundleLegacyDir();
+    let bundleDir = preferredDir;
+    const mk = await sshService.executeCommand(
+      server,
+      `mkdir -p ${escapeSingleQuoted(preferredDir)} && test -w ${escapeSingleQuoted(preferredDir)}`,
+      { pty: false, allowFailure: true, timeout: 30000 },
+    );
+    if (mk.code !== 0) {
+      bundleDir = legacyDir;
+      await sshService.executeCommand(server, `mkdir -p ${escapeSingleQuoted(legacyDir)}`, { pty: false, timeout: 30000 });
+      logger.warn(`Volume bundles: ${preferredDir} not writable on ${server.host}; using ${legacyDir} (cleared on reboot)`);
+    }
+    const bundlePath = `${bundleDir}/${this.snapshotVolumeBundleBaseName(fullImageName)}.tar.gz`;
 
-    const manifestB64 = Buffer.from(JSON.stringify(manifest)).toString('base64');
-    const bundleQ = escapeSingleQuoted(bundlePath);
-    const workId = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
-
-    const lines = [
-      'set -e',
-      `WORKDIR=/tmp/dockerfleet-volwk-${workId}`,
-      'mkdir -p "$WORKDIR/data"',
-      `mkdir -p "$(dirname ${bundleQ})"`,
-      `echo '${manifestB64}' | base64 -d > "$WORKDIR/manifest.json"`,
-      'docker pull -q alpine:3.19 2>/dev/null || true',
-    ];
-
-    backupMounts.forEach((m, i) => {
-      const src = validateMountSourcePath(m.Source);
-      const srcQ = escapeSingleQuoted(src);
-      lines.push(`docker run --rm -v ${srcQ}:/from:ro alpine:3.19 tar czf "$WORKDIR/data/${i}.tar.gz" -C /from .`);
-    });
-
-    lines.push(`tar czf ${bundleQ} -C "$WORKDIR" manifest.json data`);
-    lines.push('rm -rf "$WORKDIR"');
-
-    const script = lines.join('\n');
-    await sshService.executeCommand(server, script, {
+    const workDir = `/tmp/dockerfleet-volwk-${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const workQ = escapeSingleQuoted(workDir);
+    await sshService.executeCommand(server, `mkdir -p ${workQ}/data`, { pty: false, timeout: 30000 });
+    await sshService.executeCommand(server, 'docker pull -q alpine:3.19 2>/dev/null || true', {
       pty: false,
-      timeout: 600000,
+      allowFailure: true,
+      timeout: 120000,
     });
 
-    return { bundlePath, mountCount: backupMounts.length };
+    const manifest = [];
+    let archivedCount = 0;
+    try {
+      for (let i = 0; i < backupMounts.length; i++) {
+        const m = backupMounts[i];
+        const entry = { index: i, destination: m.Destination, rw: m.RW !== false, type: m.Type || 'bind' };
+        let src;
+        try {
+          src = validateMountSourcePath(m.Source);
+        } catch (e) {
+          manifest.push({ ...entry, archived: false, error: 'invalid source path' });
+          continue;
+        }
+        const srcQ = escapeSingleQuoted(src);
+
+        const kindProbe = await sshService.executeCommand(
+          server,
+          `if [ -d ${srcQ} ]; then echo dir; elif [ -f ${srcQ} ]; then echo file; else echo other; fi`,
+          { pty: false, allowFailure: true, timeout: 15000 },
+        );
+        const kind = (kindProbe.stdout || '').trim();
+        if (kind !== 'dir' && kind !== 'file') {
+          manifest.push({ ...entry, archived: false, error: `source is not a file or directory (${kind || 'unknown'})` });
+          continue;
+        }
+        entry.isFile = kind === 'file';
+
+        // Mount the work dir into the archiving container so the archive lands on the host
+        let tarCmd;
+        if (kind === 'file') {
+          const dirQ = escapeSingleQuoted(path.posix.dirname(src));
+          const baseQ = escapeSingleQuoted(path.posix.basename(src));
+          tarCmd = `docker run --rm -v ${dirQ}:/from:ro -v ${workQ}/data:/out alpine:3.19 tar czf /out/${i}.tar.gz -C /from ${baseQ}`;
+        } else {
+          tarCmd = `docker run --rm -v ${srcQ}:/from:ro -v ${workQ}/data:/out alpine:3.19 tar czf /out/${i}.tar.gz -C /from .`;
+        }
+        const tarResult = await sshService.executeCommand(server, tarCmd, {
+          pty: false,
+          allowFailure: true,
+          timeout: 600000,
+        });
+        // busybox tar exits non-zero on files changing mid-read; accept if the archive exists and is non-trivial
+        const check = await sshService.executeCommand(server, `test -s ${workQ}/data/${i}.tar.gz && echo ok`, {
+          pty: false,
+          allowFailure: true,
+          timeout: 15000,
+        });
+        if ((check.stdout || '').trim() === 'ok') {
+          entry.archived = true;
+          if (tarResult.code !== 0) entry.warning = 'archived with read warnings';
+          archivedCount++;
+        } else {
+          entry.archived = false;
+          entry.error = (tarResult.stderr || tarResult.stdout || '').trim().slice(0, 300) || 'archive failed';
+          logger.warn(`Volume archive failed for mount ${m.Destination} of ${fullImageName}: ${entry.error}`);
+        }
+        manifest.push(entry);
+      }
+
+      const manifestB64 = Buffer.from(JSON.stringify(manifest)).toString('base64');
+      await sshService.executeCommand(
+        server,
+        `echo '${manifestB64}' | base64 -d > ${workQ}/manifest.json && tar czf ${escapeSingleQuoted(bundlePath)} -C ${workQ} manifest.json data`,
+        { pty: false, timeout: 300000 },
+      );
+    } finally {
+      await sshService.executeCommand(server, `rm -rf ${workQ}`, { pty: false, allowFailure: true, timeout: 60000 });
+    }
+
+    return { bundlePath, mountCount: backupMounts.length, archivedCount };
   }
 
   /**
@@ -1760,6 +1873,16 @@ class DockerService {
       for (let i = 0; i < manifest.length; i++) {
         const m = manifest[i];
         if (!m || !m.destination) continue;
+        if (m.archived === false) {
+          logger.warn(`Snapshot mount ${m.destination} was not archived (${m.error || 'unknown reason'}); skipping`);
+          continue;
+        }
+        if (m.isFile) {
+          // A named volume cannot be bound onto a file path; the file is in the
+          // bundle for manual recovery, but automatic restore skips it.
+          logger.warn(`Snapshot mount ${m.destination} is a single file; skipping automatic restore`);
+          continue;
+        }
         const volName = `df_rst_${safeBase}_${i}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2)}`.slice(
           0,
           240,
