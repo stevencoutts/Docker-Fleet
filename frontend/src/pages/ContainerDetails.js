@@ -1388,7 +1388,12 @@ const ContainerDetails = () => {
                                 </span>
                               )}
                               {!updateStatus.updateAvailable && !updateStatus.pinned && (!updateStatus.error || (updateStatus.resolvedVersion && (updateStatus.newestTag || updateStatus.resolvedNewerThanTagList))) && (
-                                <span className="text-gray-600 dark:text-gray-400">Up to date</span>
+                                <span className="text-gray-600 dark:text-gray-400">
+                                  Up to date
+                                  {updateStatus.updateAvailableByVersion && updateStatus.newestTag && (
+                                    <span> (newer tag available: {updateStatus.newestTagDisplay || updateStatus.newestTag}, change the image tag to move to it)</span>
+                                  )}
+                                </span>
                               )}
                               {updateStatus.reason && <span className="text-gray-500 dark:text-gray-400"> – {updateStatus.reason}</span>}
                               {updateStatus.error && !(updateStatus.resolvedVersion && (updateStatus.newestTag || updateStatus.resolvedNewerThanTagList)) && (

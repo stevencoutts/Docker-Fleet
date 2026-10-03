@@ -119,9 +119,9 @@ function doManifestRequest(host, urlPath, token, isDockerHub, method) {
 
   return new Promise((resolve) => {
     const req = https.request(options, (res) => {
-      if (res.statusCode === 401 && isDockerHub && res.headers['www-authenticate']) {
-        req.destroy();
-        resolve(null);
+      if (res.statusCode === 401 && res.headers['www-authenticate']) {
+        res.resume();
+        resolve({ unauthorized: true, challenge: res.headers['www-authenticate'] });
         return;
       }
       const digest = res.headers['docker-content-digest'];
@@ -158,6 +158,40 @@ function doManifestRequest(host, urlPath, token, isDockerHub, method) {
 }
 
 /**
+ * Fetch an anonymous pull token from a Bearer WWW-Authenticate challenge
+ * (works for Docker Hub, ghcr.io, lscr.io, quay.io and other OCI registries).
+ */
+function getTokenFromChallenge(challenge, path) {
+  const params = {};
+  const re = /(\w+)="([^"]*)"/g;
+  let m;
+  while ((m = re.exec(challenge || '')) !== null) params[m[1]] = m[2];
+  if (!/^bearer/i.test((challenge || '').trim()) || !params.realm) {
+    return Promise.reject(new Error('Unsupported registry auth challenge'));
+  }
+  const qs = new URLSearchParams();
+  if (params.service) qs.set('service', params.service);
+  qs.set('scope', params.scope || `repository:${path}:pull`);
+  const url = `${params.realm}${params.realm.includes('?') ? '&' : '?'}${qs.toString()}`;
+  return new Promise((resolve, reject) => {
+    const req = https.get(url, (res) => {
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        try {
+          const json = JSON.parse(data);
+          resolve(json.token || json.access_token || null);
+        } catch (e) {
+          reject(e);
+        }
+      });
+    });
+    req.on('error', reject);
+    req.setTimeout(10000, () => { req.destroy(); reject(new Error('Registry token timeout')); });
+  });
+}
+
+/**
  * Fetch registry digests for a tag (manifest list index + per-platform manifests).
  * Some registries (e.g. ghcr.io) only return the digest on GET.
  */
@@ -173,6 +207,7 @@ async function getRemoteDigestsForComparison(registry, path, tag, token = null) 
     let displayDigest = null;
 
     const head = await doManifestRequest(host, urlPath, authToken, isDockerHub, 'HEAD');
+    if (head && head.unauthorized) return head;
     if (head && head.error) return head;
     if (head && head.digest) {
       displayDigest = head.digest;
@@ -180,6 +215,7 @@ async function getRemoteDigestsForComparison(registry, path, tag, token = null) 
     }
 
     const get = await doManifestRequest(host, urlPath, authToken, isDockerHub, 'GET');
+    if (get && get.unauthorized) return get;
     if (get && get.error) return get;
     if (get && get.body) {
       try {
@@ -206,13 +242,14 @@ async function getRemoteDigestsForComparison(registry, path, tag, token = null) 
   };
 
   let result = await run(token);
-  if (result === null && isDockerHub) {
+  if (result && result.unauthorized) {
     try {
-      const t = await getDockerHubToken(path);
-      result = await run(t);
+      const t = await getTokenFromChallenge(result.challenge, path);
+      result = t ? await run(t) : null;
     } catch (e) {
       return { error: e.message };
     }
+    if (result && result.unauthorized) return { error: 'Registry auth failed (401)' };
   }
   return result || { error: 'Registry auth failed' };
 }

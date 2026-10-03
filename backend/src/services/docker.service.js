@@ -462,7 +462,8 @@ class DockerService {
       ]);
       const short = (d) => (d && d.replace(/^sha256:/i, '').substring(0, 12)) || '';
       const out = {
-        updateAvailable: result.updateAvailable,
+        // Only claim an update when the registry digest was actually fetched and differs.
+        updateAvailable: !result.error && !!result.updateAvailable,
         imageRef,
         currentTag: parsed.tag || undefined,
         track: (parsed.tag && /^dev($|[-_])/.test(parsed.tag)) ? 'dev' : 'release',
@@ -483,7 +484,7 @@ class DockerService {
         // If user is pinned to a 2-part version tag (e.g. mariadb:10.11), only compare against that series (10.11.x),
         // otherwise the registry's newest tag may jump major versions and look like a perpetual "update available".
         let tagsForNewest = tagsResult.tags;
-        if (/^\d+\.\d+$/.test(currentTag)) {
+        if (/^v?\d+\.\d+$/.test(currentTag)) {
           const prefix = `${currentTag}.`;
           tagsForNewest = tagsResult.tags.filter((t) => typeof t === 'string' && t.startsWith(prefix));
         }
@@ -505,16 +506,9 @@ class DockerService {
             out.newestTagDisplay = registryService.stripVersionTagPrefix(newest.tag) || newest.tag;
             out.newestVersion = `${newest.version.major}.${newest.version.minor}.${newest.version.patch}${newest.version.scheme === 'semver' && newest.version.ls ? '.' + newest.version.ls : ''}-r${newest.version.r}${newest.version.scheme !== 'semver' && newest.version.ls ? `-ls${newest.version.ls}` : ''}`;
             out.updateAvailableByVersion = true;
-            // Show update when digest differs, or when we have a resolved/current version that is strictly older than newest. When digest matches and we have no version to compare (e.g. latest with no labels), trust digest and don't show update.
-            const effectiveForSameCheck = resolvedParsed || currentParsed;
-            const sameVersion = effectiveForSameCheck && registryService.compareVersionParts(effectiveForSameCheck, newest.version) === 0;
-            const newerByVersion = effectiveForSameCheck && registryService.compareVersionParts(effectiveForSameCheck, newest.version) < 0;
-            // For :latest, trust digest match — a newer semver tag alone is not an update when content is current.
-            if (result.updateAvailable) {
-              out.updateAvailable = true;
-            } else if (newerByVersion && parsed.tag && parsed.tag !== 'latest') {
-              out.updateAvailable = true;
-            }
+            // updateAvailable stays digest-only: "Update" re-pulls the SAME tag, so a newer tag elsewhere
+            // in the registry is not something a pull can deliver. It is reported as newestTag /
+            // updateAvailableByVersion for display only (requires changing the tag in compose/run config).
           } else if (resolvedVersion) {
             out.resolvedNewerThanTagList = true;
           }
