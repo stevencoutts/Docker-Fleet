@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { getComposeContextFromInspect, buildNetworkingForRecreate } = require('./docker.service');
+const { getComposeContextFromInspect, buildNetworkingForRecreate, buildPreservedHostConfig } = require('./docker.service');
 
 function composeDetails(overrides = {}) {
   return {
@@ -92,4 +92,38 @@ test('buildNetworkingForRecreate sends no aliases on the default bridge', () => 
   });
   const { networkingConfig } = buildNetworkingForRecreate(details);
   assert.deepStrictEqual(networkingConfig, { EndpointsConfig: { bridge: {} } });
+});
+
+test('buildPreservedHostConfig keeps CPU limits and device passthrough', () => {
+  const hc = buildPreservedHostConfig({
+    HostConfig: {
+      CpuShares: 64,
+      NanoCpus: 2000000000,
+      Devices: [{ PathOnHost: '/dev/dri', PathInContainer: '/dev/dri', CgroupPermissions: 'rwm' }],
+      LogConfig: { Type: 'json-file', Config: { 'max-size': '10m' } },
+    },
+  });
+  assert.strictEqual(hc.CpuShares, 64);
+  assert.strictEqual(hc.NanoCpus, 2000000000);
+  assert.deepStrictEqual(hc.Devices, [{ PathOnHost: '/dev/dri', PathInContainer: '/dev/dri', CgroupPermissions: 'rwm' }]);
+  assert.deepStrictEqual(hc.LogConfig, { Type: 'json-file', Config: { 'max-size': '10m' } });
+});
+
+test('buildPreservedHostConfig omits unset/default values', () => {
+  const hc = buildPreservedHostConfig({
+    HostConfig: {
+      CpuShares: 0, NanoCpus: 0, Memory: 0, Devices: [], CapAdd: null, Privileged: false,
+      Sysctls: {}, CgroupParent: '', LogConfig: { Type: '', Config: {} },
+    },
+  });
+  assert.deepStrictEqual(hc, {});
+});
+
+test('buildPreservedHostConfig ignores fields handled elsewhere and missing HostConfig', () => {
+  const hc = buildPreservedHostConfig({
+    HostConfig: { Binds: ['/a:/b'], PortBindings: { '80/tcp': [] }, NetworkMode: 'bridge', Privileged: true },
+  });
+  assert.deepStrictEqual(hc, { Privileged: true });
+  assert.deepStrictEqual(buildPreservedHostConfig({}), {});
+  assert.deepStrictEqual(buildPreservedHostConfig(null), {});
 });

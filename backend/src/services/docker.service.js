@@ -146,6 +146,54 @@ function buildNetworkingForRecreate(details) {
   return { networkingConfig, extraNetworks };
 }
 
+/**
+ * HostConfig fields copied as-is from inspect when recreating a container.
+ * Without these, a recreate silently drops resource limits (cpu_shares, cpus,
+ * mem_limit), device passthrough (/dev/dri for hardware transcoding), caps,
+ * logging and similar settings. Binds/ports/restart/network/mounts/links/
+ * extra hosts/shm are handled separately by the recreate paths.
+ */
+const PRESERVED_HOST_CONFIG_FIELDS = [
+  // CPU / memory / pids / blkio
+  'CpuShares', 'NanoCpus', 'CpuPeriod', 'CpuQuota', 'CpuRealtimePeriod', 'CpuRealtimeRuntime',
+  'CpusetCpus', 'CpusetMems', 'Memory', 'MemoryReservation', 'MemorySwap', 'MemorySwappiness',
+  'OomKillDisable', 'OomScoreAdj', 'PidsLimit', 'BlkioWeight',
+  // Devices / GPUs
+  'Devices', 'DeviceRequests', 'DeviceCgroupRules', 'GroupAdd',
+  // Privileges / security
+  'Privileged', 'CapAdd', 'CapDrop', 'SecurityOpt', 'ReadonlyRootfs', 'UsernsMode',
+  // Runtime / namespaces
+  'Init', 'Runtime', 'IpcMode', 'PidMode', 'UTSMode', 'CgroupParent', 'CgroupnsMode',
+  // Misc
+  'Ulimits', 'Tmpfs', 'Sysctls', 'LogConfig', 'Dns', 'DnsOptions', 'DnsSearch', 'StorageOpt',
+];
+
+function isUnsetHostConfigValue(v) {
+  if (v === null || v === undefined || v === '' || v === 0 || v === false) return true;
+  if (Array.isArray(v)) return v.length === 0;
+  if (typeof v === 'object') return Object.keys(v).length === 0;
+  return false;
+}
+
+/**
+ * Subset of the existing container's HostConfig to carry into the create
+ * call. Unset/default values are omitted so the daemon applies its defaults.
+ */
+function buildPreservedHostConfig(details) {
+  const hc = details?.HostConfig;
+  if (!hc || typeof hc !== 'object') return {};
+  const out = {};
+  for (const key of PRESERVED_HOST_CONFIG_FIELDS) {
+    const v = hc[key];
+    if (key === 'LogConfig') {
+      if (v && v.Type) out.LogConfig = v;
+      continue;
+    }
+    if (!isUnsetHostConfigValue(v)) out[key] = v;
+  }
+  return out;
+}
+
 function mountTargetFromBind(bindStr) {
   const parts = String(bindStr || '').split(':');
   return parts.length >= 2 ? parts[1] : null;
@@ -682,6 +730,7 @@ class DockerService {
         ...(exposedPorts ? { ExposedPorts: exposedPorts } : {}),
         ...(networkingConfig ? { NetworkingConfig: networkingConfig } : {}),
         HostConfig: {
+          ...buildPreservedHostConfig(details),
           Binds: binds,
           PortBindings: portBindings,
           RestartPolicy: details.HostConfig?.RestartPolicy || null,
@@ -903,6 +952,7 @@ class DockerService {
         ...(exposedPorts ? { ExposedPorts: exposedPorts } : {}),
         ...(networkingConfig ? { NetworkingConfig: networkingConfig } : {}),
         HostConfig: {
+          ...buildPreservedHostConfig(details),
           Binds: binds,
           PortBindings: portBindings,
           RestartPolicy: details.HostConfig?.RestartPolicy || null,
@@ -2371,3 +2421,4 @@ module.exports = new DockerService();
 // Exposed for unit tests
 module.exports.getComposeContextFromInspect = getComposeContextFromInspect;
 module.exports.buildNetworkingForRecreate = buildNetworkingForRecreate;
+module.exports.buildPreservedHostConfig = buildPreservedHostConfig;
