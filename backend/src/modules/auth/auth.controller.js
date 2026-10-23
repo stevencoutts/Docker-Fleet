@@ -52,15 +52,20 @@ const register = async (req, res, next) => {
   try {
     const { email, password } = req.body;
 
+    // Registration is only for creating the first (admin) account. Once set up,
+    // anyone who can reach the API could otherwise sign themselves up.
+    const userCount = await User.count();
+    if (userCount > 0) {
+      return res.status(403).json({ error: 'Registration is closed' });
+    }
+
     const existingUser = await User.findOne({ where: { email } });
     
     if (existingUser) {
       return res.status(400).json({ error: 'User already exists' });
     }
 
-    // Check if this is the first user - make them admin
-    const userCount = await User.count();
-    const role = userCount === 0 ? 'admin' : 'user';
+    const role = 'admin';
 
     const user = await User.create({
       email,
