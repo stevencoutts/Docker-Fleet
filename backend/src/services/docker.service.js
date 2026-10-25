@@ -38,6 +38,119 @@ function validateMountSourcePath(source) {
 }
 
 /** Comma-separated name suffixes; containers whose name ends with one of these are treated as dev/skip-update. Empty by default — use labels instead. */
+// --- Host info (getHostInfo) ------------------------------------------------
+// Each section is printed after an "@@name" marker line so one exec returns everything.
+const HOST_STATIC_TTL_MS = 60 * 60 * 1000;
+const hostStaticCache = new Map(); // serverId -> { at, info }
+
+const HOST_STATIC_SCRIPT = [
+  'echo @@arch; uname -m 2>/dev/null',
+  'echo @@kernel; uname -r 2>/dev/null',
+  'echo @@os; uname -s 2>/dev/null',
+  'echo @@fqdn; hostname -f 2>/dev/null',
+  'echo @@hostname; hostname 2>/dev/null',
+  'echo @@nproc; nproc 2>/dev/null',
+  'echo @@cpumodel; grep -m1 "model name" /proc/cpuinfo 2>/dev/null',
+  'echo @@docker; docker --version 2>/dev/null',
+  'echo @@publicip; curl -s --max-time 5 -4 ifconfig.me 2>/dev/null || curl -s --max-time 5 -4 icanhazip.com 2>/dev/null || true',
+].join('; ');
+
+const HOST_DYNAMIC_SCRIPT = [
+  'echo @@mem; free -h 2>/dev/null',
+  "echo @@dfb; df -PB1 / 2>/dev/null | tail -1 | awk '{gsub(/%/,\"\",$5); print $2,$3,$5}'",
+  "echo @@dfk; df -Pk / 2>/dev/null | tail -1 | awk '{gsub(/%/,\"\",$5); print $2*1024,$3*1024,$5}'",
+  'echo @@dfh; df -h / 2>/dev/null',
+  'echo @@uptimep; uptime -p 2>/dev/null',
+  'echo @@uptime; uptime 2>/dev/null',
+  // Sample /proc/stat twice (1s apart) so usage is recent, not average-since-boot.
+  "echo @@cpu; (grep '^cpu ' /proc/stat; sleep 1; grep '^cpu ' /proc/stat) | awk 'NR==1{for(i=2;i<=NF;i++) t1+=$i; i1=$5} NR==2{for(i=2;i<=NF;i++) t2+=$i; i2=$5; dt=t2-t1; di=i2-i1; if(dt>0) printf \"%.1f\", (dt-di)/dt*100; else print 0}'",
+  'echo; echo @@load; cat /proc/loadavg 2>/dev/null',
+].join('; ');
+
+function splitSections(stdout) {
+  const sections = {};
+  let current = null;
+  for (const raw of String(stdout || '').split('\n')) {
+    const line = raw.replace(/\r$/, '');
+    const m = line.match(/^@@([a-z]+)$/);
+    if (m) {
+      current = m[1];
+      sections[current] = '';
+    } else if (current) {
+      sections[current] += (sections[current] ? '\n' : '') + line;
+    }
+  }
+  for (const k of Object.keys(sections)) sections[k] = sections[k].trim();
+  return sections;
+}
+
+function parseHostStatic(sec) {
+  const info = {
+    architecture: sec.arch || 'Unknown',
+    kernel: sec.kernel || 'Unknown',
+    os: sec.os || 'Unknown',
+    hostname: sec.fqdn || sec.hostname || 'Unknown',
+    cpuCores: sec.nproc || 'Unknown',
+    cpuModel: (sec.cpumodel && sec.cpumodel.split(':')[1]?.trim()) || 'Unknown',
+    dockerVersion: sec.docker || 'Unknown',
+  };
+  if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(sec.publicip || '')) info.publicIp = sec.publicip;
+  return info;
+}
+
+function parseDfLine(line) {
+  const p = (line || '').trim().split(/\s+/);
+  if (p.length < 3) return null;
+  const t = parseInt(p[0], 10);
+  const u = parseInt(p[1], 10);
+  const pct = parseInt(p[2], 10);
+  if (Number.isNaN(t) || t <= 0 || Number.isNaN(u) || Number.isNaN(pct)) return null;
+  return { totalBytes: t, usedBytes: u, usePercent: pct };
+}
+
+function parseHostDynamic(sec) {
+  const info = {};
+
+  const memLine = (sec.mem || '').split('\n').find((line) => line.includes('Mem:'));
+  const memParts = memLine ? memLine.split(/\s+/) : [];
+  info.totalMemory = memParts[1] || 'Unknown';
+  info.usedMemory = memParts[2] || 'Unknown';
+  info.availableMemory = memParts[6] || memParts[3] || 'Unknown';
+
+  const df = parseDfLine(sec.dfb) || parseDfLine(sec.dfk);
+  if (df) {
+    info.rootDiskTotalBytes = df.totalBytes;
+    info.rootDiskUsedBytes = df.usedBytes;
+    info.rootDiskUsePercent = df.usePercent;
+    info.diskUsage = `${formatBytesBase2(df.usedBytes)} / ${formatBytesBase2(df.totalBytes)} (${df.usePercent}%)`;
+  } else {
+    const line = ((sec.dfh || '').split('\n')[1] || '').trim().split(/\s+/);
+    if (line.length >= 5) {
+      const pctField = line.find((c) => /^\d+%$/.test(c));
+      const p = pctField ? parseInt(pctField, 10) : NaN;
+      if (!Number.isNaN(p)) info.rootDiskUsePercent = p;
+      info.diskUsage = `${line[2]} / ${line[1]} (${line[4]})`;
+    } else {
+      info.diskUsage = 'Unknown';
+    }
+  }
+
+  if (sec.uptimep) {
+    info.uptime = sec.uptimep;
+  } else {
+    const match = (sec.uptime || '').match(/up\s+(.+?)(?:,\s+\d+\s+users)?/);
+    info.uptime = match ? match[1].trim() : 'Unknown';
+  }
+
+  const cpuUsage = parseFloat(sec.cpu);
+  info.cpuUsage = !Number.isNaN(cpuUsage) ? `${cpuUsage.toFixed(1)}%` : 'Unknown';
+
+  const load = (sec.load || '').split(/\s+/);
+  info.loadAverage = load.length >= 3 ? `${load[0]} ${load[1]} ${load[2]}` : 'Unknown';
+
+  return info;
+}
+
 const DEFAULT_SKIP_UPDATE_SUFFIXES = '';
 
 function getSkipUpdateNamePatterns() {
@@ -317,7 +430,7 @@ class DockerService {
   async listContainers(server, all = false) {
     // Use a simpler format that's more reliable
     const command = `docker ps ${all ? '-a' : ''} --format '{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}|{{.Ports}}'`;
-    const result = await sshService.executeCommand(server, command);
+    const result = await sshService.executeCommand(server, command, { pty: false });
     
     if (!result.stdout.trim()) {
       return [];
@@ -360,7 +473,7 @@ class DockerService {
       try {
         const idsString = safeContainerIds.join(' ');
         const inspectCommand = `docker inspect ${idsString}`;
-        const inspectResult = await sshService.executeCommand(server, inspectCommand, { allowFailure: true });
+        const inspectResult = await sshService.executeCommand(server, inspectCommand, { allowFailure: true, pty: false });
 
         if (inspectResult && inspectResult.code === 0 && inspectResult.stdout && inspectResult.stdout.trim()) {
           let inspectArray = [];
@@ -1994,260 +2107,38 @@ class DockerService {
     return { raw: result.stdout };
   }
 
+  /**
+   * Host facts for the dashboard, gathered in at most two SSH execs (pty off):
+   * one for values that change (memory, disk, uptime, CPU, load) on every poll,
+   * one for values that don't (arch, kernel, hostname, CPU model, Docker version,
+   * public IP), cached per server for HOST_STATIC_TTL_MS or until the SSH connection changes.
+   */
   async getHostInfo(server) {
     const results = {};
-    
-    // Basic system info - simple commands first
-    try {
-      const archResult = await sshService.executeCommand(server, 'uname -m', { allowFailure: true });
-      results.architecture = (archResult && archResult.stdout) ? archResult.stdout.trim() : 'Unknown';
-    } catch (error) {
-      logger.warn('Architecture command failed:', error.message);
-      results.architecture = 'Unknown';
-    }
-
-    try {
-      const kernelResult = await sshService.executeCommand(server, 'uname -r', { allowFailure: true });
-      results.kernel = (kernelResult && kernelResult.stdout) ? kernelResult.stdout.trim() : 'Unknown';
-    } catch (error) {
-      logger.debug('Kernel command failed:', error.message);
-      results.kernel = 'Unknown';
-    }
-
-    try {
-      const osResult = await sshService.executeCommand(server, 'uname -s', { allowFailure: true });
-      results.os = (osResult && osResult.stdout) ? osResult.stdout.trim() : 'Unknown';
-    } catch (error) {
-      logger.debug('OS command failed:', error.message);
-      results.os = 'Unknown';
-    }
-
-    try {
-      // Try to get FQDN first, fallback to short hostname
-      const fqdnResult = await sshService.executeCommand(server, 'hostname -f', { allowFailure: true });
-      if (fqdnResult && fqdnResult.stdout && fqdnResult.stdout.trim()) {
-        results.hostname = fqdnResult.stdout.trim();
-      } else {
-        // Fallback to short hostname if FQDN not available
-        const hostnameResult = await sshService.executeCommand(server, 'hostname', { allowFailure: true });
-        results.hostname = (hostnameResult && hostnameResult.stdout) ? hostnameResult.stdout.trim() : 'Unknown';
-      }
-    } catch (error) {
-      logger.debug('Hostname command failed:', error.message);
-      // Try short hostname as fallback
+    const key = String(server.id);
+    const conn = sshService.connections.get(key);
+    let cached = hostStaticCache.get(key);
+    // Refetch after the TTL or whenever the SSH connection was re-established (reboot, server edit).
+    if (!cached || Date.now() - cached.at > HOST_STATIC_TTL_MS || !conn || cached.ssh !== conn.ssh) {
       try {
-        const hostnameResult = await sshService.executeCommand(server, 'hostname', { allowFailure: true });
-        results.hostname = (hostnameResult && hostnameResult.stdout) ? hostnameResult.stdout.trim() : 'Unknown';
-      } catch (fallbackError) {
-        logger.debug('Short hostname command also failed:', fallbackError.message);
-        results.hostname = 'Unknown';
+        const r = await sshService.executeCommand(server, HOST_STATIC_SCRIPT, { allowFailure: true, timeout: 20000, pty: false });
+        const fresh = sshService.connections.get(key);
+        cached = { at: Date.now(), ssh: fresh && fresh.ssh, info: parseHostStatic(splitSections(r && r.stdout)) };
+        hostStaticCache.set(key, cached);
+      } catch (error) {
+        logger.debug('Host static info command failed:', error.message);
       }
     }
+    Object.assign(results, cached ? cached.info : parseHostStatic({}));
 
-    // Public IP (outbound) for display when server is behind NAT / private IP
+    let dynamic = {};
     try {
-      const publicIpResult = await sshService.executeCommand(
-        server,
-        'curl -s --max-time 5 -4 ifconfig.me 2>/dev/null || curl -s --max-time 5 -4 icanhazip.com 2>/dev/null || true',
-        { allowFailure: true, timeout: 8000 }
-      );
-      if (publicIpResult && publicIpResult.stdout && publicIpResult.stdout.trim()) {
-        const ip = publicIpResult.stdout.trim();
-        if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ip)) results.publicIp = ip;
-      }
-    } catch (err) {
-      logger.debug('Public IP detection failed:', err.message);
-    }
-
-    // CPU info
-    try {
-      const cpuCoresResult = await sshService.executeCommand(server, 'nproc', { allowFailure: true });
-      results.cpuCores = (cpuCoresResult && cpuCoresResult.stdout) ? cpuCoresResult.stdout.trim() : 'Unknown';
+      const r = await sshService.executeCommand(server, HOST_DYNAMIC_SCRIPT, { allowFailure: true, timeout: 15000, pty: false });
+      dynamic = splitSections(r && r.stdout);
     } catch (error) {
-      logger.debug('CPU cores command failed:', error.message);
-      results.cpuCores = 'Unknown';
+      logger.debug('Host dynamic info command failed:', error.message);
     }
-
-    try {
-      const cpuModelResult = await sshService.executeCommand(server, 'cat /proc/cpuinfo | grep "model name" | head -1', { allowFailure: true });
-      if (cpuModelResult && cpuModelResult.stdout) {
-        const modelLine = cpuModelResult.stdout.trim();
-        results.cpuModel = modelLine ? (modelLine.split(':')[1]?.trim() || 'Unknown') : 'Unknown';
-      } else {
-        results.cpuModel = 'Unknown';
-      }
-    } catch (error) {
-      logger.debug('CPU model command failed:', error.message);
-      results.cpuModel = 'Unknown';
-    }
-
-    // Memory info - using simpler commands
-    try {
-      const memResult = await sshService.executeCommand(server, 'free -h', { allowFailure: true });
-      if (memResult && memResult.stdout) {
-        const memLines = memResult.stdout.split('\n');
-        const memLine = memLines.find(line => line.includes('Mem:'));
-        if (memLine) {
-          const parts = memLine.split(/\s+/);
-          results.totalMemory = parts[1] || 'Unknown';
-          results.usedMemory = parts[2] || 'Unknown';
-          results.availableMemory = parts[6] || parts[3] || 'Unknown';
-        } else {
-          results.totalMemory = 'Unknown';
-          results.usedMemory = 'Unknown';
-          results.availableMemory = 'Unknown';
-        }
-      } else {
-        results.totalMemory = 'Unknown';
-        results.usedMemory = 'Unknown';
-        results.availableMemory = 'Unknown';
-      }
-    } catch (error) {
-      logger.debug('Memory command failed:', error.message);
-      results.totalMemory = 'Unknown';
-      results.usedMemory = 'Unknown';
-      results.availableMemory = 'Unknown';
-    }
-
-    // Root filesystem (/) — bytes + use% for dashboards and alerts
-    try {
-      let totalBytes;
-      let usedBytes;
-      let usePercent;
-
-      const parseLine = (line) => {
-        const p = (line || '').trim().split(/\s+/);
-        if (p.length < 3) return null;
-        const t = parseInt(p[0], 10);
-        const u = parseInt(p[1], 10);
-        const pct = parseInt(p[2], 10);
-        if (Number.isNaN(t) || t <= 0 || Number.isNaN(u) || Number.isNaN(pct)) return null;
-        return { totalBytes: t, usedBytes: u, usePercent: pct };
-      };
-
-      const dfBytes = await sshService.executeCommand(
-        server,
-        "df -PB1 / 2>/dev/null | tail -1 | awk '{gsub(/%/,\"\",$5); print $2,$3,$5}'",
-        { allowFailure: true, timeout: 10000 }
-      );
-      let parsed = dfBytes?.stdout ? parseLine(dfBytes.stdout) : null;
-
-      if (!parsed) {
-        const dfK = await sshService.executeCommand(
-          server,
-          "df -Pk / 2>/dev/null | tail -1 | awk '{gsub(/%/,\"\",$5); print $2*1024,$3*1024,$5}'",
-          { allowFailure: true, timeout: 10000 }
-        );
-        if (dfK?.stdout) parsed = parseLine(dfK.stdout);
-      }
-
-      if (parsed) {
-        totalBytes = parsed.totalBytes;
-        usedBytes = parsed.usedBytes;
-        usePercent = parsed.usePercent;
-        results.rootDiskTotalBytes = totalBytes;
-        results.rootDiskUsedBytes = usedBytes;
-        results.rootDiskUsePercent = usePercent;
-        results.diskUsage = `${formatBytesBase2(usedBytes)} / ${formatBytesBase2(totalBytes)} (${usePercent}%)`;
-      } else {
-        const diskResult = await sshService.executeCommand(server, 'df -h /', { allowFailure: true, timeout: 10000 });
-        if (diskResult && diskResult.stdout) {
-          const diskLines = diskResult.stdout.split('\n');
-          if (diskLines.length > 1) {
-            const line = diskLines[1].trim().split(/\s+/);
-            if (line.length >= 5) {
-              const pctField = line.find((c) => /^\d+%$/.test(c));
-              if (pctField) {
-                const p = parseInt(pctField.replace('%', ''), 10);
-                if (!Number.isNaN(p)) results.rootDiskUsePercent = p;
-              }
-              results.diskUsage = `${line[2]} / ${line[1]} (${line[4]})`;
-            } else {
-              results.diskUsage = 'Unknown';
-            }
-          } else {
-            results.diskUsage = 'Unknown';
-          }
-        } else {
-          results.diskUsage = 'Unknown';
-        }
-      }
-    } catch (error) {
-      logger.debug('Disk usage command failed:', error.message);
-      results.diskUsage = 'Unknown';
-    }
-
-    // Uptime
-    try {
-      const uptimeResult = await sshService.executeCommand(server, 'uptime -p', { allowFailure: true });
-      if (uptimeResult && uptimeResult.code === 0 && uptimeResult.stdout && uptimeResult.stdout.trim()) {
-        results.uptime = uptimeResult.stdout.trim();
-      } else {
-        // Fallback to regular uptime
-        try {
-          const uptimeFallback = await sshService.executeCommand(server, 'uptime', { allowFailure: true });
-          if (uptimeFallback && uptimeFallback.stdout) {
-            const uptimeStr = uptimeFallback.stdout.trim();
-            const match = uptimeStr.match(/up\s+(.+?)(?:,\s+\d+\s+users)?/);
-            results.uptime = match ? match[1].trim() : 'Unknown';
-          } else {
-            results.uptime = 'Unknown';
-          }
-        } catch {
-          results.uptime = 'Unknown';
-        }
-      }
-    } catch (error) {
-      logger.debug('Uptime command failed:', error.message);
-      results.uptime = 'Unknown';
-    }
-
-    // Docker version
-    try {
-      const dockerResult = await sshService.executeCommand(server, 'docker --version', { allowFailure: true });
-      results.dockerVersion = (dockerResult && dockerResult.stdout) ? dockerResult.stdout.trim() : 'Unknown';
-    } catch (error) {
-      logger.debug('Docker version command failed:', error.message);
-      results.dockerVersion = 'Unknown';
-    }
-
-    // CPU usage: sample /proc/stat twice (1s apart) and compute from deltas so we get recent usage,
-    // not average-since-boot (which can look low when load is high).
-    try {
-      const cpuUsageResult = await sshService.executeCommand(
-        server,
-        "(grep '^cpu ' /proc/stat; sleep 1; grep '^cpu ' /proc/stat) | awk 'NR==1{for(i=2;i<=NF;i++) t1+=$i; i1=$5} NR==2{for(i=2;i<=NF;i++) t2+=$i; i2=$5; dt=t2-t1; di=i2-i1; if(dt>0) printf \"%.1f\", (dt-di)/dt*100; else print 0}'",
-        { allowFailure: true, timeout: 15000 }
-      );
-      if (cpuUsageResult && cpuUsageResult.stdout) {
-        const cpuUsage = parseFloat(cpuUsageResult.stdout.trim());
-        results.cpuUsage = !isNaN(cpuUsage) ? `${cpuUsage.toFixed(1)}%` : 'Unknown';
-      } else {
-        results.cpuUsage = 'Unknown';
-      }
-    } catch (error) {
-      logger.debug('CPU usage command failed:', error.message);
-      results.cpuUsage = 'Unknown';
-    }
-
-    // Load average
-    try {
-      const loadResult = await sshService.executeCommand(server, 'cat /proc/loadavg', { allowFailure: true });
-      if (loadResult && loadResult.stdout) {
-        const parts = loadResult.stdout.trim().split(/\s+/);
-        if (parts.length >= 3) {
-          results.loadAverage = `${parts[0]} ${parts[1]} ${parts[2]}`;
-        } else {
-          results.loadAverage = 'Unknown';
-        }
-      } else {
-        results.loadAverage = 'Unknown';
-      }
-    } catch (error) {
-      logger.debug('Load average command failed:', error.message);
-      results.loadAverage = 'Unknown';
-    }
-
+    Object.assign(results, parseHostDynamic(dynamic));
     return results;
   }
 
@@ -2422,3 +2313,6 @@ module.exports = new DockerService();
 module.exports.getComposeContextFromInspect = getComposeContextFromInspect;
 module.exports.buildNetworkingForRecreate = buildNetworkingForRecreate;
 module.exports.buildPreservedHostConfig = buildPreservedHostConfig;
+module.exports.splitSections = splitSections;
+module.exports.parseHostStatic = parseHostStatic;
+module.exports.parseHostDynamic = parseHostDynamic;
