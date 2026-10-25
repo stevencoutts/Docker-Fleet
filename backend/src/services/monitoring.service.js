@@ -1,4 +1,5 @@
-const { Server, MonitoringSettings } = require('../models');
+const { Server, MonitoringSettings, ServerContainerCache } = require('../models');
+const { getIntervalMs: getPollingIntervalMs } = require('./polling.service');
 const dockerService = require('./docker.service');
 const emailService = require('./email.service');
 const logger = require('../config/logger');
@@ -89,10 +90,29 @@ class MonitoringService {
     }
   }
 
+  /**
+   * Containers for a server, from the polling cache when it is fresh (written within two polling
+   * intervals); otherwise a live list over SSH. Saves a docker ps + inspect per server per check.
+   */
+  async getContainers(server) {
+    try {
+      const rows = await ServerContainerCache.findAll({ where: { serverId: server.id } });
+      if (rows.length > 0) {
+        const newest = Math.max(...rows.map((r) => new Date(r.updatedAt).getTime()));
+        if (Date.now() - newest <= 2 * getPollingIntervalMs()) {
+          return rows.map((r) => r.payload);
+        }
+      }
+    } catch (error) {
+      logger.debug(`Container cache read failed for server ${server.id}:`, error.message);
+    }
+    return dockerService.listContainers(server, true);
+  }
+
   async checkServerContainers(server) {
     try {
       // Get all containers (including stopped ones)
-      const containers = await dockerService.listContainers(server, true);
+      const containers = await this.getContainers(server);
       
       logger.info(`Checking ${containers?.length || 0} containers on server ${server.name} (${server.id})`);
       

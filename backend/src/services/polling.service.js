@@ -161,3 +161,4 @@ class PollingService {
 
 const pollingService = new PollingService();
 module.exports = pollingService;
+module.exports.getIntervalMs = getIntervalMs;
